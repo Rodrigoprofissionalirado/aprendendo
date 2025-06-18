@@ -188,7 +188,7 @@ class CategoriasUI(QWidget):
 if __name__ == '__main__':
     from PySide6.QtCore import Qt
     app = QApplication(sys.argv)
-    janela = App()
+    janela = CategoriasUI
     janela.resize(800, 600)
     janela.show()
     sys.exit(app.exec())
