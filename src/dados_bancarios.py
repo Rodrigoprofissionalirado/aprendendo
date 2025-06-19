@@ -6,79 +6,57 @@ from PySide6.QtWidgets import (
     QLineEdit, QMessageBox, QTableWidget, QTableWidgetItem,
     QHBoxLayout, QComboBox, QGridLayout
 )
+from db_context import get_cursor
 from PySide6.QtCore import Qt
-
-@contextmanager
-def create_connection():
-    conn = mysql.connector.connect(
-        host='rodrigopirata.duckdns.org',
-        port=3306,
-        user='rodrigo',
-        password='Ro220199@mariadb',
-        database='Trabalho'
-    )
-    try:
-        yield conn
-    finally:
-        conn.close()
 
 class DB:
     def listar_dados_bancarios(self):
-        with create_connection() as conn:
-            with conn.cursor(dictionary=True) as cursor:
-                cursor.execute("""
-                    SELECT db.*, f.nome as fornecedor_nome, f.fornecedores_numerobalanca
-                    FROM dados_bancarios_fornecedor db
-                    LEFT JOIN fornecedores f ON db.fornecedor_id = f.id
-                """)
-                return cursor.fetchall()
+        with get_cursor() as cursor:
+            cursor.execute("""
+                SELECT db.*, f.nome as fornecedor_nome, f.fornecedores_numerobalanca
+                FROM dados_bancarios_fornecedor db
+                LEFT JOIN fornecedores f ON db.fornecedor_id = f.id
+            """)
+            return cursor.fetchall()
 
     def listar_fornecedores(self):
-        with create_connection() as conn:
-            with conn.cursor(dictionary=True) as cursor:
-                cursor.execute("SELECT id, nome, fornecedores_numerobalanca FROM fornecedores")
-                return cursor.fetchall()
+        with get_cursor() as cursor:
+            cursor.execute("SELECT id, nome, fornecedores_numerobalanca FROM fornecedores")
+            return cursor.fetchall()
 
     def limpar_padrao_anterior(self, fornecedor_id):
-        with create_connection() as conn:
-            with conn.cursor() as cursor:
-                cursor.execute("UPDATE dados_bancarios_fornecedor SET padrao = 0 WHERE fornecedor_id = %s", (fornecedor_id,))
-                conn.commit()
+        with get_cursor(commit=True) as cursor:
+            cursor.execute("UPDATE dados_bancarios_fornecedor SET padrao = 0 WHERE fornecedor_id = %s", (fornecedor_id,))
+
 
     def adicionar_dado_bancario(self, fornecedor_id, banco, cpf_cnpj, agencia, conta, padrao):
-        with create_connection() as conn:
-            with conn.cursor() as cursor:
-                if padrao == 1:
-                    cursor.execute("UPDATE dados_bancarios_fornecedor SET padrao = 0 WHERE fornecedor_id = %s", (fornecedor_id,))
-                cursor.execute(
-                    """
-                    INSERT INTO dados_bancarios_fornecedor (fornecedor_id, banco, CPFouCNPJ, agencia, conta, padrao)
-                    VALUES (%s, %s, %s, %s, %s, %s)
-                    """,
-                    (fornecedor_id, banco, cpf_cnpj, agencia, conta, padrao)
-                )
-                conn.commit()
+        with get_cursor(commit=True) as cursor:
+            if padrao == 1:
+                cursor.execute("UPDATE dados_bancarios_fornecedor SET padrao = 0 WHERE fornecedor_id = %s", (fornecedor_id,))
+            cursor.execute(
+                """
+                INSERT INTO dados_bancarios_fornecedor (fornecedor_id, banco, CPFouCNPJ, agencia, conta, padrao)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                """,
+                (fornecedor_id, banco, cpf_cnpj, agencia, conta, padrao)
+            )
 
     def excluir_dado_bancario(self, dado_id):
-        with create_connection() as conn:
-            with conn.cursor() as cursor:
-                cursor.execute("DELETE FROM dados_bancarios_fornecedor WHERE id = %s", (dado_id,))
-                conn.commit()
+        with get_cursor(commit=True) as cursor:
+            cursor.execute("DELETE FROM dados_bancarios_fornecedor WHERE id = %s", (dado_id,))
 
     def atualizar_dado_bancario(self, dado_id, fornecedor_id, banco, cpf_cnpj, agencia, conta, padrao):
-        with create_connection() as conn:
-            with conn.cursor() as cursor:
-                if padrao == 1:
-                    cursor.execute("UPDATE dados_bancarios_fornecedor SET padrao = 0 WHERE fornecedor_id = %s", (fornecedor_id,))
-                cursor.execute(
-                    """
-                    UPDATE dados_bancarios_fornecedor 
-                    SET fornecedor_id=%s, banco=%s, CPFouCNPJ=%s, agencia=%s, conta=%s, padrao=%s 
-                    WHERE id=%s
-                    """,
-                    (fornecedor_id, banco, cpf_cnpj, agencia, conta, padrao, dado_id)
-                )
-                conn.commit()
+        with get_cursor(commit=True) as cursor:
+            if padrao == 1:
+                cursor.execute("UPDATE dados_bancarios_fornecedor SET padrao = 0 WHERE fornecedor_id = %s", (fornecedor_id,))
+            cursor.execute(
+                """
+                UPDATE dados_bancarios_fornecedor 
+                SET fornecedor_id=%s, banco=%s, CPFouCNPJ=%s, agencia=%s, conta=%s, padrao=%s 
+                WHERE id=%s
+                """,
+                (fornecedor_id, banco, cpf_cnpj, agencia, conta, padrao, dado_id)
+            )
 
 class DadosBancariosUI(QWidget):
     def __init__(self):
