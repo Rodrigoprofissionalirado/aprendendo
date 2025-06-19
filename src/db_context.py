@@ -1,17 +1,11 @@
 import mysql.connector
 from contextlib import contextmanager
-
-DB_CONFIG = {
-    'host': 'rodrigopirata.duckdns.org',
-    'user': 'rodrigo',
-    'password': 'Ro220199@mariadb',
-    'database': 'Trabalho',
-    'port': 3306
-}
+from ajustes import get_config
 
 @contextmanager
 def get_connection():
-    conn = mysql.connector.connect(**DB_CONFIG)
+    config = get_config()
+    conn = mysql.connector.connect(**config)
     try:
         yield conn
     finally:

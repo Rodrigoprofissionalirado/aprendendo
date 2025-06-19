@@ -1,9 +1,10 @@
 import sys
+import ajustes
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout,
-    QPushButton, QStackedWidget, QHBoxLayout
+    QPushButton, QStackedWidget, QHBoxLayout, QMessageBox
 )
-from PySide6.QtCore import Qt, QDate
+from PySide6.QtCore import Qt
 
 # Importando os módulos
 from compras import ComprasUI
@@ -12,6 +13,7 @@ from debitos import DebitosUI
 from dados_bancarios import DadosBancariosUI
 from fornecedores import FornecedoresUI
 from categorias_fornecedor import CategoriasUI
+from ajustes import AjustesUI
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -42,6 +44,7 @@ class MainWindow(QMainWindow):
         self.dados_bancarios_ui = DadosBancariosUI()
         self.fornecedores_ui = FornecedoresUI()
         self.categorias_ui = CategoriasUI()
+        self.ajustes_ui = AjustesUI()
 
         self.compras_ui.set_janela_debitos(self.debitos_ui)
 
@@ -52,6 +55,7 @@ class MainWindow(QMainWindow):
         self.stack.addWidget(self.dados_bancarios_ui)
         self.stack.addWidget(self.fornecedores_ui)
         self.stack.addWidget(self.categorias_ui)
+        self.stack.addWidget(self.ajustes_ui)
 
         # Botões do menu
         botoes = [
@@ -61,6 +65,7 @@ class MainWindow(QMainWindow):
             ("Dados Bancários", self.dados_bancarios_ui),
             ("Fornecedores", self.fornecedores_ui),
             ("Categorias", self.categorias_ui),
+            ("Ajustes", self.ajustes_ui),
         ]
 
         for i, (nome, widget) in enumerate(botoes):
@@ -70,8 +75,32 @@ class MainWindow(QMainWindow):
 
         menu_layout.addStretch()
 
-if __name__ == '__main__':
+
+def main():
     app = QApplication(sys.argv)
+
+    # Verifica se há configuração ativa
+    try:
+        ajustes.get_config()
+    except RuntimeError:
+        # Se não existir, abre interface ajustes para inserir dados iniciais
+        ajustes_ui = AjustesUI()
+        ajustes_ui.setWindowModality(Qt.ApplicationModal)
+        ajustes_ui.show()
+        app.exec()  # espera o usuário finalizar a config
+
+        # Depois de fechar, verifica novamente
+        try:
+            ajustes.get_config()
+        except RuntimeError:
+            QMessageBox.critical(None, "Erro", "Nenhuma configuração ativa definida. O programa será encerrado.")
+            sys.exit(1)
+
+    # Se tudo ok, abre a janela principal
     janela = MainWindow()
     janela.show()
     sys.exit(app.exec())
+
+
+if __name__ == '__main__':
+    main()

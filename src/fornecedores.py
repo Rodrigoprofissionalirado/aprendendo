@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QIntValidator
+from db_context import get_cursor
 from PySide6.QtGui import QPixmap
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
@@ -34,71 +35,53 @@ def abrir_arquivo(caminho):
         subprocess.call(("xdg-open", caminho))
 
 class DB:
-    def __init__(self):
-        self.config = {
-            'host': 'rodrigopirata.duckdns.org',
-            'port': 3306,
-            'user': 'rodrigo',
-            'password': 'Ro220199@mariadb',
-            'database': 'Trabalho'
-        }
-
     def listar_fornecedores(self):
-        with mysql.connector.connect(**self.config) as conn:
-            with conn.cursor(dictionary=True) as cursor:
-                cursor.execute("""
-                    SELECT f.*, c.nome as categoria_nome 
-                    FROM fornecedores f 
-                    LEFT JOIN categorias_fornecedor c ON f.categoria_id = c.id
-                    ORDER BY f.nome
-                """)
-                return cursor.fetchall()
+        with get_cursor() as cursor:
+            cursor.execute("""
+                SELECT f.*, c.nome as categoria_nome 
+                FROM fornecedores f 
+                LEFT JOIN categorias_fornecedor c ON f.categoria_id = c.id
+                ORDER BY f.nome
+            """)
+            return cursor.fetchall()
 
     def listar_categorias(self):
-        with mysql.connector.connect(**self.config) as conn:
-            with conn.cursor(dictionary=True) as cursor:
-                cursor.execute("SELECT id, nome FROM categorias_fornecedor ORDER BY nome")
-                return cursor.fetchall()
+        with get_cursor() as cursor:
+            cursor.execute("SELECT id, nome FROM categorias_fornecedor ORDER BY nome")
+            return cursor.fetchall()
 
     def adicionar_fornecedor(self, nome, categoria_id, endereco, numero_balanca):
-        with mysql.connector.connect(**self.config) as conn:
-            with conn.cursor() as cursor:
-                cursor.execute(
-                    "INSERT INTO fornecedores (nome, categoria_id, fornecedores_endereco, fornecedores_numerobalanca) VALUES (%s, %s, %s, %s)",
-                    (nome, categoria_id, endereco, numero_balanca)
-                )
-                conn.commit()
+        with get_cursor(commit=True) as cursor:
+            cursor.execute(
+                "INSERT INTO fornecedores (nome, categoria_id, fornecedores_endereco, fornecedores_numerobalanca) VALUES (%s, %s, %s, %s)",
+                (nome, categoria_id, endereco, numero_balanca)
+            )
 
     def excluir_fornecedor(self, fornecedor_id):
-        with mysql.connector.connect(**self.config) as conn:
-            with conn.cursor() as cursor:
-                cursor.execute("DELETE FROM fornecedores WHERE id = %s", (fornecedor_id,))
-                conn.commit()
+        with get_cursor(commit=True) as cursor:
+            cursor.execute("DELETE FROM fornecedores WHERE id = %s", (fornecedor_id,))
 
     def atualizar_fornecedor(self, fornecedor_id, nome, categoria_id, endereco, numero_balanca):
-        with mysql.connector.connect(**self.config) as conn:
-            with conn.cursor() as cursor:
-                cursor.execute(
-                    "UPDATE fornecedores SET nome=%s, categoria_id=%s, fornecedores_endereco=%s, fornecedores_numerobalanca=%s WHERE id=%s",
-                    (nome, categoria_id, endereco, numero_balanca, fornecedor_id)
-                )
-                conn.commit()
+        with get_cursor(commit=True) as cursor:
+            cursor.execute(
+                "UPDATE fornecedores SET nome=%s, categoria_id=%s, fornecedores_endereco=%s, fornecedores_numerobalanca=%s WHERE id=%s",
+                (nome, categoria_id, endereco, numero_balanca, fornecedor_id)
+            )
 
     def listar_precos_por_categoria(self, categoria_id):
-        with mysql.connector.connect(**self.config) as conn:
-            with conn.cursor(dictionary=True) as cursor:
-                cursor.execute("""
-                               SELECT p.id,
-                                      p.nome,
-                                      p.preco_base,
-                                      COALESCE(aj.ajuste_fixo, 0)                  AS ajuste_fixo,
-                                      (p.preco_base + COALESCE(aj.ajuste_fixo, 0)) AS preco_final
-                               FROM produtos p
-                                        LEFT JOIN ajustes_fixos_produto_categoria aj
-                                                  ON p.id = aj.produto_id AND aj.categoria_id = %s
-                               ORDER BY p.nome
-                               """, (categoria_id,))
-                return cursor.fetchall()
+        with get_cursor() as cursor:
+            cursor.execute("""
+                SELECT p.id,
+                       p.nome,
+                       p.preco_base,
+                       COALESCE(aj.ajuste_fixo, 0) AS ajuste_fixo,
+                       (p.preco_base + COALESCE(aj.ajuste_fixo, 0)) AS preco_final
+                FROM produtos p
+                LEFT JOIN ajustes_fixos_produto_categoria aj
+                  ON p.id = aj.produto_id AND aj.categoria_id = %s
+                ORDER BY p.nome
+            """, (categoria_id,))
+            return cursor.fetchall()
 
 
 class FornecedoresUI(QWidget):
