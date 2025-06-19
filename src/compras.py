@@ -6,6 +6,15 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt, QDate
 from db_context import get_cursor
+from PIL import Image, ImageDraw, ImageFont
+from datetime import datetime
+from reportlab.lib.pagesizes import A4
+from reportlab.pdfgen import canvas
+from reportlab.lib.units import mm
+from reportlab.lib.colors import black, Color
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
+import os, platform
 
 
 class ComprasUI(QWidget):
@@ -108,6 +117,40 @@ class ComprasUI(QWidget):
                 WHERE i.compra_id = %s
             """, (compra_id,))
             return cursor.fetchall()
+
+    #Funções auxiliares dos relatórios, pode mudar para um novo módulo relatórios depois
+    def obter_compra_id_selecionado(self):
+        linha = self.tabela_compras.currentRow()
+        if linha < 0:
+            return None
+        item = self.tabela_compras.item(linha, 0)
+        return int(item.text()) if item else None
+
+    def obter_detalhes_compra(self, compra_id):
+        with get_cursor() as cursor:
+            cursor.execute("""
+                           SELECT f.nome AS fornecedor,
+                                  f.fornecedores_numerobalanca,
+                                  c.data_compra,
+                                  c.valor_abatimento
+                           FROM compras c
+                                    JOIN fornecedores f ON c.fornecedor_id = f.id
+                           WHERE c.id = %s
+                           """, (compra_id,))
+            compra = cursor.fetchone()
+
+            cursor.execute("""
+                           SELECT p.nome                            AS produto_nome,
+                                  i.quantidade,
+                                  i.preco_unitario,
+                                  (i.quantidade * i.preco_unitario) AS total
+                           FROM itens_compra i
+                                    JOIN produtos p ON i.produto_id = p.id
+                           WHERE i.compra_id = %s
+                           """, (compra_id,))
+            itens = cursor.fetchall()
+
+        return compra, itens
 
     # ---- UI e lógica ----
 
@@ -657,11 +700,6 @@ class ComprasUI(QWidget):
         self.janela_debitos = janela_debitos
 
     def exportar_compra_pdf(self):
-        from reportlab.lib.pagesizes import A4
-        from reportlab.pdfgen import canvas
-        from reportlab.lib.units import mm
-        from datetime import datetime
-
         linha = self.tabela_compras.currentRow()
         if linha < 0:
             QMessageBox.warning(self, "Exportar PDF", "Selecione uma compra na tabela para exportar.")
@@ -675,7 +713,7 @@ class ComprasUI(QWidget):
 
         with get_cursor() as cursor:
             cursor.execute("""
-                           SELECT f.nome AS fornecedor, c.data_compra, c.valor_abatimento
+                           SELECT f.nome AS fornecedor, f.fornecedores_numerobalanca, c.data_compra, c.valor_abatimento
                            FROM compras c
                                     JOIN fornecedores f ON c.fornecedor_id = f.id
                            WHERE c.id = %s
@@ -711,29 +749,48 @@ class ComprasUI(QWidget):
         c.drawString(20 * mm, y, f"Data da Compra: {compra['data_compra'].strftime('%d/%m/%Y')}")
         y -= 10 * mm
 
+        # Cabeçalho da tabela
         c.setFont("Helvetica-Bold", 12)
         c.drawString(20 * mm, y, "Produtos")
+
         y -= 6 * mm
-        c.setFont("Helvetica", 11)
+        c.setFont("Helvetica-Bold", 11)
         c.drawString(20 * mm, y, "Produto")
         c.drawString(90 * mm, y, "Qtd")
         c.drawString(110 * mm, y, "Unitário")
         c.drawString(140 * mm, y, "Total")
-        y -= 5 * mm
-        c.line(20 * mm, y, 190 * mm, y)
-        y -= 5 * mm
+
+        altura_cabecalho = 6 * mm
+        y_linha_cabecalho = y - 2 * mm  # um pouco abaixo do texto do cabeçalho
+        c.line(20 * mm, y_linha_cabecalho, 190 * mm, y_linha_cabecalho)
+
+        # Começa as linhas da tabela logo abaixo da linha do cabeçalho
+        y -= 8 * mm
+        altura_linha = 6 * mm
+
+        # Marca d'água no meio da tabela
+        altura_tabela = altura_linha * len(itens)
+        y_centro_tabela = y - altura_tabela / 2
+        x_centro_tabela = (20 + 190) / 2 * mm  # centro horizontal da tabela
+
+        self.adicionar_marca_dagua_pdf(c, str(compra['fornecedores_numerobalanca']), x_centro_tabela, y_centro_tabela)
 
         total = 0
         for item in itens:
-            if y < 30 * mm:
+            if y < 30 * mm:  # nova página
                 c.showPage()
                 y = height - 30 * mm
+            c.setFont("Helvetica", 11)
             c.drawString(20 * mm, y, item['produto_nome'])
             c.drawString(90 * mm, y, str(item['quantidade']))
             c.drawString(110 * mm, y, f"R$ {item['preco_unitario']:.2f}")
             c.drawString(140 * mm, y, f"R$ {item['total']:.2f}")
             total += float(item['total'])
-            y -= 6 * mm
+            y -= altura_linha
+
+        # Linha final da tabela (abaixo dos itens)
+        y_linha_final = y + altura_linha / 2
+        c.line(20 * mm, y_linha_final, 190 * mm, y_linha_final)
 
         y -= 10 * mm
         c.setFont("Helvetica-Bold", 12)
@@ -752,52 +809,20 @@ class ComprasUI(QWidget):
 
         QMessageBox.information(self, "Exportar PDF", f"PDF gerado com sucesso:\n{filename}")
 
-        import os
-        import platform
-
-        # Abrir automaticamente após salvar
         if platform.system() == "Windows":
             os.startfile(filename)
         elif platform.system() == "Darwin":  # macOS
             os.system(f"open '{filename}'")
-        else:  # Linux
+        else:
             os.system(f"xdg-open '{filename}'")
 
     def exportar_compra_jpg(self):
-        from PIL import Image, ImageDraw, ImageFont
-        from datetime import datetime
-
-        linha = self.tabela_compras.currentRow()
-        if linha < 0:
-            QMessageBox.warning(self, "Exportar JPG", "Selecione uma compra na tabela para exportar.")
+        compra_id = self.obter_compra_id_selecionado()
+        if compra_id is None:
+            QMessageBox.warning(self, "Exportar JPG", "Selecione uma compra para exportar.")
             return
 
-        compra_id_item = self.tabela_compras.item(linha, 0)
-        if not compra_id_item:
-            return
-
-        compra_id = int(compra_id_item.text())
-
-        with get_cursor() as cursor:
-            cursor.execute("""
-                           SELECT f.nome AS fornecedor, c.data_compra, c.valor_abatimento
-                           FROM compras c
-                                    JOIN fornecedores f ON c.fornecedor_id = f.id
-                           WHERE c.id = %s
-                           """, (compra_id,))
-            compra = cursor.fetchone()
-
-            cursor.execute("""
-                           SELECT p.nome                            AS produto_nome,
-                                  i.quantidade,
-                                  i.preco_unitario,
-                                  (i.quantidade * i.preco_unitario) AS total
-                           FROM itens_compra i
-                                    JOIN produtos p ON i.produto_id = p.id
-                           WHERE i.compra_id = %s
-                           """, (compra_id,))
-            itens = cursor.fetchall()
-
+        compra, itens = self.obter_detalhes_compra(compra_id)
         if not compra:
             QMessageBox.warning(self, "Exportar JPG", "Compra não encontrada.")
             return
@@ -810,8 +835,8 @@ class ComprasUI(QWidget):
             fonte = ImageFont.truetype("arial.ttf", 16)
             fonte_bold = ImageFont.truetype("arialbd.ttf", 18)
             fonte_mono = ImageFont.truetype("arial.ttf", 14)
-        except:
-            fonte = fonte_bold = fonte_mono = None  # Usa padrão
+        except IOError:
+            fonte = fonte_bold = fonte_mono = ImageFont.load_default()
 
         y = 20
         draw.text((30, y), f"Compra ID: {compra_id}", fill="black", font=fonte_bold)
@@ -821,13 +846,21 @@ class ComprasUI(QWidget):
         draw.text((30, y), f"Data: {compra['data_compra'].strftime('%d/%m/%Y')}", fill="black", font=fonte)
         y += 40
 
-        draw.text((30, y), "Produto", fill="black", font=fonte_bold)
-        draw.text((400, y), "Qtd", fill="black", font=fonte_bold)
-        draw.text((470, y), "Unit.", fill="black", font=fonte_bold)
-        draw.text((570, y), "Total", fill="black", font=fonte_bold)
-        y += 25
-        draw.line((30, y, 750, y), fill="black", width=1)
-        y += 10
+        # Cabeçalho da tabela
+        y_cabecalho = y
+        draw.text((30, y_cabecalho), "Produto", fill="black", font=fonte_bold)
+        draw.text((400, y_cabecalho), "Qtd", fill="black", font=fonte_bold)
+        draw.text((470, y_cabecalho), "Unit.", fill="black", font=fonte_bold)
+        draw.text((570, y_cabecalho), "Total", fill="black", font=fonte_bold)
+
+        altura_cabecalho = 20  # espaço para a linha ficar abaixo do texto
+        y_linha_cabecalho = y_cabecalho + altura_cabecalho
+        draw.line((30, y_linha_cabecalho, 750, y_linha_cabecalho), fill="black", width=1)
+
+        y = y_linha_cabecalho + 10  # começa as linhas de dados um pouco abaixo da linha do cabeçalho
+
+        altura_linha = 25
+        colunas_x = [30, 400, 470, 570, 750]  # posições das colunas verticais
 
         total = 0
         for item in itens:
@@ -836,9 +869,23 @@ class ComprasUI(QWidget):
             draw.text((470, y), f"{item['preco_unitario']:.2f}", fill="black", font=fonte_mono)
             draw.text((570, y), f"{item['total']:.2f}", fill="black", font=fonte_mono)
             total += float(item['total'])
-            y += 25
+            y += altura_linha
 
-        y += 20
+        y_tabela_fim = y + 30
+
+        # Linhas horizontais da grade — a primeira deve ficar abaixo do cabeçalho (já desenhada),
+        # então pulamos ela e desenhamos as linhas das linhas de dados e a final
+        linhas_y = [y_linha_cabecalho]  # linha do cabeçalho (já desenhada, pode manter ou repetir)
+        linhas_y += [y_linha_cabecalho + 25 + i * altura_linha for i in range(len(itens) + 1)]
+
+        for linha_y in linhas_y:
+            draw.line((colunas_x[0], linha_y, colunas_x[-1], linha_y), fill="black", width=1)
+
+        # Linhas verticais da grade
+        for x in colunas_x:
+            draw.line((x, linhas_y[0], x, linhas_y[-1]), fill="black", width=1)
+
+        y = y_tabela_fim
         draw.text((30, y), f"Subtotal: R$ {total:.2f}", fill="black", font=fonte_bold)
         y += 25
         draw.text((30, y), f"Abatimento: R$ {compra['valor_abatimento']:.2f}", fill="black", font=fonte_bold)
@@ -849,21 +896,85 @@ class ComprasUI(QWidget):
         y += 40
         draw.text((30, y), f"Gerado em: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}", fill="gray", font=fonte)
 
+        # Marca d'água no centro da tabela
+        y_tabela_centro = (linhas_y[0] + linhas_y[-1]) // 2
+        x_tabela_centro = (colunas_x[0] + colunas_x[-2]) // 2
+
+        imagem = self.adicionar_marca_dagua(
+            imagem,
+            str(compra['fornecedores_numerobalanca']),
+            posicao=(x_tabela_centro, y_tabela_centro)
+        )
+
         nome_arquivo = f"compra_{compra_id}.jpg"
         imagem.save(nome_arquivo)
 
         QMessageBox.information(self, "Exportar JPG", f"Relatório gerado com sucesso:\n{nome_arquivo}")
 
-        import os
-        import platform
-
-        # Abrir automaticamente após salvar
         if platform.system() == "Windows":
             os.startfile(nome_arquivo)
         elif platform.system() == "Darwin":
             os.system(f"open '{nome_arquivo}'")
         else:
             os.system(f"xdg-open '{nome_arquivo}'")
+
+
+    def adicionar_marca_dagua(self, imagem, texto, fonte_path="arial.ttf", tamanho_fonte=60, opacidade=80, posicao=None):
+        try:
+            fonte = ImageFont.truetype(fonte_path, tamanho_fonte)
+        except IOError:
+            fonte = ImageFont.load_default()
+
+        dummy_img = Image.new("RGBA", (1, 1))
+        dummy_draw = ImageDraw.Draw(dummy_img)
+
+        bbox = dummy_draw.textbbox((0, 0), texto, font=fonte)
+        texto_largura = bbox[2] - bbox[0]
+        texto_altura = bbox[3] - bbox[1]
+
+        texto_img = Image.new("RGBA", (texto_largura + 20, texto_altura + 20), (255, 255, 255, 0))
+        texto_draw = ImageDraw.Draw(texto_img)
+        texto_draw.text((10, 10), texto, font=fonte, fill=(200, 200, 200, opacidade))
+
+        texto_img = texto_img.rotate(45, expand=1, resample=Image.BICUBIC)
+
+        base = imagem.convert("RGBA")
+        bx, by = base.size
+        tx, ty = texto_img.size
+
+        if posicao is None:
+            # posição padrão: centro da imagem
+            pos = ((bx - tx) // 2, (by - ty) // 2)
+        else:
+            # posiciona no centro da área especificada
+            cx, cy = posicao
+            pos = (int(cx - tx / 2), int(cy - ty / 2))
+
+        base.paste(texto_img, pos, texto_img)
+
+        return base.convert("RGB")
+
+    def adicionar_marca_dagua_pdf(self, c, texto, x_centro, y_centro, tamanho_fonte=80, cor=(0.8, 0.8, 0.8), angulo=45):
+        try:
+            pdfmetrics.registerFont(TTFont('Arial', 'arial.ttf'))
+            fonte_nome = 'Arial'
+        except:
+            fonte_nome = 'Helvetica'
+
+        c.saveState()
+
+        c.translate(x_centro, y_centro)
+        c.rotate(angulo)
+
+        largura_texto = pdfmetrics.stringWidth(texto, fonte_nome, tamanho_fonte)
+        c.setFont(fonte_nome, tamanho_fonte)
+
+        # cor cinza claro (sem alpha)
+        c.setFillColor(Color(cor[0], cor[1], cor[2]))
+
+        c.drawString(-largura_texto / 2, 0, texto)
+
+        c.restoreState()
 
     def listar_categorias_disponiveis(self):
         categorias = []

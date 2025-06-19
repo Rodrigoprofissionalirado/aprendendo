@@ -7,9 +7,9 @@ from PySide6.QtWidgets import (
     QApplication, QWidget, QLabel, QPushButton, QVBoxLayout, QHBoxLayout, QGridLayout,
     QLineEdit, QComboBox, QDateEdit, QTableWidget, QTableWidgetItem, QMessageBox, QDialog, QFormLayout, QDialogButtonBox
 )
-from PySide6.QtCore import Qt, QDate
+from PySide6.QtCore import Qt, QDate, QMarginsF
 from db_context import get_cursor  # Certifique-se que seu get_cursor usa 'with'
-from PySide6.QtGui import QPainter, QFont, QImage
+from PySide6.QtGui import QPainter, QFont, QImage, QPageLayout
 from PySide6.QtPrintSupport import QPrinter
 
 
@@ -224,8 +224,10 @@ class DebitosUI(QWidget):
         printer = QPrinter()
         printer.setOutputFormat(QPrinter.PdfFormat)
         printer.setOutputFileName(path_temp)
-        printer.setPageOrientation(QPrinter.Landscape)
-        printer.setPageMargins(20, 20, 20, 20, QPrinter.Millimeter)
+        printer.setPageOrientation(QPageLayout.Landscape)
+        # Define as margens (esquerda, topo, direita, inferior) em milímetros
+        margins = QMarginsF(20, 20, 20, 20)
+        printer.setPageMargins(margins, QPageLayout.Millimeter)
 
         painter = QPainter(printer)
         y_final = self._desenhar_relatorio(painter, printer)
