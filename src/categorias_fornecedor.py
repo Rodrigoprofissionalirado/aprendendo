@@ -5,59 +5,51 @@ from PySide6.QtWidgets import (
     QHBoxLayout, QGridLayout, QTableWidget, QTableWidgetItem, QMessageBox, QHeaderView
 )
 from PySide6.QtCore import Qt, QDate
+from db_context import get_cursor
 
 class DB:
-    def __init__(self):
-        self.conn = mysql.connector.connect(
-            host='rodrigopirata.duckdns.org',
-            port=3306,
-            user='rodrigo',
-            password='Ro220199@mariadb',
-            database='Trabalho'
-        )
-        self.cursor = self.conn.cursor(dictionary=True)
-
     # ----- CATEGORIAS -----
     def listar_categorias(self):
-        self.cursor.execute("SELECT * FROM categorias_fornecedor")
-        return self.cursor.fetchall()
+        with get_cursor() as cursor:
+            cursor.execute("SELECT * FROM categorias_fornecedor")
+            return cursor.fetchall()
 
     def adicionar_categoria(self, nome):
-        self.cursor.execute(
-            "INSERT INTO categorias_fornecedor (nome) VALUES (%s)", (nome,)
-        )
-        self.conn.commit()
+        with get_cursor(commit=True) as cursor:
+            cursor.execute(
+                "INSERT INTO categorias_fornecedor (nome) VALUES (%s)", (nome,)
+            )
 
     def atualizar_categoria(self, categoria_id, nome):
-        self.cursor.execute(
-            "UPDATE categorias_fornecedor SET nome=%s WHERE id=%s", (nome, categoria_id)
-        )
-        self.conn.commit()
+        with get_cursor(commit=True) as cursor:
+            cursor.execute(
+                "UPDATE categorias_fornecedor SET nome=%s WHERE id=%s", (nome, categoria_id)
+            )
 
     def excluir_categoria(self, categoria_id):
-        self.cursor.execute("DELETE FROM categorias_fornecedor WHERE id = %s", (categoria_id,))
-        self.conn.commit()
+        with get_cursor(commit=True) as cursor:
+            cursor.execute("DELETE FROM categorias_fornecedor WHERE id = %s", (categoria_id,))
 
     # ----- AJUSTES -----
     def listar_produtos_ajustes(self, categoria_id):
-        self.cursor.execute("""
-            SELECT p.id, p.nome,
-                   COALESCE(a.ajuste_fixo, 0) AS ajuste_fixo
-            FROM produtos p
-            LEFT JOIN ajustes_fixos_produto_categoria a
-              ON p.id = a.produto_id AND a.categoria_id = %s
-            ORDER BY p.nome
-        """, (categoria_id,))
-        return self.cursor.fetchall()
+        with get_cursor() as cursor:
+            cursor.execute("""
+                SELECT p.id, p.nome,
+                       COALESCE(a.ajuste_fixo, 0) AS ajuste_fixo
+                FROM produtos p
+                LEFT JOIN ajustes_fixos_produto_categoria a
+                  ON p.id = a.produto_id AND a.categoria_id = %s
+                ORDER BY p.nome
+            """, (categoria_id,))
+            return cursor.fetchall()
 
     def salvar_ajuste(self, categoria_id, produto_id, ajuste_fixo):
-        # Tenta atualizar primeiro
-        self.cursor.execute("""
-            INSERT INTO ajustes_fixos_produto_categoria (categoria_id, produto_id, ajuste_fixo)
-            VALUES (%s, %s, %s)
-            ON DUPLICATE KEY UPDATE ajuste_fixo = VALUES(ajuste_fixo)
-        """, (categoria_id, produto_id, ajuste_fixo))
-        self.conn.commit()
+        with get_cursor(commit=True) as cursor:
+            cursor.execute("""
+                INSERT INTO ajustes_fixos_produto_categoria (categoria_id, produto_id, ajuste_fixo)
+                VALUES (%s, %s, %s)
+                ON DUPLICATE KEY UPDATE ajuste_fixo = VALUES(ajuste_fixo)
+            """, (categoria_id, produto_id, ajuste_fixo))
 
 
 class CategoriasUI(QWidget):
