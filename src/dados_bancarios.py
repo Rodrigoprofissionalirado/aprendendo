@@ -29,33 +29,34 @@ class DB:
             cursor.execute("UPDATE dados_bancarios_fornecedor SET padrao = 0 WHERE fornecedor_id = %s", (fornecedor_id,))
 
 
-    def adicionar_dado_bancario(self, fornecedor_id, banco, cpf_cnpj, agencia, conta, padrao):
+    def adicionar_dado_bancario(self, fornecedor_id, banco, cpf_cnpj, agencia, conta, padrao, nome_conta):
         with get_cursor(commit=True) as cursor:
             if padrao == 1:
                 cursor.execute("UPDATE dados_bancarios_fornecedor SET padrao = 0 WHERE fornecedor_id = %s", (fornecedor_id,))
             cursor.execute(
                 """
-                INSERT INTO dados_bancarios_fornecedor (fornecedor_id, banco, CPFouCNPJ, agencia, conta, padrao)
-                VALUES (%s, %s, %s, %s, %s, %s)
+                INSERT INTO dados_bancarios_fornecedor 
+                (fornecedor_id, banco, CPFouCNPJ, agencia, conta, padrao, nome_conta)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
                 """,
-                (fornecedor_id, banco, cpf_cnpj, agencia, conta, padrao)
+                (fornecedor_id, banco, cpf_cnpj, agencia, conta, padrao, nome_conta)
             )
 
     def excluir_dado_bancario(self, dado_id):
         with get_cursor(commit=True) as cursor:
             cursor.execute("DELETE FROM dados_bancarios_fornecedor WHERE id = %s", (dado_id,))
 
-    def atualizar_dado_bancario(self, dado_id, fornecedor_id, banco, cpf_cnpj, agencia, conta, padrao):
+    def atualizar_dado_bancario(self, dado_id, fornecedor_id, banco, cpf_cnpj, agencia, conta, padrao, nome_conta):
         with get_cursor(commit=True) as cursor:
             if padrao == 1:
                 cursor.execute("UPDATE dados_bancarios_fornecedor SET padrao = 0 WHERE fornecedor_id = %s", (fornecedor_id,))
             cursor.execute(
                 """
                 UPDATE dados_bancarios_fornecedor 
-                SET fornecedor_id=%s, banco=%s, CPFouCNPJ=%s, agencia=%s, conta=%s, padrao=%s 
+                SET fornecedor_id=%s, nome_conta=%s, banco=%s, CPFouCNPJ=%s, agencia=%s, conta=%s, padrao=%s
                 WHERE id=%s
                 """,
-                (fornecedor_id, banco, cpf_cnpj, agencia, conta, padrao, dado_id)
+                (fornecedor_id, nome_conta, banco, cpf_cnpj, agencia, conta, padrao, dado_id)
             )
 
 class DadosBancariosUI(QWidget):
@@ -94,6 +95,7 @@ class DadosBancariosUI(QWidget):
         form_layout.addWidget(QLabel('Nº Balança'), 1, 0)
         form_layout.addWidget(self.input_num_balanca, 1, 1)
 
+        self.input_nome_conta = QLineEdit()
         self.input_banco = QLineEdit()
         self.input_cpf_cnpj = QLineEdit()
         self.input_agencia = QLineEdit()
@@ -101,16 +103,18 @@ class DadosBancariosUI(QWidget):
         self.input_padrao = QComboBox()
         self.input_padrao.addItems(['Não', 'Sim'])
 
-        form_layout.addWidget(QLabel('Banco'), 2, 0)
-        form_layout.addWidget(self.input_banco, 2, 1)
-        form_layout.addWidget(QLabel('CPF ou CNPJ'), 3, 0)
-        form_layout.addWidget(self.input_cpf_cnpj, 3, 1)
-        form_layout.addWidget(QLabel('Agência'), 4, 0)
-        form_layout.addWidget(self.input_agencia, 4, 1)
-        form_layout.addWidget(QLabel('Conta'), 5, 0)
-        form_layout.addWidget(self.input_conta, 5, 1)
-        form_layout.addWidget(QLabel('Padrão'), 6, 0)
-        form_layout.addWidget(self.input_padrao, 6, 1)
+        form_layout.addWidget(QLabel('Nome Conta'), 2, 0)
+        form_layout.addWidget(self.input_nome_conta, 2, 1)
+        form_layout.addWidget(QLabel('Banco'), 3, 0)
+        form_layout.addWidget(self.input_banco, 3, 1)
+        form_layout.addWidget(QLabel('CPF ou CNPJ'), 4, 0)
+        form_layout.addWidget(self.input_cpf_cnpj, 4, 1)
+        form_layout.addWidget(QLabel('Agência'), 5, 0)
+        form_layout.addWidget(self.input_agencia, 5, 1)
+        form_layout.addWidget(QLabel('Conta'), 6, 0)
+        form_layout.addWidget(self.input_conta, 6, 1)
+        form_layout.addWidget(QLabel('Padrão'), 7, 0)
+        form_layout.addWidget(self.input_padrao, 7, 1)
 
         self.btn_adicionar = QPushButton('Adicionar')
         self.btn_adicionar.clicked.connect(self.adicionar)
@@ -131,8 +135,10 @@ class DadosBancariosUI(QWidget):
         btn_layout.addWidget(self.btn_limpar)
 
         self.tabela = QTableWidget()
-        self.tabela.setColumnCount(8)
-        self.tabela.setHorizontalHeaderLabels(['ID', 'Fornecedor', 'Nº Balança', 'Banco', 'CPF/CNPJ', 'Agência', 'Conta', 'Padrão'])
+        self.tabela.setColumnCount(9)
+        self.tabela.setHorizontalHeaderLabels([
+            'ID', 'Fornecedor', 'Nº Balança', 'Nome Conta', 'Banco', 'CPF/CNPJ', 'Agência', 'Conta', 'Padrão'
+        ])
         self.tabela.setEditTriggers(QTableWidget.NoEditTriggers)
         self.tabela.cellClicked.connect(self.carregar_dado_selecionado)
 
@@ -169,11 +175,12 @@ class DadosBancariosUI(QWidget):
             self.tabela.setItem(i, 0, QTableWidgetItem(str(dado['id'])))
             self.tabela.setItem(i, 1, QTableWidgetItem(dado['fornecedor_nome']))
             self.tabela.setItem(i, 2, QTableWidgetItem(str(dado['fornecedores_numerobalanca'])))
-            self.tabela.setItem(i, 3, QTableWidgetItem(dado['banco']))
-            self.tabela.setItem(i, 4, QTableWidgetItem(dado['CPFouCNPJ']))
-            self.tabela.setItem(i, 5, QTableWidgetItem(dado['agencia']))
-            self.tabela.setItem(i, 6, QTableWidgetItem(dado['conta']))
-            self.tabela.setItem(i, 7, QTableWidgetItem('Sim' if dado['padrao'] else 'Não'))
+            self.tabela.setItem(i, 3, QTableWidgetItem(dado.get('nome_conta', '')))  # nome_conta aqui
+            self.tabela.setItem(i, 4, QTableWidgetItem(dado['banco']))
+            self.tabela.setItem(i, 5, QTableWidgetItem(dado['CPFouCNPJ']))
+            self.tabela.setItem(i, 6, QTableWidgetItem(dado['agencia']))
+            self.tabela.setItem(i, 7, QTableWidgetItem(dado['conta']))
+            self.tabela.setItem(i, 8, QTableWidgetItem('Sim' if dado['padrao'] else 'Não'))
 
     def limpar_filtro(self):
         self.input_filtro_nome.clear()
@@ -181,14 +188,15 @@ class DadosBancariosUI(QWidget):
 
     def adicionar(self):
         fornecedor_id = self.combo_fornecedor_nome.currentData()
+        nome_conta = self.input_nome_conta.text()
         banco = self.input_banco.text()
         cpf_cnpj = self.input_cpf_cnpj.text()
         agencia = self.input_agencia.text()
         conta = self.input_conta.text()
         padrao = 1 if self.input_padrao.currentText() == 'Sim' else 0
 
-        if banco and cpf_cnpj and agencia and conta and fornecedor_id is not None:
-            self.db.adicionar_dado_bancario(fornecedor_id, banco, cpf_cnpj, agencia, conta, padrao)
+        if nome_conta and banco and cpf_cnpj and agencia and conta and fornecedor_id is not None:
+            self.db.adicionar_dado_bancario(fornecedor_id, banco, cpf_cnpj, agencia, conta, padrao, nome_conta)
             self.carregar_tabela()
             self.limpar()
         else:
@@ -211,16 +219,18 @@ class DadosBancariosUI(QWidget):
 
         self.input_num_balanca.setText(num_balanca)
 
-        self.input_banco.setText(self.tabela.item(row, 3).text())
-        self.input_cpf_cnpj.setText(self.tabela.item(row, 4).text())
-        self.input_agencia.setText(self.tabela.item(row, 5).text())
-        self.input_conta.setText(self.tabela.item(row, 6).text())
-        self.input_padrao.setCurrentText(self.tabela.item(row, 7).text())
+        self.input_nome_conta.setText(self.tabela.item(row, 3).text())
+        self.input_banco.setText(self.tabela.item(row, 4).text())
+        self.input_cpf_cnpj.setText(self.tabela.item(row, 5).text())
+        self.input_agencia.setText(self.tabela.item(row, 6).text())
+        self.input_conta.setText(self.tabela.item(row, 7).text())
+        self.input_padrao.setCurrentText(self.tabela.item(row, 8).text())
         self.silenciar_sync = False
 
     def atualizar(self):
         if self.dado_selecionado:
             fornecedor_id = self.combo_fornecedor_nome.currentData()
+            nome_conta = self.input_nome_conta.text()
             banco = self.input_banco.text()
             cpf_cnpj = self.input_cpf_cnpj.text()
             agencia = self.input_agencia.text()
@@ -231,7 +241,7 @@ class DadosBancariosUI(QWidget):
                 QMessageBox.warning(self, 'Erro', 'Fornecedor inválido.')
                 return
 
-            self.db.atualizar_dado_bancario(self.dado_selecionado, fornecedor_id, banco, cpf_cnpj, agencia, conta, padrao)
+            self.db.atualizar_dado_bancario(self.dado_selecionado, fornecedor_id, banco, cpf_cnpj, agencia, conta, padrao, nome_conta)
             self.carregar_tabela()
             self.limpar()
 
@@ -246,6 +256,7 @@ class DadosBancariosUI(QWidget):
         self.silenciar_sync = True
         self.combo_fornecedor_nome.setCurrentIndex(-1)
         self.input_num_balanca.clear()
+        self.input_nome_conta.clear()
         self.input_banco.clear()
         self.input_cpf_cnpj.clear()
         self.input_agencia.clear()
