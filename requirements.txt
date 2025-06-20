@@ -1,0 +1,8 @@
+charset-normalizer==3.4.2
+mysql-connector-python==9.3.0
+pillow==11.2.1
+PySide6==6.9.1
+PySide6_Addons==6.9.1
+PySide6_Essentials==6.9.1
+reportlab==4.4.2
+shiboken6==6.9.1
