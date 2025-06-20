@@ -1,10 +1,33 @@
 import sys
+import subprocess
+import os
+import urllib.request
 import ajustes
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout,
     QPushButton, QStackedWidget, QHBoxLayout, QMessageBox
 )
 from PySide6.QtCore import Qt
+
+def instalar_pip():
+    url = "https://bootstrap.pypa.io/get-pip.py"
+    script = "get-pip.py"
+    urllib.request.urlretrieve(url, script)
+    subprocess.check_call([sys.executable, script])
+    os.remove(script)
+
+def instalar_dependencias():
+    try:
+        import PySide6
+    except ImportError:
+        try:
+            subprocess.check_call([sys.executable, "-m", "pip", "install", "-r", "requirements.txt"])
+        except FileNotFoundError:
+            print("Pip não encontrado. Tentando instalar pip automaticamente...")
+            instalar_pip()
+            subprocess.check_call([sys.executable, "-m", "pip", "install", "-r", "requirements.txt"])
+
+instalar_dependencias()
 
 # Importando os módulos
 from compras import ComprasUI
