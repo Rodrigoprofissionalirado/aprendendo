@@ -1,4 +1,5 @@
 import sys
+import mysql.connector
 from PySide6.QtWidgets import (
     QApplication, QWidget, QLabel, QPushButton, QVBoxLayout,
     QHBoxLayout, QGridLayout, QComboBox, QDateEdit, QLineEdit,
@@ -328,6 +329,11 @@ class ComprasUI(QWidget):
         self.label_total_com_abatimento.setStyleSheet("font-weight: bold; font-size: 14px; margin-top: 5px;")
         layout_direita.addWidget(self.label_total_com_abatimento)
 
+        self.campo_texto_copiavel = QLineEdit()
+        self.campo_texto_copiavel.setReadOnly(True)
+        self.campo_texto_copiavel.setStyleSheet("font-weight: bold; font-size: 13px;")
+        layout_direita.addWidget(self.campo_texto_copiavel)
+
         self.btn_exportar_pdf = QPushButton("Exportar PDF")
         self.btn_exportar_pdf.clicked.connect(self.exportar_compra_pdf)
         layout_direita.addWidget(self.btn_exportar_pdf)
@@ -511,6 +517,36 @@ class ComprasUI(QWidget):
         self.tabela_itens_compra.setItem(len(itens), 3, QTableWidgetItem(f"-{valor_abatimento:.2f}"))
 
         self.label_total_com_abatimento.setText(f"Total com Abatimento: R$ {total_final:.2f}")
+
+        # === NOVO: buscar nome da conta padrão e preencher o campo copiável ===
+        with get_cursor() as cursor:
+            cursor.execute("SELECT fornecedor_id FROM compras WHERE id = %s", (compra_id,))
+            compra_info = cursor.fetchone()
+
+        if compra_info:
+            fornecedor_id = compra_info["fornecedor_id"]
+            nome_conta = self.buscar_nome_conta_padrao(fornecedor_id)
+            texto_copiavel = f"{nome_conta} - R$ {total_final:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+            self.campo_texto_copiavel.setText(texto_copiavel)
+            self.campo_texto_copiavel.setStyleSheet("color: black; font-weight: bold; font-size: 13px;")
+        else:
+            self.campo_texto_copiavel.setText("Conta não encontrada")
+            self.campo_texto_copiavel.setStyleSheet("color: red; font-weight: bold; font-size: 13px;")
+
+    def buscar_nome_conta_padrao(self, fornecedor_id):
+        try:
+            with get_cursor() as cursor:
+                cursor.execute("""
+                               SELECT nome_conta
+                               FROM dados_bancarios_fornecedor
+                               WHERE fornecedor_id = %s
+                                 AND padrao = 1 LIMIT 1
+                               """, (fornecedor_id,))
+                row = cursor.fetchone()
+                return row["nome_conta"] if row else "Conta não cadastrada"
+        except mysql.connector.Error as e:
+            print(f"Erro ao buscar conta padrão: {e}")
+            return "Erro ao buscar conta"
 
     def editar_compra_finalizada(self):
         linha = self.tabela_compras.currentRow()
