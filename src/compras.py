@@ -1042,6 +1042,7 @@ class ComprasUI(QWidget):
         super().showEvent(event)
         self.carregar_fornecedores()
         self.carregar_produtos()
+        self.listar_categorias_disponiveis()
 
 
 if __name__ == "__main__":

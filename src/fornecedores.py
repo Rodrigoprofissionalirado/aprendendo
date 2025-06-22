@@ -566,6 +566,10 @@ class FornecedoresUI(QWidget):
         QMessageBox.information(self, "Exportar JPG", f"Arquivo JPG gerado:\n{arquivo_jpg}")
         abrir_arquivo(arquivo_jpg)
 
+    def showEvent(self, event):
+        super().showEvent(event)
+        self.carregar_categorias()
+
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
