@@ -36,7 +36,7 @@ class ComprasUI(QWidget):
 
     def listar_produtos(self):
         with get_cursor() as cursor:
-            cursor.execute("SELECT id, nome, preco_base FROM produtos")
+            cursor.execute("SELECT id, nome, preco_base FROM produtos ORDER BY nome")
             return cursor.fetchall()
 
     def obter_produto(self, produto_id):
@@ -703,13 +703,18 @@ class ComprasUI(QWidget):
         self.filtro_combo_fornecedor.clear()
         self.filtro_combo_fornecedor.addItem("Todos os Fornecedores", None)
         for f in self.listar_fornecedores():
-            self.combo_fornecedor.addItem(f"{f['nome']} (ID {f['id']})", f['id'])
-            self.filtro_combo_fornecedor.addItem(f"{f['nome']} (ID {f['id']})", f['id'])
+            # Só nome, sem ID
+            self.combo_fornecedor.addItem(f["nome"], f["id"])
+            self.filtro_combo_fornecedor.addItem(f["nome"], f["id"])
 
     def carregar_produtos(self):
         self.combo_produto.blockSignals(True)
         self.combo_produto.clear()
-        for p in self.listar_produtos():
+        self.combo_produto.setEditable(True)  # Permite digitação!
+        produtos = self.listar_produtos()
+        # Garantir ordenação alfabética se vier de outro métod
+        produtos.sort(key=lambda p: p["nome"])
+        for p in produtos:
             self.combo_produto.addItem(p['nome'], p['id'])
         self.combo_produto.setCurrentIndex(-1)
         self.combo_produto.blockSignals(False)
