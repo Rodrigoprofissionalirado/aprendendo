@@ -615,18 +615,21 @@ class FornecedoresUI(QWidget):
 
             largura_tabela, altura_tabela = tabela.wrapOn(c, largura_disponivel, altura_disponivel)
             y_tabela = altura - margem - 50 - altura_tabela
-            tabela.drawOn(c, margem, y_tabela)
 
-            # Marca d'água no centro da tabela na página atual
-            c.saveState()
-            c.setFont("Helvetica-Bold", 100)
-            c.setFillColorRGB(0.8, 0.8, 0.8, alpha=0.3)
-            centro_x = largura / 2
-            centro_y = y_tabela + altura_tabela / 2
-            c.translate(centro_x, centro_y)
-            c.rotate(45)
-            c.drawCentredString(0, 0, num_balanca)
-            c.restoreState()
+            # Marca d'água - múltiplas vezes dentro da tabela (restrita à área da tabela)
+            self.adicionar_marca_dagua_pdf_area(
+                c,
+                texto=num_balanca,
+                x_inicio=margem,
+                x_fim=margem+largura_disponivel,
+                y_topo=y_tabela + altura_tabela - 60,
+                altura=altura_tabela,
+                tamanho_fonte=30,
+                cor=(0.8, 0.8, 0.8),
+                angulo=25
+            )
+
+            tabela.drawOn(c, margem, y_tabela)
 
             texto_rodape = "Tabela com validade de 7(sete) dias corridos, podendo ter mudanças a qualquer momento"
             c.setFont("Helvetica-Oblique", 9)
@@ -637,6 +640,33 @@ class FornecedoresUI(QWidget):
         c.save()
         QMessageBox.information(self, "Exportar PDF", f"Arquivo PDF gerado:\n{arquivo_pdf}")
         abrir_arquivo(arquivo_pdf)
+
+    def adicionar_marca_dagua_pdf_area(self, c, texto, x_inicio, x_fim, y_topo, altura, tamanho_fonte=30, cor=(0.8, 0.8, 0.8), angulo=25):
+        from reportlab.pdfbase import pdfmetrics
+        from reportlab.pdfbase.ttfonts import TTFont
+        try:
+            pdfmetrics.registerFont(TTFont('Arial', 'arial.ttf'))
+            fonte_nome = 'Arial'
+        except:
+            fonte_nome = 'Helvetica'
+        c.saveState()
+        c.setFont(fonte_nome, tamanho_fonte)
+        c.setFillColorRGB(*cor, alpha=0.3)
+        largura_texto = pdfmetrics.stringWidth(texto, fonte_nome, tamanho_fonte)
+        step_x = largura_texto + 40
+        step_y = tamanho_fonte * 2
+        y = y_topo
+        while y > y_topo - altura:
+            x = x_inicio
+            while x < x_fim:
+                c.saveState()
+                c.translate(x, y)
+                c.rotate(angulo)
+                c.drawString(0, 0, texto)
+                c.restoreState()
+                x += step_x
+            y -= step_y
+        c.restoreState()
 
     def exportar_jpg(self):
         fornecedor_idx = self.combo_fornecedores.currentIndex()
@@ -666,7 +696,7 @@ class FornecedoresUI(QWidget):
             fonte_titulo = ImageFont.truetype("arialbd.ttf", 24)
             fonte_texto = ImageFont.truetype("arial.ttf", 16)
             fonte_rodape = ImageFont.truetype("ariali.ttf", 12)
-            fonte_marca = ImageFont.truetype("arialbd.ttf", 100)
+            fonte_marca = ImageFont.truetype("arialbd.ttf", 30)
         except IOError:
             fonte_titulo = fonte_texto = fonte_rodape = fonte_marca = ImageFont.load_default()
 
@@ -706,35 +736,55 @@ class FornecedoresUI(QWidget):
         y_fim_tabela = y
         y_inicio_tabela = margem_topo + 50 + altura_linha
 
-        marca = Image.new("RGBA", img_base.size, (255, 255, 255, 0))
-        draw_marca = ImageDraw.Draw(marca)
-
-        bbox = draw_marca.textbbox((0, 0), num_balanca, font=fonte_marca)
-        w = bbox[2] - bbox[0]
-        h = bbox[3] - bbox[1]
-
-        texto_img = Image.new("RGBA", (w * 2, h * 2), (255, 255, 255, 0))
-        draw_texto = ImageDraw.Draw(texto_img)
-        draw_texto.text((w // 2, h // 2), num_balanca, font=fonte_marca, fill=(80, 80, 80, 100))
-        rotacionada = texto_img.rotate(45, expand=1)
-
-        centro_y = (y_inicio_tabela + y_fim_tabela) // 2
-        centro_x = largura_img // 2
-        pos_x = centro_x - rotacionada.width // 2
-        pos_y = centro_y - rotacionada.height // 2
-
-        marca.paste(rotacionada, (pos_x, pos_y), rotacionada)
-        imagem_final = Image.alpha_composite(img_base.convert("RGBA"), marca)
+        img_base = self.adicionar_marca_dagua_area(
+            img_base,
+            texto=num_balanca,
+            x_inicio=col1_x,
+            x_fim=col_end,
+            y_inicio=y_inicio_tabela,
+            altura=altura_linha * len(precos_filtrados),
+            fonte_path="arialbd.ttf",
+            tamanho_fonte=30,
+            opacidade=80,
+            angulo=25
+        )
 
         texto_rodape = "Tabela com validade de 7(sete) dias corridos, podendo ter mudanças a qualquer momento"
         bbox = draw.textbbox((0, 0), texto_rodape, font=fonte_rodape)
-        draw = ImageDraw.Draw(imagem_final)
+        draw = ImageDraw.Draw(img_base)
         draw.text(((largura_img - bbox[2]) // 2, altura_total - 30), texto_rodape, font=fonte_rodape, fill=(0, 0, 0, 255))
 
         arquivo_jpg = tempfile.NamedTemporaryFile(delete=False, suffix=".jpg").name
-        imagem_final.convert("RGB").save(arquivo_jpg, "JPEG")
+        img_base.convert("RGB").save(arquivo_jpg, "JPEG")
         QMessageBox.information(self, "Exportar JPG", f"Arquivo JPG gerado:\n{arquivo_jpg}")
         abrir_arquivo(arquivo_jpg)
+
+    def adicionar_marca_dagua_area(self, imagem, texto, x_inicio, x_fim, y_inicio, altura, fonte_path="arial.ttf", tamanho_fonte=30, opacidade=80, angulo=25):
+        try:
+            fonte = ImageFont.truetype(fonte_path, tamanho_fonte)
+        except IOError:
+            fonte = ImageFont.load_default()
+        marca = Image.new("RGBA", imagem.size, (255, 255, 255, 0))
+        draw = ImageDraw.Draw(marca)
+
+        bbox = draw.textbbox((0, 0), texto, font=fonte)
+        texto_largura = bbox[2] - bbox[0]
+        texto_altura = bbox[3] - bbox[1]
+
+        step_x = texto_largura + 40
+        step_y = tamanho_fonte * 2
+
+        for y in range(int(y_inicio), int(y_inicio + altura), int(step_y)):
+            for x in range(int(x_inicio), int(x_fim), int(step_x)):
+                txt_img = Image.new("RGBA", (texto_largura + 20, texto_altura + 20), (255, 255, 255, 0))
+                txt_draw = ImageDraw.Draw(txt_img)
+                txt_draw.text((10, 10), texto, font=fonte, fill=(200, 200, 200, opacidade))
+                txt_img = txt_img.rotate(angulo, expand=1, resample=Image.BICUBIC)
+                px = int(x)
+                py = int(y)
+                marca.alpha_composite(txt_img, (px, py))
+        resultado = Image.alpha_composite(imagem.convert("RGBA"), marca)
+        return resultado.convert("RGB")
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
