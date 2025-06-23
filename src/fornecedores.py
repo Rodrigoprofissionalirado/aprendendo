@@ -1,7 +1,6 @@
 # Requisitos: pip install PySide6 mysql-connector-python
 
 import sys
-import mysql.connector
 from PySide6.QtWidgets import (
     QApplication, QWidget, QLabel, QPushButton, QVBoxLayout,
     QLineEdit, QMessageBox, QTableWidget, QTableWidgetItem, QHBoxLayout,
@@ -94,36 +93,27 @@ class FornecedoresUI(QWidget):
     def init_ui(self):
         self.setWindowTitle('Gestão de Fornecedores')
 
-        layout_principal = QHBoxLayout()
-        layout_esquerda = QVBoxLayout()
-        layout_topo = QVBoxLayout()
-        layout_dados = QGridLayout()
+        self.criar_widgets()
+        self.configurar_validacoes()
+        self.conectar_sinais()
+        self.organizar_layouts()
 
+        self.atualizar_tabela()
+        self.carregar_combo()
+        self.carregar_categorias()
+        self.cancelar_edicao()
+
+    def criar_widgets(self):
         # Filtros
-        filtro_layout = QHBoxLayout()
         self.label_filtro_nome = QLabel('Filtro Nome:')
         self.input_filtro_nome = QLineEdit()
-        self.input_filtro_nome.textChanged.connect(self.aplicar_filtro)
 
         self.label_filtro_balanca = QLabel('Filtro Nº Balança:')
         self.input_filtro_balanca = QLineEdit()
-        self.input_filtro_balanca.setValidator(QIntValidator())
-        self.input_filtro_balanca.textChanged.connect(self.aplicar_filtro)
 
-        linha_nome = QHBoxLayout()
-        linha_nome.addWidget(self.label_filtro_nome)
-        linha_nome.addWidget(self.input_filtro_nome)
-
-        linha_balanca = QHBoxLayout()
-        linha_balanca.addWidget(self.label_filtro_balanca)
-        linha_balanca.addWidget(self.input_filtro_balanca)
-
-        filtro_layout.addLayout(linha_nome)
-        filtro_layout.addLayout(linha_balanca)
-
+        # Dados do fornecedor
         self.label_dropdown = QLabel('Selecionar Fornecedor')
         self.combo_fornecedores = QComboBox()
-        self.combo_fornecedores.currentIndexChanged.connect(self.preencher_campos_combo)
 
         self.label_nome = QLabel('Nome do Fornecedor')
         self.input_nome = QLineEdit()
@@ -136,8 +126,63 @@ class FornecedoresUI(QWidget):
 
         self.label_numero_balanca = QLabel('Número da Balança')
         self.input_numero_balanca = QLineEdit()
+
+        # Botões CRUD
+        self.btn_adicionar = QPushButton('Adicionar')
+        self.btn_atualizar = QPushButton('Atualizar')
+        self.btn_excluir = QPushButton('Excluir')
+        self.btn_cancelar = QPushButton('Cancelar')
+
+        # Tabela principal
+        self.tabela = QTableWidget()
+        self.tabela.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.tabela.setColumnCount(5)
+        self.tabela.setHorizontalHeaderLabels(['ID', 'Nome', 'Categoria', 'Endereço', 'Nº Balança'])
+
+        # Tabela de preços
+        self.tabela_precos = QTableWidget()
+        self.tabela_precos.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.tabela_precos.setColumnCount(4)
+        self.tabela_precos.setHorizontalHeaderLabels(['Produto', 'Preço Base', 'Ajuste Fixo', 'Preço Final'])
+
+        # Botões de exportação
+        self.btn_export_pdf = QPushButton("Exportar Tabela em PDF")
+        self.btn_export_jpg = QPushButton("Exportar Tabela em JPG")
+
+    def configurar_validacoes(self):
+        self.input_filtro_balanca.setValidator(QIntValidator())
         self.input_numero_balanca.setValidator(QIntValidator())
 
+    def conectar_sinais(self):
+        self.input_filtro_nome.textChanged.connect(self.aplicar_filtro)
+        self.input_filtro_balanca.textChanged.connect(self.aplicar_filtro)
+        self.combo_fornecedores.currentIndexChanged.connect(self.preencher_campos_combo)
+
+        self.btn_adicionar.clicked.connect(self.adicionar_fornecedor)
+        self.btn_atualizar.clicked.connect(self.atualizar_fornecedor_combo)
+        self.btn_excluir.clicked.connect(self.excluir_fornecedor_combo)
+        self.btn_cancelar.clicked.connect(self.cancelar_edicao)
+
+        self.tabela.cellClicked.connect(self.linha_selecionada)
+        self.btn_export_pdf.clicked.connect(self.exportar_pdf)
+        self.btn_export_jpg.clicked.connect(self.exportar_jpg)
+
+    def organizar_layouts(self):
+        # Filtros
+        linha_nome = QHBoxLayout()
+        linha_nome.addWidget(self.label_filtro_nome)
+        linha_nome.addWidget(self.input_filtro_nome)
+
+        linha_balanca = QHBoxLayout()
+        linha_balanca.addWidget(self.label_filtro_balanca)
+        linha_balanca.addWidget(self.input_filtro_balanca)
+
+        filtro_layout = QHBoxLayout()
+        filtro_layout.addLayout(linha_nome)
+        filtro_layout.addLayout(linha_balanca)
+
+        # Dados do fornecedor
+        layout_dados = QGridLayout()
         layout_dados.addWidget(self.label_dropdown, 0, 0, 1, 2)
         layout_dados.addWidget(self.combo_fornecedores, 1, 0, 1, 2)
         layout_dados.addWidget(self.label_nome, 2, 0)
@@ -149,68 +194,41 @@ class FornecedoresUI(QWidget):
         layout_dados.addWidget(self.label_numero_balanca, 5, 0)
         layout_dados.addWidget(self.input_numero_balanca, 5, 1)
 
-        self.btn_adicionar = QPushButton('Adicionar')
-        self.btn_adicionar.clicked.connect(self.adicionar_fornecedor)
-        self.btn_atualizar = QPushButton('Atualizar')
-        self.btn_atualizar.clicked.connect(self.atualizar_fornecedor_combo)
-        self.btn_excluir = QPushButton('Excluir')
-        self.btn_excluir.clicked.connect(self.excluir_fornecedor_combo)
-        self.btn_cancelar = QPushButton('Cancelar')
-        self.btn_cancelar.clicked.connect(self.cancelar_edicao)
-
+        # Botões CRUD
         layout_botoes = QHBoxLayout()
         layout_botoes.addWidget(self.btn_adicionar)
         layout_botoes.addWidget(self.btn_atualizar)
         layout_botoes.addWidget(self.btn_excluir)
         layout_botoes.addWidget(self.btn_cancelar)
 
+        layout_topo = QVBoxLayout()
         layout_topo.addLayout(layout_dados)
         layout_topo.addLayout(layout_botoes)
 
+        layout_esquerda = QVBoxLayout()
         layout_esquerda.addLayout(layout_topo)
 
-        self.tabela = QTableWidget()
-        self.tabela.setEditTriggers(QTableWidget.NoEditTriggers)
-        self.tabela.setColumnCount(5)
-        self.tabela.setHorizontalHeaderLabels(['ID', 'Nome', 'Categoria', 'Endereço', 'Nº Balança'])
-        self.tabela.cellClicked.connect(self.linha_selecionada)
-
-        # Tabela de preços da categoria
-        self.tabela_precos = QTableWidget()
-        self.tabela_precos.setEditTriggers(QTableWidget.NoEditTriggers)
-        self.tabela_precos.setColumnCount(4)
-        self.tabela_precos.setHorizontalHeaderLabels(['Produto', 'Preço Base', 'Ajuste Fixo', 'Preço Final'])
-
+        # Tabelas
         layout_tabelas = QHBoxLayout()
         layout_tabelas.addWidget(self.tabela)
         layout_tabelas.addWidget(self.tabela_precos)
 
-        # BOTÕES DE EXPORTAÇÃO
-        self.btn_export_pdf = QPushButton("Exportar Tabela em PDF")
-        self.btn_export_pdf.clicked.connect(self.exportar_pdf)
-        self.btn_export_jpg = QPushButton("Exportar Tabela em JPG")
-        self.btn_export_jpg.clicked.connect(self.exportar_jpg)
-
-        # Adiciona botões abaixo da tabela de preços
+        # Exportações
         layout_export = QHBoxLayout()
         layout_export.addWidget(self.btn_export_pdf)
         layout_export.addWidget(self.btn_export_jpg)
 
-        layout_principal.addLayout(layout_esquerda, 1)
+        layout_direita = QVBoxLayout()
+        layout_direita.addLayout(filtro_layout)
+        layout_direita.addLayout(layout_tabelas)
+        layout_direita.addLayout(layout_export)
 
-        main_layout = QVBoxLayout()
-        main_layout.addLayout(filtro_layout)
-        main_layout.addLayout(layout_tabelas)
-        # Adiciona layout_export ao layout principal logo após a tabela de preços
-        main_layout.addLayout(layout_export)
-        layout_principal.addLayout(main_layout, 2)
+        # Layout principal
+        layout_principal = QHBoxLayout()
+        layout_principal.addLayout(layout_esquerda, 1)
+        layout_principal.addLayout(layout_direita, 2)
 
         self.setLayout(layout_principal)
-
-        self.atualizar_tabela()
-        self.carregar_combo()
-        self.carregar_categorias()
-        self.cancelar_edicao()
 
     def aplicar_filtro(self):
         nome_filtro = self.input_filtro_nome.text().lower()
