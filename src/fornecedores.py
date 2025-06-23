@@ -561,7 +561,7 @@ class FornecedoresUI(QWidget):
             QMessageBox.information(self, "Exportar PDF", "Não há preços para essa categoria.")
             return
 
-        precos_filtrados = [p for p in precos if (p['preco_base'] + p['ajuste_fixo']) >= 0]
+        precos_filtrados = [p for p in precos if (p['preco_base'] + p['ajuste_fixo']) > 0]
 
         if not precos_filtrados:
             QMessageBox.information(self, "Exportar PDF", "Não há produtos com preço positivo para essa categoria.")
@@ -686,7 +686,7 @@ class FornecedoresUI(QWidget):
             QMessageBox.information(self, "Exportar JPG", "Não há preços para essa categoria.")
             return
 
-        precos_filtrados = [p for p in precos if (p['preco_base'] + p['ajuste_fixo']) >= 0]
+        precos_filtrados = [p for p in precos if (p['preco_base'] + p['ajuste_fixo']) > 0]
 
         if not precos_filtrados:
             QMessageBox.information(self, "Exportar JPG", "Não há produtos com preço positivo para essa categoria.")
