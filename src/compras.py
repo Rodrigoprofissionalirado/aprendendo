@@ -182,6 +182,7 @@ class ComprasUI(QWidget):
 
         # Número da balança
         self.combo_fornecedor = QComboBox()
+        self.combo_fornecedor.setEditable(True)
         self.input_numero_balanca = QLineEdit()
         self.input_numero_balanca.setPlaceholderText("Número balança")
         self.input_numero_balanca.editingFinished.connect(
