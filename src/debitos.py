@@ -152,22 +152,66 @@ class DebitosUI(QWidget):
         self.atualizar()  # atualiza a tabela com filtros limpos
 
     def incluir_debito_manual(self):
-        fornecedor_id = self.combo_fornecedor.currentData()
-        if not fornecedor_id:
-            QMessageBox.warning(self, "Erro", "Selecione um fornecedor primeiro.")
-            return
-
         dialog = QDialog(self)
         dialog.setWindowTitle("Novo Débito Manual")
         form = QFormLayout(dialog)
 
+        # Campo para número da balança
+        input_num_balanca = QLineEdit()
+        input_num_balanca.setPlaceholderText("Digite o número da balança")
+
+        # Campo para selecionar o cliente
+        input_cliente = QComboBox()
+        fornecedores = []
+        with get_cursor() as cursor:
+            cursor.execute("SELECT id, nome, fornecedores_numerobalanca FROM fornecedores ORDER BY nome")
+            fornecedores = cursor.fetchall()
+        for f in fornecedores:
+            nome_display = f"{f['nome']} (Bal: {f['fornecedores_numerobalanca']})" if f[
+                'fornecedores_numerobalanca'] else f['nome']
+            input_cliente.addItem(nome_display, f["id"])
+
+        # Pré-seleciona o fornecedor do filtro, se houver (ou nenhum)
+        filtro_fornecedor_id = self.combo_fornecedor.currentData()
+        if filtro_fornecedor_id:
+            idx = input_cliente.findData(filtro_fornecedor_id)
+            input_cliente.setCurrentIndex(idx if idx >= 0 else 0)
+        else:
+            input_cliente.setCurrentIndex(0)
+
+        def selecionar_fornecedor_por_balanca_dialog():
+            numero = input_num_balanca.text().strip()
+            if not numero:
+                return
+            idx = -1
+            for i in range(input_cliente.count()):
+                data = input_cliente.itemData(i)
+                nome = input_cliente.itemText(i)
+                # Busca pelo número da balança no display do combo
+                if f"(Bal: {numero})" in nome:
+                    idx = i
+                    break
+            if idx >= 0:
+                input_cliente.setCurrentIndex(idx)
+            else:
+                QMessageBox.warning(dialog, "Não encontrado", "Fornecedor não encontrado para este número de balança.")
+
+        input_num_balanca.editingFinished.connect(selecionar_fornecedor_por_balanca_dialog)
+
+        form.addRow("Número da Balança:", input_num_balanca)
+        form.addRow("Cliente:", input_cliente)
+
         input_valor = QLineEdit()
-        input_valor.setPlaceholderText("Ex: 150.00")
+        input_valor.setPlaceholderText("Ex: 150,00")
         input_descricao = QLineEdit()
         input_descricao.setPlaceholderText("Descrição do débito (opcional)")
+        input_data = QDateEdit()
+        input_data.setDate(QDate.currentDate())
+        input_data.setCalendarPopup(True)
 
         form.addRow("Valor (R$):", input_valor)
         form.addRow("Descrição:", input_descricao)
+        form.addRow("Data:", input_data)
 
         botoes = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         botoes.accepted.connect(dialog.accept)
@@ -175,8 +219,10 @@ class DebitosUI(QWidget):
         form.addWidget(botoes)
 
         if dialog.exec() == QDialog.Accepted:
+            fornecedor_id = input_cliente.currentData()
             valor_texto = input_valor.text().strip().replace(",", ".")
-            descricao = input_descricao.text().strip()  # pode ficar vazia
+            descricao = input_descricao.text().strip()
+            data_lancamento = input_data.date().toPython()
 
             try:
                 valor = float(valor_texto)
@@ -187,8 +233,8 @@ class DebitosUI(QWidget):
             with get_cursor(commit=True) as cursor:
                 cursor.execute("""
                                INSERT INTO debitos_fornecedores (fornecedor_id, data_lancamento, descricao, valor, tipo)
-                               VALUES (%s, CURDATE(), %s, %s, 'inclusao')
-                               """, (fornecedor_id, descricao, valor))
+                               VALUES (%s, %s, %s, %s, 'inclusao')
+                               """, (fornecedor_id, data_lancamento, descricao, valor))
             self.atualizar()
 
     def excluir(self):

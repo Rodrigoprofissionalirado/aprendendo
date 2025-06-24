@@ -83,11 +83,14 @@ class ComprasUI(QWidget):
 
     def atualizar_compra(self, compra_id, fornecedor_id, data_compra, valor_abatimento, itens_compra):
         with get_cursor(commit=True) as cursor:
+            # Atualiza a compra e os itens
             cursor.execute("""
-                UPDATE compras
-                SET fornecedor_id=%s, data_compra=%s, valor_abatimento=%s
-                WHERE id=%s
-            """, (fornecedor_id, data_compra, valor_abatimento, compra_id))
+                           UPDATE compras
+                           SET fornecedor_id=%s,
+                               data_compra=%s,
+                               valor_abatimento=%s
+                           WHERE id = %s
+                           """, (fornecedor_id, data_compra, valor_abatimento, compra_id))
 
             cursor.execute("DELETE FROM itens_compra WHERE compra_id = %s", (compra_id,))
 
@@ -98,14 +101,29 @@ class ComprasUI(QWidget):
                 )
 
             cursor.execute("""
-                UPDATE compras
-                SET total = (
-                    SELECT SUM(quantidade * preco_unitario)
-                    FROM itens_compra
-                    WHERE compra_id = %s
+                           UPDATE compras
+                           SET total = (SELECT SUM(quantidade * preco_unitario)
+                                        FROM itens_compra
+                                        WHERE compra_id = %s)
+                           WHERE id = %s
+                           """, (compra_id, compra_id))
+
+            # --- ABAIXO: GESTÃO DO ABATIMENTO NO MÓDULO DE DÉBITOS ---
+            # Remove abatimentos anteriores desta compra, para evitar duplicidade
+            cursor.execute(
+                "DELETE FROM debitos_fornecedores WHERE compra_id = %s AND tipo = 'abatimento'",
+                (compra_id,)
+            )
+
+            # Se houver abatimento, lança nos débitos do fornecedor
+            if valor_abatimento and float(valor_abatimento) > 0:
+                cursor.execute(
+                    """
+                    INSERT INTO debitos_fornecedores (fornecedor_id, compra_id, data_lancamento, descricao, valor, tipo)
+                    VALUES (%s, %s, %s, %s, %s, 'abatimento')
+                    """,
+                    (fornecedor_id, compra_id, data_compra, 'Abatimento em compra', valor_abatimento)
                 )
-                WHERE id = %s
-            """, (compra_id, compra_id))
 
     def listar_itens_compra(self, compra_id):
         with get_cursor() as cursor:
@@ -631,25 +649,49 @@ class ComprasUI(QWidget):
             return
 
         compra_id = int(compra_id_item.text())
+        with get_cursor() as cursor:
+            cursor.execute("""
+                           SELECT id
+                           FROM debitos_fornecedores
+                           WHERE compra_id = %s
+                             AND tipo = 'abatimento'
+                           """, (compra_id,))
+            abatimento = cursor.fetchone()
 
-        confirm = QMessageBox.question(
-            self,
-            "Confirmar Exclusão",
-            f"Tem certeza que deseja excluir a compra ID {compra_id}?",
-            QMessageBox.Yes | QMessageBox.No
-        )
+        if abatimento:
+            confirm = QMessageBox.question(
+                self,
+                "Confirmar Exclusão",
+                "Esta compra possui um abatimento lançado nos débitos do fornecedor.\n"
+                "Se você continuar, o lançamento do abatimento também será excluído dos débitos.\n"
+                "Deseja excluir mesmo assim?",
+                QMessageBox.Yes | QMessageBox.No
+            )
+        else:
+            confirm = QMessageBox.question(
+                self,
+                "Confirmar Exclusão",
+                f"Tem certeza que deseja excluir a compra ID {compra_id}?",
+                QMessageBox.Yes | QMessageBox.No
+            )
 
-        if confirm == QMessageBox.Yes:
-            try:
-                with get_cursor(commit=True) as cursor:
-                    cursor.execute("DELETE FROM itens_compra WHERE compra_id = %s", (compra_id,))
-                    cursor.execute("DELETE FROM compras WHERE id = %s", (compra_id,))
+        if confirm != QMessageBox.Yes:
+            return
 
-                QMessageBox.information(self, "Sucesso", "Compra excluída com sucesso.")
-                self.atualizar_tabela_compras()
-                self.tabela_itens_compra.setRowCount(0)
-            except Exception as e:
-                QMessageBox.critical(self, "Erro", f"Erro ao excluir compra: {e}")
+        try:
+            with get_cursor(commit=True) as cursor:
+                # Exclua TODOS os débitos relacionados à compra (não só abatimento)
+                cursor.execute("DELETE FROM debitos_fornecedores WHERE compra_id = %s", (compra_id,))
+                cursor.execute("DELETE FROM itens_compra WHERE compra_id = %s", (compra_id,))
+                cursor.execute("DELETE FROM compras WHERE id = %s", (compra_id,))
+            QMessageBox.information(self, "Sucesso", "Compra excluída com sucesso.")
+            self.atualizar_tabela_compras()
+            self.tabela_itens_compra.setRowCount(0)
+        except Exception as e:
+            QMessageBox.critical(self, "Erro", f"Erro ao excluir compra: {e}")
+
+        if hasattr(self, 'janela_debitos'):
+            self.janela_debitos.atualizar()
 
     def selecionar_fornecedor_por_numero_balanca(self, campo_input: QLineEdit, combo_fornecedor: QComboBox):
         numero = campo_input.text().strip()
