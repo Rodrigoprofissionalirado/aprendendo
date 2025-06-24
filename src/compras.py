@@ -103,14 +103,22 @@ class ComprasUI(QWidget):
                 )
 
             cursor.execute("""
-                UPDATE compras
-                SET total = (
-                    SELECT SUM(quantidade * preco_unitario)
-                    FROM itens_compra
-                    WHERE compra_id = %s
+                           UPDATE compras
+                           SET total = (SELECT SUM(quantidade * preco_unitario)
+                                        FROM itens_compra
+                                        WHERE compra_id = %s)
+                           WHERE id = %s
+                           """, (compra_id, compra_id))
+
+            # ADICIONE ESTE BLOCO:
+            if valor_abatimento and float(valor_abatimento) > 0:
+                cursor.execute(
+                    """
+                    INSERT INTO debitos_fornecedores (fornecedor_id, compra_id, data_lancamento, descricao, valor, tipo)
+                    VALUES (%s, %s, %s, %s, %s, 'abatimento')
+                    """,
+                    (fornecedor_id, compra_id, data_compra, 'Abatimento em compra', valor_abatimento)
                 )
-                WHERE id = %s
-            """, (compra_id, compra_id))
 
         return compra_id
 
@@ -536,7 +544,12 @@ class ComprasUI(QWidget):
     def obter_saldo_devedor_fornecedor(self, fornecedor_id):
         with get_cursor() as cursor:
             cursor.execute("""
-                           SELECT COALESCE(SUM(valor), 0) as saldo
+                           SELECT COALESCE(SUM(
+                                                   CASE
+                                                       WHEN tipo = 'abatimento' THEN -valor
+                                                       ELSE valor
+                                                       END
+                                           ), 0) as saldo
                            FROM debitos_fornecedores
                            WHERE fornecedor_id = %s
                            """, (fornecedor_id,))
