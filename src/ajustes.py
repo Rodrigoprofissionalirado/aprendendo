@@ -1,5 +1,6 @@
 import json
 import os
+import sys  # Adicionado para reiniciar o app
 from PySide6.QtWidgets import (
     QWidget, QLabel, QLineEdit, QPushButton, QListWidget, QVBoxLayout, QHBoxLayout, QMessageBox, QSpinBox
 )
@@ -41,6 +42,7 @@ def adicionar_ou_editar_config(nome, host, user, password, database, port):
     salvar_configs()
 
 def remover_config(nome):
+    global config_ativa
     if nome in configuracoes:
         configuracoes.pop(nome)
         if config_ativa == nome:
@@ -52,6 +54,10 @@ def get_config():
         raise RuntimeError("Nenhuma configuração ativa definida.")
     return configuracoes[config_ativa]
 
+def reiniciar_programa():
+    """Reinicia o processo Python."""
+    python = sys.executable
+    os.execl(python, python, *sys.argv)
 
 # Carrega configs ao importar
 carregar_configs()
@@ -164,8 +170,14 @@ class AjustesUI(QWidget):
 
     def ativar_config(self):
         nome = self.input_nome.text().strip()
+        global config_ativa
         if nome and nome in configuracoes:
+            mudou = (config_ativa != nome)
             set_config_ativa(nome)
             QMessageBox.information(self, "Sucesso", f"Configuração '{nome}' ativada.")
+            if mudou:
+                QMessageBox.information(self, "Reiniciando", "O sistema será reiniciado para aplicar a nova configuração.")
+                self.close()  # Fecha janela antes de reiniciar
+                reiniciar_programa()
         else:
             QMessageBox.warning(self, "Erro", "Selecione uma configuração válida para ativar.")
