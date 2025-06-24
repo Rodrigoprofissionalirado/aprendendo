@@ -272,8 +272,53 @@ class ComprasUI(QWidget):
     # ---- UI e lógica ----
 
     def init_ui(self):
-        self.setWindowTitle("Registro de Compras")
-        layout_principal = QHBoxLayout()
+        layout_principal = QVBoxLayout()
+
+        # --------------------- Filtros (compartilhados entre abas) ---------------------
+        layout_filtros = QHBoxLayout()
+
+        self.filtro_numero_balanca = QLineEdit()
+        self.filtro_numero_balanca.setPlaceholderText("Número da balança")
+        layout_filtros.addWidget(QLabel("Número da Balança:"))
+        layout_filtros.addWidget(self.filtro_numero_balanca)
+
+        self.filtro_combo_fornecedor = QComboBox()
+        self.filtro_combo_fornecedor.addItem("Todos os Fornecedores", None)
+        for f in self.listar_fornecedores():
+            self.filtro_combo_fornecedor.addItem(f"{f['nome']} (ID {f['id']})", f['id'])
+        layout_filtros.addWidget(QLabel("Fornecedor:"))
+        layout_filtros.addWidget(self.filtro_combo_fornecedor)
+
+        self.filtro_combo_status = QComboBox()
+        self.filtro_combo_status.addItem("Todos", None)
+        for s in STATUS_LIST:
+            self.filtro_combo_status.addItem(s, s)
+        layout_filtros.addWidget(QLabel("Status:"))
+        layout_filtros.addWidget(self.filtro_combo_status)
+
+        self.filtro_data_de = QDateEdit()
+        self.filtro_data_de.setCalendarPopup(True)
+        self.filtro_data_de.setDate(QDate.currentDate().addMonths(-1))
+        layout_filtros.addWidget(QLabel("De:"))
+        layout_filtros.addWidget(self.filtro_data_de)
+
+        self.filtro_data_ate = QDateEdit()
+        self.filtro_data_ate.setCalendarPopup(True)
+        self.filtro_data_ate.setDate(QDate.currentDate())
+        layout_filtros.addWidget(QLabel("Até:"))
+        layout_filtros.addWidget(self.filtro_data_ate)
+
+        btn_aplicar_filtro = QPushButton("Aplicar Filtro")
+        btn_aplicar_filtro.clicked.connect(self.atualizar_tabelas)
+        layout_filtros.addWidget(btn_aplicar_filtro)
+
+        btn_limpar_filtro = QPushButton("Limpar Filtro")
+        btn_limpar_filtro.clicked.connect(self.limpar_filtro_compras)
+        layout_filtros.addWidget(btn_limpar_filtro)
+
+        layout_principal.addLayout(layout_filtros)
+        # ---------------------- Fim dos filtros -----------------
+
         self.tabs = QTabWidget()
         layout_principal.addWidget(self.tabs)
 
@@ -286,6 +331,17 @@ class ComprasUI(QWidget):
         # Layout Em Aberto
         layout_em_aberto = QHBoxLayout()
         self.tab_em_aberto.setLayout(layout_em_aberto)
+        # ... aqui continua normalmente o layout da esquerda, meio e direita da aba em aberto ...
+
+        # ===================== TAB CONCLUÍDAS =====================
+        layout_concluidas = QVBoxLayout()
+        self.tab_concluidas.setLayout(layout_concluidas)
+        self.tabela_compras_concluidas = QTableWidget()
+        self.tabela_compras_concluidas.setColumnCount(5)
+        self.tabela_compras_concluidas.setHorizontalHeaderLabels(["ID", "Fornecedor", "Data", "Total", "Status"])
+        self.tabela_compras_concluidas.setEditTriggers(QTableWidget.DoubleClicked)
+        self.tabela_compras_concluidas.cellClicked.connect(lambda row, col: self.mostrar_itens_da_compra(row, col, tabela=self.tabela_compras_concluidas))
+        layout_concluidas.addWidget(self.tabela_compras_concluidas)
 
         # ===================== ENTRADA DE DADOS - ESQUERDA =====================
         layout_entrada = QVBoxLayout()
@@ -485,17 +541,6 @@ class ComprasUI(QWidget):
         self.btn_exportar_jpg.clicked.connect(self.exportar_compra_jpg)
         layout_direita.addWidget(self.btn_exportar_jpg)
 
-        # ===================== TAB CONCLUÍDAS =====================
-        layout_concluidas = QVBoxLayout()
-        self.tab_concluidas.setLayout(layout_concluidas)
-        self.tabela_compras_concluidas = QTableWidget()
-        self.tabela_compras_concluidas.setColumnCount(5)
-        self.tabela_compras_concluidas.setHorizontalHeaderLabels(["ID", "Fornecedor", "Data", "Total", "Status"])
-        self.tabela_compras_concluidas.setEditTriggers(QTableWidget.DoubleClicked)
-        self.tabela_compras_concluidas.cellClicked.connect(lambda row, col: self.mostrar_itens_da_compra(row, col, tabela=self.tabela_compras_concluidas))
-        layout_concluidas.addWidget(self.tabela_compras_concluidas)
-        # Adicione outros botões na aba concluidas se desejar
-
         self.setLayout(layout_principal)
         self.itens_compra = []
         self.atualizar_tabela_itens_adicionados()
@@ -517,11 +562,12 @@ class ComprasUI(QWidget):
         self.atualizar_tabelas()
 
     def atualizar_tabelas(self):
-        # "Em aberto": todas exceto status = Concluída
         status_filtro = self.filtro_combo_status.currentData()
         fornecedor_id = self.filtro_combo_fornecedor.currentData()
         data_de = self.filtro_data_de.date().toPython()
         data_ate = self.filtro_data_ate.date().toPython()
+
+        # Em aberto: todas exceto concluída
         compras_aberto = self.listar_compras(
             status=None if status_filtro == "Concluída" else status_filtro,
             status_not="Concluída",
@@ -529,6 +575,7 @@ class ComprasUI(QWidget):
             data_ate=data_ate,
             fornecedor_id=fornecedor_id
         )
+        # Concluídas: só concluída
         compras_concluidas = self.listar_compras(
             status="Concluída",
             data_de=data_de,
@@ -537,7 +584,6 @@ class ComprasUI(QWidget):
         )
         self.preencher_tabela_compras(self.tabela_compras_aberto, compras_aberto)
         self.preencher_tabela_compras(self.tabela_compras_concluidas, compras_concluidas)
-
     def preencher_tabela_compras(self, tabela, compras):
         tabela.blockSignals(True)
         tabela.setRowCount(len(compras))
@@ -576,18 +622,17 @@ class ComprasUI(QWidget):
     def obter_saldo_devedor_fornecedor(self, fornecedor_id):
         with get_cursor() as cursor:
             cursor.execute("""
-                           SELECT COALESCE(SUM(
-                                                   CASE
-                                                       WHEN tipo = 'abatimento' THEN -valor
-                                                       ELSE valor
-                                                       END
-                                           ), 0) as saldo
+                           SELECT valor, tipo
                            FROM debitos_fornecedores
                            WHERE fornecedor_id = %s
                            """, (fornecedor_id,))
-            row = cursor.fetchone()
-            # Sempre use Decimal! Garante precisão
-            return Decimal(str(row['saldo'])) if row else Decimal('0.00')
+            saldo = Decimal('0.00')
+            for row in cursor.fetchall():
+                if row["tipo"] in ("inclusao", "adiantamento"):
+                    saldo += Decimal(str(row["valor"]))
+                else:
+                    saldo -= Decimal(str(row["valor"]))
+            return saldo
 
     def atualizar_saldo_fornecedor(self):
         fornecedor_id = self.combo_fornecedor.currentData()
