@@ -332,6 +332,7 @@ class ComprasUI(QWidget):
         self.campo_texto_copiavel.setReadOnly(True)
         self.campo_texto_copiavel.setStyleSheet("font-weight: bold; font-size: 13px;")
         layout_direita.addWidget(self.campo_texto_copiavel)
+        self.campo_texto_copiavel.mousePressEvent = self.copiar_campo_texto_copiavel
 
         self.btn_exportar_pdf = QPushButton("Exportar PDF")
         self.btn_exportar_pdf.clicked.connect(self.exportar_compra_pdf)
@@ -362,6 +363,12 @@ class ComprasUI(QWidget):
 
     def zerar_quantidade(self):
         self.input_quantidade.setValue(1)
+
+    def copiar_campo_texto_copiavel(self, event):
+        clipboard = QApplication.clipboard()
+        clipboard.setText(self.campo_texto_copiavel.text())
+        # Chame o evento padrão para manter o foco (opcional)
+        QLineEdit.mousePressEvent(self.campo_texto_copiavel, event)
 
     def carregar_categorias_para_fornecedor(self, fornecedor_id):
         self.combo_categoria_temporaria.blockSignals(True)
