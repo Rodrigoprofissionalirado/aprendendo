@@ -35,7 +35,6 @@ from produtos import ProdutosUI
 from debitos import DebitosUI
 from dados_bancarios import DadosBancariosUI
 from fornecedores import FornecedoresUI
-from categorias_fornecedor import CategoriasUI
 from ajustes import AjustesUI
 
 class MainWindow(QMainWindow):
@@ -66,7 +65,6 @@ class MainWindow(QMainWindow):
         self.debitos_ui = DebitosUI()
         self.dados_bancarios_ui = DadosBancariosUI()
         self.fornecedores_ui = FornecedoresUI()
-        self.categorias_ui = CategoriasUI()
         self.ajustes_ui = AjustesUI()
 
         self.compras_ui.set_janela_debitos(self.debitos_ui)
@@ -77,7 +75,6 @@ class MainWindow(QMainWindow):
         self.stack.addWidget(self.debitos_ui)
         self.stack.addWidget(self.dados_bancarios_ui)
         self.stack.addWidget(self.fornecedores_ui)
-        self.stack.addWidget(self.categorias_ui)
         self.stack.addWidget(self.ajustes_ui)
 
         # Botões do menu
@@ -87,7 +84,6 @@ class MainWindow(QMainWindow):
             ("Débitos", self.debitos_ui),
             ("Dados Bancários", self.dados_bancarios_ui),
             ("Fornecedores", self.fornecedores_ui),
-            ("Categorias", self.categorias_ui),
             ("Ajustes", self.ajustes_ui),
         ]
 

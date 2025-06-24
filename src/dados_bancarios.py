@@ -1,6 +1,4 @@
 import sys
-import mysql.connector
-from contextlib import contextmanager
 from PySide6.QtWidgets import (
     QApplication, QWidget, QLabel, QPushButton, QVBoxLayout,
     QLineEdit, QMessageBox, QTableWidget, QTableWidgetItem,
