@@ -118,7 +118,7 @@ def main():
 
     # Se tudo ok, abre a janela principal
     janela = MainWindow()
-    janela.show()
+    janela.showMaximized()
     sys.exit(app.exec())
 
 
