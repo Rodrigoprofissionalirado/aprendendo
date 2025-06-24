@@ -3,9 +3,11 @@ import mysql.connector
 from PySide6.QtWidgets import (
     QApplication, QWidget, QLabel, QPushButton, QVBoxLayout,
     QHBoxLayout, QGridLayout, QComboBox, QDateEdit, QLineEdit,
-    QSpinBox, QTableWidget, QTableWidgetItem, QMessageBox, QTabWidget
+    QSpinBox, QTableWidget, QTableWidgetItem, QMessageBox, QTabWidget,
+    QDialog
 )
 from PySide6.QtCore import Qt, QTimer, QDate, QLocale
+from decimal import Decimal, ROUND_HALF_UP
 from db_context import get_cursor
 from status_delegate_combo import StatusComboDelegate
 from PIL import Image, ImageDraw, ImageFont
@@ -17,6 +19,36 @@ from reportlab.lib.colors import black, Color
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 import os, platform
+
+class DiferencaCompraDialog(QDialog):
+    def __init__(self, diferenca, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Diferença de valor detectada")
+        self.resultado = None
+
+        layout = QVBoxLayout(self)
+        sinal = "-" if diferenca < 0 else "+"
+        label = QLabel(f"Diferença detectada: {sinal}R$ {abs(diferenca):.2f}\n\n"
+                       "O que deseja fazer?")
+        layout.addWidget(label)
+
+        botoes = QHBoxLayout()
+        btn_somente_alterar = QPushButton("Apenas alterar valor")
+        btn_converter_abate = QPushButton("Converter diferença em abate/adiantamento")
+        botoes.addWidget(btn_somente_alterar)
+        botoes.addWidget(btn_converter_abate)
+        layout.addLayout(botoes)
+
+        btn_somente_alterar.clicked.connect(self.somente_alterar)
+        btn_converter_abate.clicked.connect(self.converter_abate)
+
+    def somente_alterar(self):
+        self.resultado = "somente_alterar"
+        self.accept()
+
+    def converter_abate(self):
+        self.resultado = "converter_abate"
+        self.accept()
 
 STATUS_LIST = [
     "Criada", "Emitindo nota", "Efetuando pagamento", "Finalizada", "Concluída"
@@ -111,13 +143,13 @@ class ComprasUI(QWidget):
                            """, (compra_id, compra_id))
 
             # ADICIONE ESTE BLOCO:
-            if valor_abatimento and float(valor_abatimento) > 0:
+            if valor_abatimento and valor_abatimento > 0:
                 cursor.execute(
                     """
                     INSERT INTO debitos_fornecedores (fornecedor_id, compra_id, data_lancamento, descricao, valor, tipo)
                     VALUES (%s, %s, %s, %s, %s, 'abatimento')
                     """,
-                    (fornecedor_id, compra_id, data_compra, 'Abatimento em compra', valor_abatimento)
+                    (fornecedor_id, compra_id, data_compra, 'Abatimento em compra', abs(valor_abatimento))
                 )
 
         return compra_id
@@ -158,13 +190,13 @@ class ComprasUI(QWidget):
             )
 
             # Se houver abatimento, lança nos débitos do fornecedor
-            if valor_abatimento and float(valor_abatimento) > 0:
+            if valor_abatimento and valor_abatimento > 0:
                 cursor.execute(
                     """
                     INSERT INTO debitos_fornecedores (fornecedor_id, compra_id, data_lancamento, descricao, valor, tipo)
                     VALUES (%s, %s, %s, %s, %s, 'abatimento')
                     """,
-                    (fornecedor_id, compra_id, data_compra, 'Abatimento em compra', valor_abatimento)
+                    (fornecedor_id, compra_id, data_compra, 'Abatimento em compra', abs(valor_abatimento))
                 )
 
     def atualizar_status_compra(self, compra_id, novo_status):
@@ -554,7 +586,8 @@ class ComprasUI(QWidget):
                            WHERE fornecedor_id = %s
                            """, (fornecedor_id,))
             row = cursor.fetchone()
-            return float(row['saldo']) if row else 0.0
+            # Sempre use Decimal! Garante precisão
+            return Decimal(str(row['saldo'])) if row else Decimal('0.00')
 
     def atualizar_saldo_fornecedor(self):
         fornecedor_id = self.combo_fornecedor.currentData()
@@ -562,7 +595,7 @@ class ComprasUI(QWidget):
             self.label_saldo_fornecedor.setText("Saldo: R$ 0,00")
             return
         saldo = self.obter_saldo_devedor_fornecedor(fornecedor_id)
-        self.label_saldo_fornecedor.setText(f"Saldo: R$ {self.locale.toString(saldo, 'f', 2)}")
+        self.label_saldo_fornecedor.setText(f"Saldo: R$ {self.locale.toString(float(saldo), 'f', 2)}")
 
     def on_saldo_label_clicked(self, event):
         fornecedor_id = self.combo_fornecedor.currentData()
@@ -633,10 +666,10 @@ class ComprasUI(QWidget):
                            """, (produto_id, categoria_id))
             ajuste = cursor.fetchone()
 
-        ajuste_fixo = float(ajuste["ajuste_fixo"]) if ajuste else 0.0
+        ajuste_fixo = Decimal(str(ajuste["ajuste_fixo"])) if ajuste else Decimal('0.00')
 
-        preco = float(produto["preco_base"]) + float(ajuste_fixo)
-        total = quantidade * preco
+        preco = Decimal(str(produto["preco_base"])) + ajuste_fixo
+        total = Decimal(str(quantidade)) * preco
 
         self.itens_compra.append({
             "produto_id": produto_id,
@@ -678,23 +711,72 @@ class ComprasUI(QWidget):
         if not self.itens_compra:
             QMessageBox.warning(self, "Erro", "Adicione pelo menos um item antes de finalizar.")
             return
+
         fornecedor_id = self.combo_fornecedor.currentData()
         data_compra = self.input_data.date().toPython()
         try:
-            valor_abatimento = float(self.input_abatimento.text().replace(',', '.')) if self.input_abatimento.text() else 0.0
+            from decimal import Decimal
+            valor_abatimento = Decimal(
+                self.input_abatimento.text().replace(',', '.')) if self.input_abatimento.text() else 0.0
         except ValueError:
             QMessageBox.warning(self, "Erro", "Valor de abatimento inválido.")
             return
         status = self.combo_status.currentText()
 
         if self.compra_edit_id is None:
+            # NOVA COMPRA
             self.adicionar_compra(fornecedor_id, data_compra, valor_abatimento, self.itens_compra, status)
             QMessageBox.information(self, "Sucesso", "Compra cadastrada com sucesso.")
         else:
-            self.atualizar_compra(self.compra_edit_id, fornecedor_id, data_compra, valor_abatimento, self.itens_compra, status)
+            # EDIÇÃO DE COMPRA
+            # 1. Pegue o total antigo
+            from decimal import Decimal
+
+            with get_cursor() as cursor:
+                cursor.execute("SELECT total FROM compras WHERE id = %s", (self.compra_edit_id,))
+                compra_antiga = cursor.fetchone()
+                total_antigo = Decimal(str(compra_antiga["total"])) if compra_antiga else Decimal('0.00')
+            # 2. Calcule o total novo
+            total_novo = sum(Decimal(str(item['total'])) for item in self.itens_compra)
+            total_novo_com_abatimento = total_novo - valor_abatimento
+
+            # 3. Se diferença relevante, exiba diálogo
+            diferenca = total_novo_com_abatimento - total_antigo
+
+            if abs(diferenca) > 0.01:
+                dialog = DiferencaCompraDialog(diferenca, self)
+                if dialog.exec():
+                    if dialog.resultado == "converter_abate":
+                        # Lançar diferença como abate ou adiantamento
+                        tipo = "abatimento" if diferenca < 0 else "inclusão"
+                        descricao = "Ajuste automático de edição de compra"
+                        valor = abs(diferenca)
+                        # Registra nos débitos (use sinal correto para abatimento)
+                        with get_cursor(commit=True) as cursor:
+                            cursor.execute(
+                                """
+                                INSERT INTO debitos_fornecedores
+                                    (fornecedor_id, compra_id, data_lancamento, descricao, valor, tipo)
+                                VALUES (%s, %s, %s, %s, %s, %s)
+                                """,
+                                (
+                                    fornecedor_id,
+                                    self.compra_edit_id,
+                                    data_compra,
+                                    descricao,
+                                    valor,
+                                    tipo
+                                )
+                            )
+                    # Se "somente_alterar", não faz nada extra (apenas salva)
+
+            # 4. Atualiza a compra
+            self.atualizar_compra(self.compra_edit_id, fornecedor_id, data_compra, valor_abatimento, self.itens_compra,
+                                  status)
             QMessageBox.information(self, "Sucesso", "Compra atualizada com sucesso.")
             self.compra_edit_id = None
 
+        # Limpa e atualiza UI
         self.limpar_campos()
         self.atualizar_tabelas()
         self.limpar_itens()
