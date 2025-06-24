@@ -68,6 +68,7 @@ class MainWindow(QMainWindow):
         self.ajustes_ui = AjustesUI()
 
         self.compras_ui.set_janela_debitos(self.debitos_ui)
+        self.compras_ui.set_main_window(self)
 
         # Adicionando os módulos ao stack
         self.stack.addWidget(self.compras_ui)

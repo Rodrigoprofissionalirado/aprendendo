@@ -144,6 +144,15 @@ class DebitosUI(QWidget):
             saldo += float(row["valor"]) if row["tipo"] == "inclusao" else -float(row["valor"])
         self.label_saldo.setText(f"Saldo devedor: R$ {saldo:.2f}")
 
+    def filtrar_por_fornecedor(self, fornecedor_id):
+        idx = self.combo_fornecedor.findData(fornecedor_id)
+        if idx >= 0:
+            self.combo_fornecedor.setCurrentIndex(idx)
+        else:
+            # Se não encontrou, limpa o filtro
+            self.combo_fornecedor.setCurrentIndex(-1)
+        self.atualizar()
+
     def limpar_filtros(self):
         self.combo_fornecedor.setCurrentIndex(0)  # seleciona "todos" ou primeiro item
         self.input_num_balanca.clear()
