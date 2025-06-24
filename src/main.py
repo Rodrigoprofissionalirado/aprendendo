@@ -7,7 +7,7 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout,
     QPushButton, QStackedWidget, QHBoxLayout, QMessageBox
 )
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QLocale
 
 def instalar_pip():
     url = "https://bootstrap.pypa.io/get-pip.py"
@@ -97,6 +97,7 @@ class MainWindow(QMainWindow):
 
 def main():
     app = QApplication(sys.argv)
+    QLocale.setDefault(QLocale(QLocale.Portuguese, QLocale.Brazil))
 
     # Verifica se há configuração ativa
     try:

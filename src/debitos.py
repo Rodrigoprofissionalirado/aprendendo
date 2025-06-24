@@ -7,7 +7,7 @@ from PySide6.QtWidgets import (
     QApplication, QWidget, QLabel, QPushButton, QVBoxLayout, QHBoxLayout, QGridLayout,
     QLineEdit, QComboBox, QDateEdit, QTableWidget, QTableWidgetItem, QMessageBox, QDialog, QFormLayout, QDialogButtonBox
 )
-from PySide6.QtCore import Qt, QDate, QMarginsF
+from PySide6.QtCore import Qt, QDate, QMarginsF, QLocale
 from db_context import get_cursor  # Certifique-se que seu get_cursor usa 'with'
 from PySide6.QtGui import QPainter, QFont, QImage, QPageLayout
 from PySide6.QtPrintSupport import QPrinter
@@ -353,6 +353,7 @@ class DebitosUI(QWidget):
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
+    QLocale.setDefault(QLocale(QLocale.Portuguese, QLocale.Brazil))
     janela = DebitosUI()
     janela.resize(800, 600)
     janela.show()

@@ -5,7 +5,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout, QComboBox, QGridLayout
 )
 from db_context import get_cursor
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QLocale
 
 class DB:
     def listar_dados_bancarios(self):
@@ -294,6 +294,7 @@ class DadosBancariosUI(QWidget):
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
+    QLocale.setDefault(QLocale(QLocale.Portuguese, QLocale.Brazil))
     janela = DadosBancariosUI()
     janela.resize(1000, 600)
     janela.show()

@@ -6,7 +6,7 @@ from PySide6.QtWidgets import (
     QLineEdit, QMessageBox, QTableWidget, QTableWidgetItem, QHBoxLayout,
     QComboBox, QGridLayout, QInputDialog, QDialog, QDialogButtonBox, QFormLayout, QDoubleSpinBox
 )
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QLocale
 from PySide6.QtGui import QIntValidator
 from db_context import get_cursor
 from PySide6.QtGui import QPixmap
@@ -136,6 +136,7 @@ class DialogNovaCategoria(QDialog):
             spin.setMinimum(-9999.99)
             spin.setMaximum(99999.99)
             spin.setValue(0.00)
+            spin.setSingleStep(0.05)  # <-- Esta linha faz o passo ser de 0,05
             self.inputs_ajustes[prod['id']] = spin
             self.form_produtos.addRow(prod['nome'], spin)
         self.layout.addLayout(self.form_produtos)
@@ -202,6 +203,8 @@ class FornecedoresUI(QWidget):
         self.combo_categoria = QComboBox()
 
         self.btn_add_categoria = QPushButton('Adicionar Categoria')
+        self.btn_editar_categoria = QPushButton('Editar Categoria')
+        self.btn_excluir_categoria = QPushButton('Excluir Categoria')
 
         # Botões CRUD
         self.btn_adicionar = QPushButton('Adicionar')
@@ -244,6 +247,8 @@ class FornecedoresUI(QWidget):
         self.btn_export_pdf.clicked.connect(self.exportar_pdf)
         self.btn_export_jpg.clicked.connect(self.exportar_jpg)
         self.btn_add_categoria.clicked.connect(self.adicionar_categoria)
+        self.btn_editar_categoria.clicked.connect(self.editar_categoria)
+        self.btn_excluir_categoria.clicked.connect(self.excluir_categoria)
         self.tabela_precos.itemChanged.connect(self.on_ajuste_fixo_editado)
 
     def organizar_layouts(self):
@@ -272,7 +277,9 @@ class FornecedoresUI(QWidget):
         layout_dados.addWidget(self.input_numero_balanca, 4, 1)
         layout_dados.addWidget(self.label_categoria, 5, 0)
         layout_dados.addWidget(self.combo_categoria, 5, 1)
-        layout_dados.addWidget(self.btn_add_categoria, 6, 0, 1, 2)  # Botão abaixo da seleção de categoria
+        layout_dados.addWidget(self.btn_editar_categoria, 6, 0)
+        layout_dados.addWidget(self.btn_add_categoria, 6, 1)
+        layout_dados.addWidget(self.btn_excluir_categoria, 7, 0, 1, 2)  # Botão abaixo da seleção de categoria
 
         # Botões CRUD
         layout_botoes = QHBoxLayout()
@@ -385,6 +392,63 @@ class FornecedoresUI(QWidget):
             return
         categoria_id = self.combo_categoria.currentData()
         self.preencher_tabela_precos(categoria_id)
+
+    def excluir_categoria(self):
+        fornecedor_idx = self.combo_fornecedores.currentIndex()
+        categoria_idx = self.combo_categoria.currentIndex()
+        if fornecedor_idx < 0 or categoria_idx < 0:
+            QMessageBox.warning(self, "Excluir Categoria", "Selecione um fornecedor e categoria.")
+            return
+
+        categoria_nome = self.combo_categoria.currentText()
+        categoria_id = self.combo_categoria.currentData()
+        if categoria_nome.lower() == "padrão":
+            QMessageBox.warning(self, "Excluir Categoria", "Não é permitido excluir a categoria Padrão.")
+            return
+
+        resposta = QMessageBox.question(
+            self, 'Confirmar exclusão',
+            f'Deseja realmente excluir a categoria "{categoria_nome}"?',
+            QMessageBox.Yes | QMessageBox.No
+        )
+        if resposta == QMessageBox.Yes:
+            try:
+                with get_cursor(commit=True) as cursor:
+                    cursor.execute("DELETE FROM categorias_fornecedor_por_fornecedor WHERE id = %s", (categoria_id,))
+                    cursor.execute("DELETE FROM ajustes_fixos_produto_fornecedor_categoria WHERE categoria_id = %s",
+                                   (categoria_id,))
+                fornecedor_id = self.combo_fornecedores.currentData()
+                self.carregar_categorias_do_fornecedor(fornecedor_id)
+                QMessageBox.information(self, "Categoria", "Categoria excluída com sucesso.")
+            except Exception as e:
+                QMessageBox.critical(self, "Erro", str(e))
+
+    def editar_categoria(self):
+        fornecedor_idx = self.combo_fornecedores.currentIndex()
+        categoria_idx = self.combo_categoria.currentIndex()
+        if fornecedor_idx < 0 or categoria_idx < 0:
+            QMessageBox.warning(self, "Editar Categoria", "Selecione um fornecedor e categoria.")
+            return
+
+        categoria_nome = self.combo_categoria.currentText()
+        categoria_id = self.combo_categoria.currentData()
+        if categoria_nome.lower() == "padrão":
+            QMessageBox.warning(self, "Editar Categoria", "Não é permitido editar a categoria Padrão.")
+            return
+
+        # Dialog para editar o nome da categoria
+        novo_nome, ok = QInputDialog.getText(self, "Editar Categoria", "Novo nome para a categoria:",
+                                             text=categoria_nome)
+        if ok and novo_nome.strip():
+            try:
+                with get_cursor(commit=True) as cursor:
+                    cursor.execute("UPDATE categorias_fornecedor_por_fornecedor SET nome = %s WHERE id = %s",
+                                   (novo_nome.strip(), categoria_id))
+                fornecedor_id = self.combo_fornecedores.currentData()
+                self.carregar_categorias_do_fornecedor(fornecedor_id)
+                QMessageBox.information(self, "Categoria", "Categoria atualizada com sucesso.")
+            except Exception as e:
+                QMessageBox.critical(self, "Erro", str(e))
 
     def linha_selecionada(self, row, column):
         if 0 <= row < len(self.fornecedores_exibidos):
@@ -788,6 +852,7 @@ class FornecedoresUI(QWidget):
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
+    QLocale.setDefault(QLocale(QLocale.Portuguese, QLocale.Brazil))
     janela = FornecedoresUI()
     janela.resize(1100, 600)
     janela.show()

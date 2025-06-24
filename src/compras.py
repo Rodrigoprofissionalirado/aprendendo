@@ -5,7 +5,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout, QGridLayout, QComboBox, QDateEdit, QLineEdit,
     QSpinBox, QTableWidget, QTableWidgetItem, QMessageBox
 )
-from PySide6.QtCore import Qt, QDate
+from PySide6.QtCore import Qt, QDate, QLocale
 from db_context import get_cursor
 from PIL import Image, ImageDraw, ImageFont
 from datetime import datetime
@@ -23,6 +23,7 @@ class ComprasUI(QWidget):
         self.itens_compra = []
         self.item_edit_index = None
         self.compra_edit_id = None
+        self.locale = QLocale(QLocale.Portuguese, QLocale.Brazil)
         self.init_ui()
 
     # ---- Métodos DB ----
@@ -433,11 +434,14 @@ class ComprasUI(QWidget):
         for i, item in enumerate(self.itens_compra):
             self.tabela_itens_adicionados.setItem(i, 0, QTableWidgetItem(item["nome"]))
             self.tabela_itens_adicionados.setItem(i, 1, QTableWidgetItem(str(item["quantidade"])))
-            self.tabela_itens_adicionados.setItem(i, 2, QTableWidgetItem(f"{item['preco']:.2f}"))
-            self.tabela_itens_adicionados.setItem(i, 3, QTableWidgetItem(f"{item['total']:.2f}"))
+            preco_formatado = self.locale.toString(float(item['preco']), 'f', 2)
+            total_formatado = self.locale.toString(float(item['total']), 'f', 2)
+            self.tabela_itens_adicionados.setItem(i, 2, QTableWidgetItem(preco_formatado))
+            self.tabela_itens_adicionados.setItem(i, 3, QTableWidgetItem(total_formatado))
         self.tabela_itens_adicionados.blockSignals(False)
         total = sum(item['total'] for item in self.itens_compra)
-        self.label_total_compra.setText(f"Total: R$ {total:.2f}")
+        total_formatado = self.locale.toString(float(total), 'f', 2)
+        self.label_total_compra.setText(f"Total: R$ {total_formatado}")
 
     def remover_item(self):
         selected = self.tabela_itens_adicionados.currentRow()
@@ -456,7 +460,7 @@ class ComprasUI(QWidget):
         fornecedor_id = self.combo_fornecedor.currentData()
         data_compra = self.input_data.date().toPython()
         try:
-            valor_abatimento = float(self.input_abatimento.text()) if self.input_abatimento.text() else 0.0
+            valor_abatimento = float(self.input_abatimento.text().replace(',', '.')) if self.input_abatimento.text() else 0.0
         except ValueError:
             QMessageBox.warning(self, "Erro", "Valor de abatimento inválido.")
             return
@@ -482,7 +486,8 @@ class ComprasUI(QWidget):
             self.tabela_compras.setItem(i, 0, QTableWidgetItem(str(c['id'])))
             self.tabela_compras.setItem(i, 1, QTableWidgetItem(c['fornecedor_nome']))
             self.tabela_compras.setItem(i, 2, QTableWidgetItem(str(c['data'])))
-            self.tabela_compras.setItem(i, 3, QTableWidgetItem(f"{c['total']:.2f}"))
+            total_formatado = self.locale.toString(float(c['total']), 'f', 2)
+            self.tabela_compras.setItem(i, 3, QTableWidgetItem(total_formatado))
 
     def mostrar_itens_da_compra(self, row, column):
         compra_id_item = self.tabela_compras.item(row, 0)
@@ -514,15 +519,19 @@ class ComprasUI(QWidget):
         for i, item in enumerate(itens):
             self.tabela_itens_compra.setItem(i, 0, QTableWidgetItem(item['produto_nome']))
             self.tabela_itens_compra.setItem(i, 1, QTableWidgetItem(str(item['quantidade'])))
-            self.tabela_itens_compra.setItem(i, 2, QTableWidgetItem(f"{item['preco_unitario']:.2f}"))
-            self.tabela_itens_compra.setItem(i, 3, QTableWidgetItem(f"{item['total']:.2f}"))
+            preco_formatado = self.locale.toString(float(item['preco_unitario']), 'f', 2)
+            total_formatado = self.locale.toString(float(item['total']), 'f', 2)
+            self.tabela_itens_compra.setItem(i, 2, QTableWidgetItem(preco_formatado))
+            self.tabela_itens_compra.setItem(i, 3, QTableWidgetItem(total_formatado))
 
         self.tabela_itens_compra.setItem(len(itens), 0, QTableWidgetItem("Abatimento"))
         self.tabela_itens_compra.setItem(len(itens), 1, QTableWidgetItem(""))
         self.tabela_itens_compra.setItem(len(itens), 2, QTableWidgetItem(""))
-        self.tabela_itens_compra.setItem(len(itens), 3, QTableWidgetItem(f"-{valor_abatimento:.2f}"))
+        self.tabela_itens_compra.setItem(len(itens), 3, QTableWidgetItem(f"-{self.locale.toString(valor_abatimento, 'f', 2)}"))
 
-        self.label_total_com_abatimento.setText(f"Total com Abatimento: R$ {total_final:.2f}")
+        self.label_total_com_abatimento.setText(
+            f"Total com Abatimento: R$ {self.locale.toString(total_final, 'f', 2)}"
+        )
 
         with get_cursor() as cursor:
             cursor.execute("SELECT fornecedor_id FROM compras WHERE id = %s", (compra_id,))
@@ -531,12 +540,13 @@ class ComprasUI(QWidget):
         if compra_info:
             fornecedor_id = compra_info["fornecedor_id"]
             nome_conta = self.buscar_nome_conta_padrao(fornecedor_id)
-            texto_copiavel = f"{nome_conta} - R$ {total_final:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+            texto_copiavel = f"{nome_conta} - R$ {self.locale.toString(total_final, 'f', 2)}"
             self.campo_texto_copiavel.setText(texto_copiavel)
             self.campo_texto_copiavel.setStyleSheet("color: black; font-weight: bold; font-size: 13px;")
         else:
             self.campo_texto_copiavel.setText("Conta não encontrada")
             self.campo_texto_copiavel.setStyleSheet("color: red; font-weight: bold; font-size: 13px;")
+
 
     def buscar_nome_conta_padrao(self, fornecedor_id):
         try:
@@ -729,7 +739,8 @@ class ComprasUI(QWidget):
                 nova_qtd = int(self.tabela_itens_adicionados.item(row, 1).text())
                 self.itens_compra[row]['quantidade'] = nova_qtd
             elif column == 2:  # Preço unitário
-                novo_preco = float(self.tabela_itens_adicionados.item(row, 2).text())
+                novo_preco_str = self.tabela_itens_adicionados.item(row, 2).text().replace(',', '.')
+                novo_preco = float(novo_preco_str)
                 self.itens_compra[row]['preco'] = novo_preco
 
             qtd = self.itens_compra[row]['quantidade']
@@ -1047,6 +1058,7 @@ class ComprasUI(QWidget):
 
 if __name__ == "__main__":
     app = QApplication([])
+    QLocale.setDefault(QLocale(QLocale.Portuguese, QLocale.Brazil))
     window = ComprasUI()
     window.resize(1200, 600)
     window.show()

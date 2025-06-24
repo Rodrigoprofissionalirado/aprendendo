@@ -1,11 +1,9 @@
-# Requisitos: pip install PySide6 mysql-connector-python
-
 import sys
 from PySide6.QtWidgets import (
     QApplication, QWidget, QLabel, QPushButton, QVBoxLayout,
     QLineEdit, QMessageBox, QTableWidget, QTableWidgetItem, QHBoxLayout, QGridLayout
 )
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QLocale
 from db_context import get_cursor
 
 class ProdutosUI(QWidget):
@@ -62,11 +60,13 @@ class ProdutosUI(QWidget):
             cursor.execute("SELECT * FROM produtos")
             dados = cursor.fetchall()
 
+        locale = QLocale(QLocale.Portuguese, QLocale.Brazil)
         self.tabela.setRowCount(len(dados))
         for i, dado in enumerate(dados):
             self.tabela.setItem(i, 0, QTableWidgetItem(str(dado['id'])))
             self.tabela.setItem(i, 1, QTableWidgetItem(dado['nome']))
-            self.tabela.setItem(i, 2, QTableWidgetItem(str(dado['preco_base'])))
+            preco_formatado = locale.toString(float(dado['preco_base']), 'f', 2)
+            self.tabela.setItem(i, 2, QTableWidgetItem(preco_formatado))
 
     def adicionar(self):
         nome = self.input_nome.text()
@@ -74,7 +74,7 @@ class ProdutosUI(QWidget):
 
         if nome and preco:
             try:
-                preco = float(preco)
+                preco = float(preco.replace(',', '.'))
                 with get_cursor(commit=True) as cursor:
                     cursor.execute(
                         "INSERT INTO produtos (nome, preco_base) VALUES (%s, %s)",
@@ -83,7 +83,7 @@ class ProdutosUI(QWidget):
                 self.carregar_tabela()
                 self.limpar()
             except ValueError:
-                QMessageBox.warning(self, 'Erro', 'Preço inválido.')
+                QMessageBox.warning(self, 'Erro', 'Preço inválido. Use ponto ou vírgula para os decimais.')
         else:
             QMessageBox.warning(self, 'Campos obrigatórios', 'Preencha todos os campos.')
 
@@ -97,7 +97,7 @@ class ProdutosUI(QWidget):
             nome = self.input_nome.text()
             preco = self.input_preco.text()
             try:
-                preco = float(preco)
+                preco = float(preco.replace(',', '.'))
                 with get_cursor(commit=True) as cursor:
                     cursor.execute(
                         "UPDATE produtos SET nome=%s, preco_base=%s WHERE id=%s",
@@ -106,7 +106,7 @@ class ProdutosUI(QWidget):
                 self.carregar_tabela()
                 self.limpar()
             except ValueError:
-                QMessageBox.warning(self, 'Erro', 'Preço inválido.')
+                QMessageBox.warning(self, 'Erro', 'Preço inválido. Use ponto ou vírgula para os decimais.')
 
     def excluir(self):
         if self.dado_selecionado:
@@ -122,6 +122,7 @@ class ProdutosUI(QWidget):
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
+    QLocale.setDefault(QLocale(QLocale.Portuguese, QLocale.Brazil))
     janela = ProdutosUI()
     janela.resize(600, 400)
     janela.show()
