@@ -5,7 +5,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout, QGridLayout, QComboBox, QDateEdit, QLineEdit,
     QSpinBox, QTableWidget, QTableWidgetItem, QMessageBox
 )
-from PySide6.QtCore import Qt, QDate, QLocale
+from PySide6.QtCore import QTimer, QDate, QLocale
 from db_context import get_cursor
 from PIL import Image, ImageDraw, ImageFont
 from datetime import datetime
@@ -367,7 +367,10 @@ class ComprasUI(QWidget):
     def copiar_campo_texto_copiavel(self, event):
         clipboard = QApplication.clipboard()
         clipboard.setText(self.campo_texto_copiavel.text())
-        # Chame o evento padrão para manter o foco (opcional)
+        # Muda cor de fundo rapidamente (verde claro)
+        self.campo_texto_copiavel.setStyleSheet("background-color: #b2f2b4; font-weight: bold; font-size: 13px;")
+        QTimer.singleShot(350, lambda: self.campo_texto_copiavel.setStyleSheet("font-weight: bold; font-size: 13px;"))
+        # Chama o evento padrão para manter o foco
         QLineEdit.mousePressEvent(self.campo_texto_copiavel, event)
 
     def carregar_categorias_para_fornecedor(self, fornecedor_id):
