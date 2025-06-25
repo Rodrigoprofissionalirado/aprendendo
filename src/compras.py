@@ -693,10 +693,23 @@ class ComprasUI(QWidget):
     def atualizar_saldo_fornecedor(self):
         fornecedor_id = self.combo_fornecedor.currentData()
         if not fornecedor_id:
-            self.label_saldo_fornecedor.setText("Saldo: R$ 0,00")
+            self.label_saldo_fornecedor.setText("Saldo devedor: R$ 0,00")
+            self.label_saldo_fornecedor.setStyleSheet(
+                "font-weight: bold; color: #808080; font-size: 13px; text-decoration: underline; cursor: pointer;")
             return
         saldo = self.obter_saldo_devedor_fornecedor(fornecedor_id)
         self.label_saldo_fornecedor.setText(f"Saldo: R$ {self.locale.toString(float(saldo), 'f', 2)}")
+
+        # Atualiza cor de acordo com saldo
+        if saldo > 0:
+            cor = "#b22222"  # vermelho
+        elif saldo < 0:
+            cor = "#228B22"  # verde
+        else:
+            cor = "#808080"  # cinza
+        self.label_saldo_fornecedor.setStyleSheet(
+            f"font-weight: bold; color: {cor}; font-size: 13px; text-decoration: underline; cursor: pointer;"
+        )
 
     def on_saldo_label_clicked(self, event):
         fornecedor_id = self.combo_fornecedor.currentData()
