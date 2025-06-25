@@ -337,10 +337,14 @@ class ComprasUI(QWidget):
         layout_concluidas = QVBoxLayout()
         self.tab_concluidas.setLayout(layout_concluidas)
         self.tabela_compras_concluidas = QTableWidget()
-        self.tabela_compras_concluidas.setColumnCount(5)
-        self.tabela_compras_concluidas.setHorizontalHeaderLabels(["ID", "Fornecedor", "Data", "Total", "Status"])
+        self.tabela_compras_concluidas.setColumnCount(6)
+        self.tabela_compras_concluidas.setHorizontalHeaderLabels([
+            "ID", "Fornecedor", "Data", "Total dos produtos (R$)", "Valor com abatimento/adiantamento", "Status"
+        ])
         self.tabela_compras_concluidas.setEditTriggers(QTableWidget.DoubleClicked)
-        self.tabela_compras_concluidas.cellClicked.connect(lambda row, col: self.mostrar_itens_da_compra(row, col, tabela=self.tabela_compras_concluidas))
+        self.tabela_compras_concluidas.cellClicked.connect(
+            lambda row, col: self.mostrar_itens_da_compra(row, col, tabela=self.tabela_compras_concluidas)
+        )
         layout_concluidas.addWidget(self.tabela_compras_concluidas)
 
         # ===================== ENTRADA DE DADOS - ESQUERDA =====================
@@ -381,9 +385,24 @@ class ComprasUI(QWidget):
         layout_dados.addWidget(QLabel("Categoria (para esta compra)"), 4, 0)
         layout_dados.addWidget(self.combo_categoria_temporaria, 4, 1)
 
-        self.input_abatimento = QLineEdit()
-        layout_dados.addWidget(QLabel("Abatimento"), 5, 0)
-        layout_dados.addWidget(self.input_abatimento, 5, 1)
+        # ========== ABAIXO: ComboBox + QLineEdit para Abatimento/Adiantamento ==========
+        self.combo_tipo_lancamento = QComboBox()
+        self.combo_tipo_lancamento.addItem("Abatimento", "abatimento")
+        self.combo_tipo_lancamento.addItem("Adiantamento", "adiantamento")
+        self.combo_tipo_lancamento.setCurrentIndex(0)
+        self.combo_tipo_lancamento.currentIndexChanged.connect(self.atualizar_total_compra)
+
+        self.input_valor_lancamento = QLineEdit()
+        self.input_valor_lancamento.setPlaceholderText("Valor")
+        self.input_valor_lancamento.textChanged.connect(self.atualizar_total_compra)
+
+        layout_lancamento = QHBoxLayout()
+        layout_lancamento.addWidget(self.combo_tipo_lancamento)
+        layout_lancamento.addWidget(self.input_valor_lancamento)
+
+        layout_dados.addWidget(QLabel("Abatimento/Adiantamento"), 5, 0)
+        layout_dados.addLayout(layout_lancamento, 5, 1)
+        # ========== FIM NOVO CAMPO ==========
 
         # Status da compra
         self.combo_status = QComboBox()
@@ -508,8 +527,10 @@ class ComprasUI(QWidget):
         layout_compras_com_filtros.addLayout(linha_datas_e_botoes)
 
         self.tabela_compras_aberto = QTableWidget()
-        self.tabela_compras_aberto.setColumnCount(5)
-        self.tabela_compras_aberto.setHorizontalHeaderLabels(["ID", "Fornecedor", "Data", "Total", "Status"])
+        self.tabela_compras_aberto.setColumnCount(6)
+        self.tabela_compras_aberto.setHorizontalHeaderLabels([
+            "ID", "Fornecedor", "Data", "Total dos produtos (R$)", "Valor com abatimento/adiantamento", "Status"
+        ])
         self.tabela_compras_aberto.setEditTriggers(QTableWidget.DoubleClicked)
         self.tabela_compras_aberto.cellClicked.connect(lambda row, col: self.mostrar_itens_da_compra(row, col, tabela=self.tabela_compras_aberto))
         layout_compras_com_filtros.addWidget(self.tabela_compras_aberto)
@@ -546,8 +567,8 @@ class ComprasUI(QWidget):
         self.atualizar_tabela_itens_adicionados()
         self.atualizar_tabelas()
         self.status_delegate = StatusComboDelegate(self.STATUS_COLORS, STATUS_LIST, self.tabela_compras_aberto)
-        self.tabela_compras_aberto.setItemDelegateForColumn(4, self.status_delegate)
-        self.tabela_compras_concluidas.setItemDelegateForColumn(4, self.status_delegate)
+        self.tabela_compras_aberto.setItemDelegateForColumn(5, self.status_delegate)
+        self.tabela_compras_concluidas.setItemDelegateForColumn(5, self.status_delegate)
         self.tabela_compras_aberto.itemChanged.connect(self.on_status_item_changed)
         self.tabela_compras_concluidas.itemChanged.connect(self.on_status_item_changed)
 
@@ -584,6 +605,7 @@ class ComprasUI(QWidget):
         )
         self.preencher_tabela_compras(self.tabela_compras_aberto, compras_aberto)
         self.preencher_tabela_compras(self.tabela_compras_concluidas, compras_concluidas)
+
     def preencher_tabela_compras(self, tabela, compras):
         tabela.blockSignals(True)
         tabela.setRowCount(len(compras))
@@ -591,19 +613,53 @@ class ComprasUI(QWidget):
             tabela.setItem(i, 0, QTableWidgetItem(str(c['id'])))
             tabela.setItem(i, 1, QTableWidgetItem(c['fornecedor_nome']))
             tabela.setItem(i, 2, QTableWidgetItem(str(c['data'])))
-            total_formatado = self.locale.toString(float(c['total']), 'f', 2)
-            tabela.setItem(i, 3, QTableWidgetItem(total_formatado))
-            tabela.setItem(i, 4, QTableWidgetItem(c['status'])) # NÃO use setCellWidget!
+            total_produtos = self.obter_total_produtos(c['id'])
+            tabela.setItem(i, 3, QTableWidgetItem(self.locale.toString(float(total_produtos), 'f', 2)))
+            valor_final = self.obter_valor_com_abatimento_adiantamento(c['id'], total_produtos)
+            tabela.setItem(i, 4, QTableWidgetItem(self.locale.toString(float(valor_final), 'f', 2)))
+            tabela.setItem(i, 5, QTableWidgetItem(c['status']))
         tabela.blockSignals(False)
 
+    def obter_total_produtos(self, compra_id):
+        with get_cursor() as cursor:
+            cursor.execute("""
+                           SELECT SUM(quantidade * preco_unitario) as total_produtos
+                           FROM itens_compra
+                           WHERE compra_id = %s
+                           """, (compra_id,))
+            row = cursor.fetchone()
+            return row["total_produtos"] if row and row["total_produtos"] is not None else 0
+
+    def obter_valor_com_abatimento_adiantamento(self, compra_id, total_produtos=None):
+        if total_produtos is None:
+            total_produtos = self.obter_total_produtos(compra_id)
+        with get_cursor() as cursor:
+            # Pega abatimento
+            cursor.execute("SELECT valor_abatimento FROM compras WHERE id = %s", (compra_id,))
+            row = cursor.fetchone()
+            abatimento = Decimal(str(row["valor_abatimento"])) if row and row["valor_abatimento"] else Decimal('0.0')
+            # Pega adiantamento/inclusao
+            cursor.execute("""
+                           SELECT COALESCE(SUM(valor), 0) as adiantamento
+                           FROM debitos_fornecedores
+                           WHERE compra_id = %s
+                             AND tipo = 'inclusao'
+                           """, (compra_id,))
+            row = cursor.fetchone()
+            adiantamento = Decimal(str(row["adiantamento"])) if row and row["adiantamento"] else Decimal('0.0')
+        total_produtos = Decimal(str(total_produtos))
+        if adiantamento > 0:
+            return total_produtos + adiantamento
+        else:
+            return total_produtos - abatimento
+
     def on_status_item_changed(self, item):
-        if item.column() == 4:
+        if item.column() == 5:
             row = item.row()
             tabela = item.tableWidget()
             compra_id = int(tabela.item(row, 0).text())
             novo_status = item.text()
             self.atualizar_status_compra(compra_id, novo_status)
-            # Se quiser atualizar a tabela inteira (ex: mover para concluídas)
             self.atualizar_tabelas()
 
     def aplicar_filtro_compras(self):
@@ -752,6 +808,21 @@ class ComprasUI(QWidget):
         self.itens_compra = []
         self.atualizar_tabela_itens_adicionados()
 
+    def atualizar_total_compra(self):
+        valor_texto = self.input_valor_lancamento.text().replace(',', '.')
+        try:
+            valor = Decimal(valor_texto) if valor_texto else Decimal('0.00')
+        except Exception:
+            valor = Decimal('0.00')
+        tipo = self.combo_tipo_lancamento.currentData()
+        total = sum(Decimal(str(item['total'])) for item in self.itens_compra)
+        if tipo == "abatimento":
+            total_final = total - valor
+        else:  # adiantamento
+            total_final = total + valor
+        total_formatado = self.locale.toString(float(total_final), 'f', 2)
+        self.label_total_compra.setText(f"Total: R$ {total_formatado}")
+
     def finalizar_compra(self):
         if not self.itens_compra:
             QMessageBox.warning(self, "Erro", "Adicione pelo menos um item antes de finalizar.")
@@ -760,66 +831,57 @@ class ComprasUI(QWidget):
         fornecedor_id = self.combo_fornecedor.currentData()
         data_compra = self.input_data.date().toPython()
         try:
-            from decimal import Decimal
-            valor_abatimento = Decimal(
-                self.input_abatimento.text().replace(',', '.')) if self.input_abatimento.text() else 0.0
+            valor_lancamento = Decimal(self.input_valor_lancamento.text().replace(',', '.')) if self.input_valor_lancamento.text() else Decimal('0.00')
         except ValueError:
-            QMessageBox.warning(self, "Erro", "Valor de abatimento inválido.")
+            QMessageBox.warning(self, "Erro", "Valor de abatimento/adiantamento inválido.")
             return
+
+        tipo_lancamento = self.combo_tipo_lancamento.currentData()
         status = self.combo_status.currentText()
 
+        valor_abatimento = valor_lancamento if tipo_lancamento == "abatimento" else Decimal('0.00')
+        valor_inclusao = valor_lancamento if tipo_lancamento == "adiantamento" else Decimal('0.00')
+
         if self.compra_edit_id is None:
-            # NOVA COMPRA
-            self.adicionar_compra(fornecedor_id, data_compra, valor_abatimento, self.itens_compra, status)
+            compra_id = self.adicionar_compra(
+                fornecedor_id, data_compra, valor_abatimento, self.itens_compra, status
+            )
+            if tipo_lancamento == "adiantamento" and valor_inclusao > 0:
+                with get_cursor(commit=True) as cursor:
+                    cursor.execute(
+                        """
+                        INSERT INTO debitos_fornecedores
+                        (fornecedor_id, compra_id, data_lancamento, descricao, valor, tipo)
+                        VALUES (%s, %s, %s, %s, %s, 'inclusao')
+                        """,
+                        (fornecedor_id, compra_id, data_compra, 'Inclusão em compra', abs(valor_inclusao))
+                    )
             QMessageBox.information(self, "Sucesso", "Compra cadastrada com sucesso.")
         else:
-            # EDIÇÃO DE COMPRA
-            # 1. Pegue o total antigo
-            from decimal import Decimal
-
-            with get_cursor() as cursor:
-                cursor.execute("SELECT total FROM compras WHERE id = %s", (self.compra_edit_id,))
-                compra_antiga = cursor.fetchone()
-                total_antigo = Decimal(str(compra_antiga["total"])) if compra_antiga else Decimal('0.00')
-            # 2. Calcule o total novo
-            total_novo = sum(Decimal(str(item['total'])) for item in self.itens_compra)
-            total_novo_com_abatimento = total_novo - valor_abatimento
-
-            # 3. Se diferença relevante, exiba diálogo
-            diferenca = total_novo_com_abatimento - total_antigo
-
-            if abs(diferenca) > 0.01:
-                dialog = DiferencaCompraDialog(diferenca, self)
-                if dialog.exec():
-                    if dialog.resultado == "converter_abate":
-                        # Lançar diferença como abate ou adiantamento
-                        tipo = "abatimento" if diferenca < 0 else "inclusão"
-                        descricao = "Ajuste automático de edição de compra"
-                        valor = abs(diferenca)
-                        # Registra nos débitos (use sinal correto para abatimento)
-                        with get_cursor(commit=True) as cursor:
-                            cursor.execute(
-                                """
-                                INSERT INTO debitos_fornecedores
-                                    (fornecedor_id, compra_id, data_lancamento, descricao, valor, tipo)
-                                VALUES (%s, %s, %s, %s, %s, %s)
-                                """,
-                                (
-                                    fornecedor_id,
-                                    self.compra_edit_id,
-                                    data_compra,
-                                    descricao,
-                                    valor,
-                                    tipo
-                                )
-                            )
-                    # Se "somente_alterar", não faz nada extra (apenas salva)
-
-            # 4. Atualiza a compra
-            self.atualizar_compra(self.compra_edit_id, fornecedor_id, data_compra, valor_abatimento, self.itens_compra,
-                                  status)
-            QMessageBox.information(self, "Sucesso", "Compra atualizada com sucesso.")
-            self.compra_edit_id = None
+            self.atualizar_compra(
+                self.compra_edit_id,
+                fornecedor_id,
+                data_compra,
+                valor_abatimento,
+                self.itens_compra,
+                status
+            )
+            # Remover e lançar inclusão se necessário
+            with get_cursor(commit=True) as cursor:
+                cursor.execute(
+                    "DELETE FROM debitos_fornecedores WHERE compra_id = %s AND tipo = 'inclusao'",
+                    (self.compra_edit_id,)
+                )
+                if tipo_lancamento == "adiantamento" and valor_inclusao > 0:
+                    cursor.execute(
+                        """
+                        INSERT INTO debitos_fornecedores
+                        (fornecedor_id, compra_id, data_lancamento, descricao, valor, tipo)
+                        VALUES (%s, %s, %s, %s, %s, 'inclusao')
+                        """,
+                        (fornecedor_id, self.compra_edit_id, data_compra, 'Inclusão em compra', abs(valor_inclusao))
+                    )
+            QMessageBox.information(self, "Sucesso", "Compra editada com sucesso.")
 
         # Limpa e atualiza UI
         self.limpar_campos()
@@ -855,6 +917,15 @@ class ComprasUI(QWidget):
             """, (compra_id,))
             itens = cursor.fetchall()
 
+            # Busca adiantamento (inclusao)
+            cursor.execute("""
+                SELECT COALESCE(SUM(valor),0) as valor_adiantamento
+                FROM debitos_fornecedores
+                WHERE compra_id = %s AND tipo = 'inclusao'
+            """, (compra_id,))
+            adiantamento_row = cursor.fetchone()
+            valor_adiantamento = float(adiantamento_row["valor_adiantamento"]) if adiantamento_row else 0.0
+
         if compra is None:
             QMessageBox.warning(self, "Erro", "Compra não encontrada.")
             return
@@ -862,7 +933,15 @@ class ComprasUI(QWidget):
         idx_fornecedor = self.combo_fornecedor.findData(compra['fornecedor_id'])
         self.combo_fornecedor.setCurrentIndex(idx_fornecedor if idx_fornecedor >= 0 else 0)
         self.input_data.setDate(QDate(compra['data_compra']))
-        self.input_abatimento.setText(str(compra['valor_abatimento']))
+
+        # Atualiza combo e campo de valor conforme o tipo de lançamento
+        if valor_adiantamento > 0:
+            self.combo_tipo_lancamento.setCurrentIndex(1)  # Adiantamento
+            self.input_valor_lancamento.setText(str(valor_adiantamento))
+        else:
+            self.combo_tipo_lancamento.setCurrentIndex(0)  # Abatimento
+            self.input_valor_lancamento.setText(str(compra['valor_abatimento']))
+
         idx_status = self.combo_status.findText(compra['status'])
         self.combo_status.setCurrentIndex(idx_status if idx_status >= 0 else 0)
 
@@ -970,7 +1049,8 @@ class ComprasUI(QWidget):
         self.combo_fornecedor.setCurrentIndex(0)
         self.input_numero_balanca.clear()
         self.input_data.setDate(QDate.currentDate())
-        self.input_abatimento.clear()
+        self.input_valor_lancamento.clear()
+        self.combo_tipo_lancamento.setCurrentIndex(0)
         self.combo_produto.setCurrentIndex(-1)
         self.input_quantidade.setValue(1)
         self.item_edit_index = None
@@ -993,23 +1073,36 @@ class ComprasUI(QWidget):
         compra_id = int(compra_id_item.text())
         with get_cursor() as cursor:
             cursor.execute("""
-                           SELECT p.nome                            AS produto_nome,
-                                  i.produto_id,
-                                  i.quantidade,
-                                  i.preco_unitario,
-                                  (i.quantidade * i.preco_unitario) AS total
-                           FROM itens_compra i
-                                    JOIN produtos p ON i.produto_id = p.id
-                           WHERE i.compra_id = %s
-                           """, (compra_id,))
+                SELECT p.nome AS produto_nome,
+                       i.produto_id,
+                       i.quantidade,
+                       i.preco_unitario,
+                       (i.quantidade * i.preco_unitario) AS total
+                FROM itens_compra i
+                JOIN produtos p ON i.produto_id = p.id
+                WHERE i.compra_id = %s
+            """, (compra_id,))
             itens = cursor.fetchall()
+
+            # Busca valores de abatimento e adiantamento (inclusao)
             cursor.execute("SELECT valor_abatimento FROM compras WHERE id = %s", (compra_id,))
             compra = cursor.fetchone()
 
+            cursor.execute("""
+                SELECT COALESCE(SUM(valor),0) AS valor_adiantamento
+                FROM debitos_fornecedores
+                WHERE compra_id = %s AND tipo = 'inclusao'
+            """, (compra_id,))
+            adiantamento_row = cursor.fetchone()
+
         valor_abatimento = float(compra["valor_abatimento"]) if compra else 0.0
+        valor_adiantamento = float(adiantamento_row["valor_adiantamento"]) if adiantamento_row else 0.0
+
         subtotal = float(sum(item["total"] for item in itens))
-        total_final = subtotal - valor_abatimento
-        self.tabela_itens_compra.setRowCount(len(itens) + 1)
+
+        # Mostra linhas dos itens
+        linhas_extra = 1  # sempre terá abatimento ou adiantamento
+        self.tabela_itens_compra.setRowCount(len(itens) + linhas_extra)
         for i, item in enumerate(itens):
             self.tabela_itens_compra.setItem(i, 0, QTableWidgetItem(item['produto_nome']))
             self.tabela_itens_compra.setItem(i, 1, QTableWidgetItem(str(item['quantidade'])))
@@ -1018,15 +1111,27 @@ class ComprasUI(QWidget):
             self.tabela_itens_compra.setItem(i, 2, QTableWidgetItem(preco_formatado))
             self.tabela_itens_compra.setItem(i, 3, QTableWidgetItem(total_formatado))
 
-        self.tabela_itens_compra.setItem(len(itens), 0, QTableWidgetItem("Abatimento"))
-        self.tabela_itens_compra.setItem(len(itens), 1, QTableWidgetItem(""))
-        self.tabela_itens_compra.setItem(len(itens), 2, QTableWidgetItem(""))
-        self.tabela_itens_compra.setItem(len(itens), 3, QTableWidgetItem(f"-{self.locale.toString(valor_abatimento, 'f', 2)}"))
+        # Linha para abatimento ou adiantamento
+        if valor_adiantamento > 0:
+            self.tabela_itens_compra.setItem(len(itens), 0, QTableWidgetItem("Adiantamento"))
+            self.tabela_itens_compra.setItem(len(itens), 1, QTableWidgetItem(""))
+            self.tabela_itens_compra.setItem(len(itens), 2, QTableWidgetItem(""))
+            self.tabela_itens_compra.setItem(len(itens), 3, QTableWidgetItem(f"+{self.locale.toString(valor_adiantamento, 'f', 2)}"))
+            total_final = subtotal + valor_adiantamento
+            self.label_total_com_abatimento.setText(
+                f"Total com Adiantamento: R$ {self.locale.toString(total_final, 'f', 2)}"
+            )
+        else:
+            self.tabela_itens_compra.setItem(len(itens), 0, QTableWidgetItem("Abatimento"))
+            self.tabela_itens_compra.setItem(len(itens), 1, QTableWidgetItem(""))
+            self.tabela_itens_compra.setItem(len(itens), 2, QTableWidgetItem(""))
+            self.tabela_itens_compra.setItem(len(itens), 3, QTableWidgetItem(f"-{self.locale.toString(valor_abatimento, 'f', 2)}"))
+            total_final = subtotal - valor_abatimento
+            self.label_total_com_abatimento.setText(
+                f"Total com Abatimento: R$ {self.locale.toString(total_final, 'f', 2)}"
+            )
 
-        self.label_total_com_abatimento.setText(
-            f"Total com Abatimento: R$ {self.locale.toString(total_final, 'f', 2)}"
-        )
-
+        # Atualiza campo copiável
         with get_cursor() as cursor:
             cursor.execute("SELECT fornecedor_id FROM compras WHERE id = %s", (compra_id,))
             compra_info = cursor.fetchone()
