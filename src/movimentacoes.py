@@ -105,6 +105,100 @@ class MovimentacaoTabUI(QWidget):
                         saldo -= valor_op
         return saldo
 
+    def editar_movimentacao_finalizada(self):
+        linha = self.tabela_movimentacoes.currentRow()
+        if linha < 0:
+            QMessageBox.information(self, "Editar Movimentação", "Selecione uma movimentação para editar.")
+            return
+        movimentacao_id_item = self.tabela_movimentacoes.item(linha, 0)
+        if movimentacao_id_item is None:
+            return
+        movimentacao_id = int(movimentacao_id_item.text())
+
+        with get_cursor() as cursor:
+            cursor.execute("""
+                           SELECT fornecedor_id, data, tipo, direcao, descricao, valor_operacao
+                           FROM movimentacoes
+                           WHERE id = %s
+                           """, (movimentacao_id,))
+            movimentacao = cursor.fetchone()
+
+            cursor.execute("""
+                           SELECT p.nome                            AS produto_nome,
+                                  i.produto_id,
+                                  i.quantidade,
+                                  i.preco_unitario,
+                                  (i.quantidade * i.preco_unitario) AS total
+                           FROM itens_movimentacao i
+                                    JOIN produtos p ON i.produto_id = p.id
+                           WHERE i.movimentacao_id = %s
+                           """, (movimentacao_id,))
+            itens = cursor.fetchall()
+
+        if movimentacao is None:
+            QMessageBox.warning(self, "Erro", "Movimentação não encontrada.")
+            return
+
+        idx_fornecedor = self.combo_fornecedor.findData(movimentacao['fornecedor_id'])
+        self.combo_fornecedor.setCurrentIndex(idx_fornecedor if idx_fornecedor >= 0 else 0)
+        self.input_data.setDate(QDate(movimentacao['data']))
+        idx_tipo = self.combo_tipo.findText(movimentacao['tipo'])
+        self.combo_tipo.setCurrentIndex(idx_tipo if idx_tipo >= 0 else 0)
+        idx_direcao = self.combo_direcao.findText(movimentacao['direcao'])
+        self.combo_direcao.setCurrentIndex(idx_direcao if idx_direcao >= 0 else 0)
+        self.input_descricao.setText(str(movimentacao['descricao']))
+        self.input_valor_operacao.setText(str(movimentacao['valor_operacao']))
+
+        self.itens_movimentacao = []
+        for item in itens:
+            self.itens_movimentacao.append({
+                "produto_id": item['produto_id'],
+                "nome": item['produto_nome'],
+                "quantidade": item['quantidade'],
+                "preco": item['preco_unitario'],
+                "total": item['total']
+            })
+
+        self.movimentacao_edit_id = movimentacao_id
+        self.atualizar_tabela_itens_adicionados()
+
+    def excluir_movimentacao_finalizada(self):
+        linha = self.tabela_movimentacoes.currentRow()
+        if linha < 0:
+            QMessageBox.information(self, "Excluir Movimentação", "Selecione uma movimentação para excluir.")
+            return
+
+        movimentacao_id_item = self.tabela_movimentacoes.item(linha, 0)
+        if movimentacao_id_item is None:
+            return
+
+        movimentacao_id = int(movimentacao_id_item.text())
+
+        confirm = QMessageBox.question(
+            self,
+            "Confirmar Exclusão",
+            f"Tem certeza que deseja excluir a movimentação ID {movimentacao_id}?",
+            QMessageBox.Yes | QMessageBox.No
+        )
+
+        if confirm != QMessageBox.Yes:
+            return
+
+        try:
+            with get_cursor(commit=True) as cursor:
+                cursor.execute("DELETE FROM itens_movimentacao WHERE movimentacao_id = %s", (movimentacao_id,))
+                cursor.execute("DELETE FROM movimentacoes WHERE id = %s", (movimentacao_id,))
+            QMessageBox.information(self, "Sucesso", "Movimentação excluída com sucesso.")
+            self.atualizar_tabela()
+            self.tabela_itens_movimentacao.setRowCount(0)
+        except Exception as e:
+            QMessageBox.critical(self, "Erro", f"Erro ao excluir movimentação: {e}")
+
+    def acao_cancelar(self):
+        self.limpar_campos()
+        self.limpar_itens()
+        self.carregar_produtos()
+
     def init_ui(self):
         layout_root = QHBoxLayout(self)
         layout_esq = QVBoxLayout()
@@ -203,17 +297,30 @@ class MovimentacaoTabUI(QWidget):
 
         btn_finalizar = QPushButton("Salvar Movimentação")
         btn_finalizar.clicked.connect(self.finalizar_movimentacao)
-        form_grid.addWidget(btn_finalizar, 13, 0, 1, 2)
+        form_grid.addWidget(btn_finalizar, 14, 0, 1, 2)
 
         self.label_total_movimentacao = QLabel("Total: R$ 0,00")
-        form_grid.addWidget(self.label_total_movimentacao, 14, 0, 1, 2)
+        form_grid.addWidget(self.label_total_movimentacao, 15, 0, 1, 2)
+
+        # Após outros widgets/layouts já existentes
+        self.btn_editar_movimentacao = QPushButton("Editar Movimentação Finalizada Selecionada")
+        self.btn_editar_movimentacao.clicked.connect(self.editar_movimentacao_finalizada)
+        form_grid.addWidget(self.btn_editar_movimentacao, 16, 0, 1, 2)
+
+        self.btn_excluir_movimentacao = QPushButton("Excluir Movimentação Finalizada Selecionada")
+        self.btn_excluir_movimentacao.clicked.connect(self.excluir_movimentacao_finalizada)
+        form_grid.addWidget(self.btn_excluir_movimentacao, 17, 0, 1, 2)
+
+        self.btn_cancelar = QPushButton("Cancelar")
+        self.btn_cancelar.clicked.connect(self.acao_cancelar)
+        form_grid.addWidget(self.btn_cancelar, 13, 0, 1, 2)
 
         self.label_saldo_total = QLabel("Saldo total: R$ 0,00")
         font = self.label_saldo_total.font()
         font.setPointSize(12)
         font.setBold(True)
         self.label_saldo_total.setFont(font)
-        form_grid.addWidget(self.label_saldo_total, 15, 0, 1, 2)
+        form_grid.addWidget(self.label_saldo_total, 18, 0, 1, 2)
 
         layout_esq.addLayout(form_grid)
         layout_esq.addStretch()
