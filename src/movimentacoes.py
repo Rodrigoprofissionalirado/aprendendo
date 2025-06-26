@@ -1,13 +1,57 @@
 import sys
+import os, platform
 import unicodedata
 from PySide6.QtWidgets import (
     QApplication, QWidget, QLabel, QPushButton, QVBoxLayout, QHBoxLayout,
     QGridLayout, QComboBox, QDateEdit, QLineEdit, QSpinBox, QTableWidget,
-    QTableWidgetItem, QMessageBox, QSizePolicy, QTabWidget
+    QTableWidgetItem, QMessageBox, QSizePolicy, QTabWidget, QDialog
 )
 from PySide6.QtCore import Qt, QDate, QLocale
 from decimal import Decimal
 from db_context import get_cursor
+from reportlab.lib.pagesizes import A4
+from reportlab.pdfgen import canvas
+from reportlab.lib.units import mm
+from reportlab.lib.colors import Color
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
+from PIL import Image, ImageDraw, ImageFont
+from datetime import datetime
+
+
+class DialogFiltroData(QDialog):
+    def __init__(self, data_de, data_ate, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Escolher Período para Exportação")
+        layout = QVBoxLayout(self)
+
+        hlayout1 = QHBoxLayout()
+        hlayout1.addWidget(QLabel("Data inicial:"))
+        self.input_data_de = QDateEdit()
+        self.input_data_de.setCalendarPopup(True)
+        self.input_data_de.setDate(data_de)
+        hlayout1.addWidget(self.input_data_de)
+        layout.addLayout(hlayout1)
+
+        hlayout2 = QHBoxLayout()
+        hlayout2.addWidget(QLabel("Data final:"))
+        self.input_data_ate = QDateEdit()
+        self.input_data_ate.setCalendarPopup(True)
+        self.input_data_ate.setDate(data_ate)
+        hlayout2.addWidget(self.input_data_ate)
+        layout.addLayout(hlayout2)
+
+        hlayout3 = QHBoxLayout()
+        self.btn_ok = QPushButton("Exportar")
+        self.btn_ok.clicked.connect(self.accept)
+        self.btn_cancel = QPushButton("Cancelar")
+        self.btn_cancel.clicked.connect(self.reject)
+        hlayout3.addWidget(self.btn_ok)
+        hlayout3.addWidget(self.btn_cancel)
+        layout.addLayout(hlayout3)
+
+    def get_datas(self):
+        return self.input_data_de.date(), self.input_data_ate.date()
 
 def remove_acento(txt):
     if not txt:
@@ -239,6 +283,380 @@ class MovimentacaoTabUI(QWidget):
         except Exception:
             QMessageBox.warning(self, "Erro", "Valor inválido. Digite um número válido.")
 
+    def exportar_movimentacoes_pdf(self):
+        dialog = DialogFiltroData(self.filtro_data_de.date(), self.filtro_data_ate.date(), self)
+        if not dialog.exec():
+            return
+        data_de, data_ate = dialog.get_datas()
+        data_de = data_de.toPython()
+        data_ate = data_ate.toPython()
+
+        with get_cursor() as cursor:
+            cursor.execute("""
+                           SELECT m.id,
+                                  m.data,
+                                  f.nome as fornecedor,
+                                  f.fornecedores_numerobalanca,
+                                  m.tipo,
+                                  m.direcao,
+                                  m.descricao,
+                                  m.valor_operacao
+                           FROM movimentacoes m
+                                    JOIN fornecedores f ON m.fornecedor_id = f.id
+                           WHERE m.data >= %s
+                             AND m.data <= %s
+                           ORDER BY m.data, m.id
+                           """, (data_de, data_ate))
+            movimentacoes = cursor.fetchall()
+
+        if not movimentacoes:
+            QMessageBox.warning(self, "Exportar PDF", "Nenhuma movimentação encontrada no período selecionado.")
+            return
+
+        largura, _ = A4
+        margem = 20 * mm
+        espacamento_blocos = 10 * mm
+
+        # Primeiro, calcula a altura total
+        altura_total = margem
+        blocos = []
+        for mov in movimentacoes:
+            bloco = {}
+            bloco['mov'] = mov
+            with get_cursor() as cursor:
+                itens = []
+                if mov['tipo'].lower() in ("compra", "venda"):
+                    cursor.execute("""
+                                   SELECT p.nome                            AS produto_nome,
+                                          i.quantidade,
+                                          i.preco_unitario,
+                                          (i.quantidade * i.preco_unitario) AS total
+                                   FROM itens_movimentacao i
+                                            JOIN produtos p ON i.produto_id = p.id
+                                   WHERE i.movimentacao_id = %s
+                                   """, (mov['id'],))
+                    itens = cursor.fetchall()
+            bloco['itens'] = itens
+            bloco['altura'] = 90 + 15 * (len(itens) if itens else 1) + 40
+            altura_total += bloco['altura'] + espacamento_blocos
+            blocos.append(bloco)
+
+        filename = f"movimentacoes_{data_de.strftime('%Y%m%d')}_{data_ate.strftime('%Y%m%d')}_extrato.pdf"
+        c = canvas.Canvas(filename, pagesize=(largura, altura_total))
+
+        y = altura_total - margem
+
+        for bloco in blocos:
+            mov = bloco['mov']
+            itens = bloco['itens']
+            tipo = mov['tipo'].capitalize()
+            direcao = mov['direcao'].capitalize() if mov['direcao'] else ""
+            descricao = mov['descricao'] or ""
+            valor_operacao = float(mov['valor_operacao'] or 0)
+
+            c.setFont("Helvetica-Bold", 14)
+            c.drawString(margem, y, f"Movimentação ID: {mov['id']} | Tipo: {tipo}")
+            y -= 18
+            c.setFont("Helvetica", 12)
+            c.drawString(margem, y, f"Fornecedor: {mov['fornecedor']}")
+            y -= 15
+            c.drawString(margem, y, f"Nº Balança: {mov['fornecedores_numerobalanca']}")
+            y -= 15
+            c.drawString(margem, y, f"Data: {mov['data'].strftime('%d/%m/%Y')}")
+            y -= 15
+            if direcao:
+                c.drawString(margem, y, f"Direção: {direcao}")
+                y -= 15
+            if descricao:
+                c.drawString(margem, y, f"Descrição: {descricao}")
+                y -= 15
+
+            # Marca d'água para o bloco
+            self.adicionar_marca_dagua_pdf_area(
+                c,
+                texto=str(mov['fornecedores_numerobalanca']),
+                x_inicio=margem,
+                x_fim=largura - margem,
+                y_topo=y + 78,  # topo do bloco (ajustar se desejar)
+                altura=bloco['altura'] - 20,
+                tamanho_fonte=30,
+                cor=(0.8, 0.8, 0.8),
+                angulo=25
+            )
+
+            if itens:
+                y -= 10
+                c.setFont("Helvetica-Bold", 12)
+                c.drawString(margem, y, "Produtos")
+                y -= 15
+                c.setFont("Helvetica-Bold", 11)
+                c.drawString(margem, y, "Produto")
+                c.drawString(margem + 180, y, "Qtd")
+                c.drawString(margem + 240, y, "Unitário")
+                c.drawString(margem + 330, y, "Total")
+                y -= 10
+                c.line(margem, y, largura - margem, y)
+                y -= 10
+                c.setFont("Helvetica", 11)
+                total = 0
+                for item in itens:
+                    c.drawString(margem, y, item['produto_nome'])
+                    c.drawString(margem + 180, y, str(item['quantidade']))
+                    c.drawString(margem + 240, y, f"R$ {item['preco_unitario']:.2f}")
+                    c.drawString(margem + 330, y, f"R$ {item['total']:.2f}")
+                    total += float(item['total'])
+                    y -= 15
+                y -= 10
+                c.line(margem, y, largura - margem, y)
+                y -= 12
+                c.setFont("Helvetica-Bold", 12)
+                c.drawString(margem, y, f"Subtotal: R$ {total:.2f}")
+                y -= 15
+                c.drawString(margem, y, f"Total Final (com abatimento): R$ {valor_operacao:.2f}")
+                y -= 15
+            else:
+                y -= 15
+                c.setFont("Helvetica-Bold", 12)
+                c.drawString(margem, y, f"Valor da Operação: R$ {valor_operacao:.2f}")
+                y -= 15
+
+            c.setFont("Helvetica-Oblique", 9)
+            c.drawString(margem, y, f"Gerado em: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}")
+            y -= espacamento_blocos
+
+        c.save()
+        QMessageBox.information(self, "Exportar PDF", f"PDF gerado com sucesso:\n{filename}")
+
+        if platform.system() == "Windows":
+            os.startfile(filename)
+        elif platform.system() == "Darwin":
+            os.system(f"open '{filename}'")
+        else:
+            os.system(f"xdg-open '{filename}'")
+
+    def adicionar_marca_dagua_pdf_area(self, c, texto, x_inicio, x_fim, y_topo, altura, tamanho_fonte=30,
+                                       cor=(0.8, 0.8, 0.8), angulo=25):
+        try:
+            pdfmetrics.registerFont(TTFont('Arial', 'arial.ttf'))
+            fonte_nome = 'Arial'
+        except:
+            fonte_nome = 'Helvetica'
+        c.saveState()
+        c.setFont(fonte_nome, tamanho_fonte)
+        c.setFillColor(Color(*cor))
+
+        largura_texto = pdfmetrics.stringWidth(texto, fonte_nome, tamanho_fonte)
+        step_x = largura_texto + 40
+        step_y = tamanho_fonte * 2
+
+        y = y_topo
+        while y > y_topo - altura:
+            x = x_inicio
+            while x < x_fim:
+                c.saveState()
+                c.translate(x, y)
+                c.rotate(angulo)
+                c.drawString(0, 0, texto)
+                c.restoreState()
+                x += step_x
+            y -= step_y
+        c.restoreState()
+
+    def exportar_movimentacoes_jpg(self):
+        dialog = DialogFiltroData(self.filtro_data_de.date(), self.filtro_data_ate.date(), self)
+        if not dialog.exec():
+            return
+
+        data_de, data_ate = dialog.get_datas()
+        data_de = data_de.toPython()
+        data_ate = data_ate.toPython()
+
+        with get_cursor() as cursor:
+            cursor.execute("""
+                           SELECT m.id,
+                                  m.data,
+                                  f.nome as fornecedor,
+                                  f.fornecedores_numerobalanca,
+                                  m.tipo,
+                                  m.direcao,
+                                  m.descricao,
+                                  m.valor_operacao
+                           FROM movimentacoes m
+                                    JOIN fornecedores f ON m.fornecedor_id = f.id
+                           WHERE m.data >= %s
+                             AND m.data <= %s
+                           ORDER BY m.data, m.id
+                           """, (data_de, data_ate))
+            movimentacoes = cursor.fetchall()
+
+        if not movimentacoes:
+            QMessageBox.warning(self, "Exportar JPG", "Nenhuma movimentação encontrada no período selecionado.")
+            return
+
+        largura = 1200
+        margem = 30
+
+        try:
+            fonte = ImageFont.truetype("arial.ttf", 18)
+            fonte_bold = ImageFont.truetype("arialbd.ttf", 24)
+            fonte_mono = ImageFont.truetype("arial.ttf", 16)
+        except IOError:
+            fonte = fonte_bold = fonte_mono = ImageFont.load_default()
+
+        # Calcule altura total
+        altura_total = margem
+        blocos = []
+        for mov in movimentacoes:
+            bloco = {}
+            bloco['mov'] = mov
+            with get_cursor() as cursor:
+                itens = []
+                if mov['tipo'].lower() in ("compra", "venda"):
+                    cursor.execute("""
+                                   SELECT p.nome                            AS produto_nome,
+                                          i.quantidade,
+                                          i.preco_unitario,
+                                          (i.quantidade * i.preco_unitario) AS total
+                                   FROM itens_movimentacao i
+                                            JOIN produtos p ON i.produto_id = p.id
+                                   WHERE i.movimentacao_id = %s
+                                   """, (mov['id'],))
+                    itens = cursor.fetchall()
+            bloco['itens'] = itens
+            bloco['altura'] = 150 + 35 * (len(itens) if itens else 1) + 60
+            altura_total += bloco['altura'] + 25
+            blocos.append(bloco)
+
+        imagem = Image.new("RGB", (largura, altura_total), "white")
+        draw = ImageDraw.Draw(imagem)
+        y_base = margem
+
+        marca_dagua_blocos = []
+
+        for bloco in blocos:
+            mov = bloco['mov']
+            itens = bloco['itens']
+            tipo = mov['tipo'].capitalize()
+            direcao = mov['direcao'].capitalize() if mov['direcao'] else ""
+            descricao = mov['descricao'] or ""
+            valor_operacao = float(mov['valor_operacao'] or 0)
+            y = y_base
+
+            draw.text((margem, y), f"Movimentação ID: {mov['id']} | Tipo: {tipo}", fill="black", font=fonte_bold)
+            y += 38
+            draw.text((margem, y), f"Fornecedor: {mov['fornecedor']}", fill="black", font=fonte)
+            y += 28
+            draw.text((margem, y), f"Nº Balança: {mov['fornecedores_numerobalanca']}", fill="black", font=fonte)
+            y += 28
+            draw.text((margem, y), f"Data: {mov['data'].strftime('%d/%m/%Y')}", fill="black", font=fonte)
+            y += 28
+            if direcao:
+                draw.text((margem, y), f"Direção: {direcao}", fill="black", font=fonte)
+                y += 28
+            if descricao:
+                draw.text((margem, y), f"Descrição: {descricao}", fill="black", font=fonte)
+                y += 28
+
+            if itens:
+                y += 8
+                draw.text((margem, y), "Produtos", fill="black", font=fonte_bold)
+                y += 33
+                draw.text((margem, y), "Produto", fill="black", font=fonte_bold)
+                draw.text((margem + 390, y), "Qtd", fill="black", font=fonte_bold)
+                draw.text((margem + 500, y), "Unitário", fill="black", font=fonte_bold)
+                draw.text((margem + 650, y), "Total", fill="black", font=fonte_bold)
+                y += 5
+                draw.line((margem, y + 20, largura - margem, y + 20), fill="black", width=1)
+                y += 30
+
+                total = 0
+                for item in itens:
+                    draw.text((margem, y), item['produto_nome'], fill="black", font=fonte_mono)
+                    draw.text((margem + 390, y), str(item['quantidade']), fill="black", font=fonte_mono)
+                    draw.text((margem + 500, y), f"R$ {item['preco_unitario']:.2f}", fill="black", font=fonte_mono)
+                    draw.text((margem + 650, y), f"R$ {item['total']:.2f}", fill="black", font=fonte_mono)
+                    total += float(item['total'])
+                    y += 35
+                y += 10
+                draw.line((margem, y, largura - margem, y), fill="black", width=1)
+                y += 10
+                draw.text((margem, y), f"Subtotal: R$ {total:.2f}", fill="black", font=fonte_bold)
+                y += 27
+                draw.text((margem, y), f"Total Final (com abatimento): R$ {valor_operacao:.2f}", fill="black",
+                          font=fonte_bold)
+                y += 27
+            else:
+                y += 10
+                draw.text((margem, y), f"Valor da Operação: R$ {valor_operacao:.2f}", fill="black", font=fonte_bold)
+                y += 27
+
+            draw.text((margem, y + 25), f"Gerado em: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}", fill="gray",
+                      font=fonte)
+
+            # Armazena o bloco para marca d'água posterior
+            marca_dagua_blocos.append({
+                "texto": str(mov['fornecedores_numerobalanca']),
+                "x_inicio": margem,
+                "x_fim": largura - margem,
+                "y_inicio": y_base + 70,
+                "altura": bloco['altura'] - 70
+            })
+
+            y_base += bloco['altura'] + 25
+
+        # Agora aplica as marcas d'água, reatribuindo imagem a cada bloco
+        for md in marca_dagua_blocos:
+            imagem = self.adicionar_marca_dagua_area(
+                imagem,
+                texto=md["texto"],
+                x_inicio=md["x_inicio"],
+                x_fim=md["x_fim"],
+                y_inicio=md["y_inicio"],
+                altura=md["altura"],
+                fonte_path="arial.ttf",
+                tamanho_fonte=36,
+                opacidade=80,
+                angulo=25
+            )
+
+        nome_arquivo = f"movimentacoes_{data_de.strftime('%Y%m%d')}_{data_ate.strftime('%Y%m%d')}_extrato.jpg"
+        imagem.save(nome_arquivo)
+        QMessageBox.information(self, "Exportar JPG", f"Arquivo gerado com sucesso: {nome_arquivo}")
+
+        if platform.system() == "Windows":
+            os.startfile(nome_arquivo)
+        elif platform.system() == "Darwin":
+            os.system(f"open '{nome_arquivo}'")
+        else:
+            os.system(f"xdg-open '{nome_arquivo}'")
+
+    def adicionar_marca_dagua_area(self, imagem, texto, x_inicio, x_fim, y_inicio, altura, fonte_path="arial.ttf", tamanho_fonte=30, opacidade=80, angulo=25):
+        try:
+            fonte = ImageFont.truetype(fonte_path, tamanho_fonte)
+        except IOError:
+            fonte = ImageFont.load_default()
+        marca = Image.new("RGBA", imagem.size, (255, 255, 255, 0))
+        draw = ImageDraw.Draw(marca)
+
+        bbox = draw.textbbox((0, 0), texto, font=fonte)
+        texto_largura = bbox[2] - bbox[0]
+        texto_altura = bbox[3] - bbox[1]
+
+        step_x = texto_largura + 40
+        step_y = tamanho_fonte * 2
+
+        for y in range(int(y_inicio), int(y_inicio + altura), int(step_y)):
+            for x in range(int(x_inicio), int(x_fim), int(step_x)):
+                txt_img = Image.new("RGBA", (texto_largura + 20, texto_altura + 20), (255, 255, 255, 0))
+                txt_draw = ImageDraw.Draw(txt_img)
+                txt_draw.text((10, 10), texto, font=fonte, fill=(200, 200, 200, opacidade))
+                txt_img = txt_img.rotate(angulo, expand=1, resample=Image.BICUBIC)
+                px = int(x)
+                py = int(y)
+                marca.alpha_composite(txt_img, (px, py))
+        resultado = Image.alpha_composite(imagem.convert("RGBA"), marca)
+        return resultado.convert("RGB")
+
     def init_ui(self):
         layout_root = QHBoxLayout(self)
         layout_esq = QVBoxLayout()
@@ -409,6 +827,14 @@ class MovimentacaoTabUI(QWidget):
         self.tabela_itens.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         layout_dir.addWidget(self.tabela_itens)
         layout_root.addLayout(layout_dir, 1)
+        # Botões de exportação abaixo do layout da direita
+        btn_exportar_pdf = QPushButton("Exportar Movimentações em PDF")
+        btn_exportar_pdf.clicked.connect(self.exportar_movimentacoes_pdf)
+        btn_exportar_jpg = QPushButton("Exportar Movimentações em JPG")
+        btn_exportar_jpg.clicked.connect(self.exportar_movimentacoes_jpg)
+
+        layout_dir.addWidget(btn_exportar_pdf)
+        layout_dir.addWidget(btn_exportar_jpg)
 
         self.tipo_changed()
         self.atualiza_saldo_total()
