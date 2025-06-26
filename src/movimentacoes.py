@@ -291,6 +291,9 @@ class MovimentacaoTabUI(QWidget):
         data_de = data_de.toPython()
         data_ate = data_ate.toPython()
 
+        fornecedor_id = self.fornecedor['id']
+
+        # Busca as movimentações a exportar
         with get_cursor() as cursor:
             cursor.execute("""
                            SELECT m.id,
@@ -303,15 +306,62 @@ class MovimentacaoTabUI(QWidget):
                                   m.valor_operacao
                            FROM movimentacoes m
                                     JOIN fornecedores f ON m.fornecedor_id = f.id
-                           WHERE m.data >= %s
+                           WHERE m.fornecedor_id = %s
+                             AND m.data >= %s
                              AND m.data <= %s
                            ORDER BY m.data, m.id
-                           """, (data_de, data_ate))
+                           """, (fornecedor_id, data_de, data_ate))
             movimentacoes = cursor.fetchall()
 
         if not movimentacoes:
             QMessageBox.warning(self, "Exportar PDF", "Nenhuma movimentação encontrada no período selecionado.")
             return
+
+        # Calcula o saldo progressivo para cada movimentação exportada
+        def obter_saldos_acumulados(fornecedor_id, data_de, data_ate):
+            with get_cursor() as cursor:
+                cursor.execute("""
+                               SELECT m.id, m.data, m.tipo, m.direcao, m.valor_operacao
+                               FROM movimentacoes m
+                               WHERE m.fornecedor_id = %s
+                               ORDER BY m.data, m.id
+                               """, (fornecedor_id,))
+                todas_movs = cursor.fetchall()
+
+            saldo = Decimal("0.00")
+            saldo_por_id = {}
+            for mov in todas_movs:
+                tipo = remove_acento(mov['tipo'] or '')
+                direcao = remove_acento(mov['direcao'] or '')
+                valor_op = Decimal(mov['valor_operacao']) if mov['valor_operacao'] is not None else Decimal('0.00')
+                if tipo == "compra":
+                    saldo += valor_op
+                elif tipo == "venda":
+                    saldo -= valor_op
+                elif tipo == "transacao":
+                    if direcao == "entrada":
+                        saldo += valor_op
+                    elif direcao == "saida":
+                        saldo -= valor_op
+                saldo_por_id[mov['id']] = saldo
+
+            with get_cursor() as cursor:
+                cursor.execute("""
+                               SELECT m.id
+                               FROM movimentacoes m
+                               WHERE m.fornecedor_id = %s
+                                 AND m.data >= %s
+                                 AND m.data <= %s
+                               ORDER BY m.data, m.id
+                               """, (fornecedor_id, data_de, data_ate))
+                exportadas = [row['id'] for row in cursor.fetchall()]
+            return {mid: saldo_por_id[mid] for mid in exportadas}
+
+        saldo_por_id = obter_saldos_acumulados(fornecedor_id, data_de, data_ate)
+
+        from reportlab.lib.pagesizes import A4
+        from reportlab.pdfgen import canvas
+        from reportlab.lib.units import mm
 
         largura, _ = A4
         margem = 20 * mm
@@ -337,13 +387,12 @@ class MovimentacaoTabUI(QWidget):
                                    """, (mov['id'],))
                     itens = cursor.fetchall()
             bloco['itens'] = itens
-            bloco['altura'] = 90 + 15 * (len(itens) if itens else 1) + 40
+            bloco['altura'] = 110 + 15 * (len(itens) if itens else 1) + 60  # mais espaço por saldo
             altura_total += bloco['altura'] + espacamento_blocos
             blocos.append(bloco)
 
         filename = f"movimentacoes_{data_de.strftime('%Y%m%d')}_{data_ate.strftime('%Y%m%d')}_extrato.pdf"
         c = canvas.Canvas(filename, pagesize=(largura, altura_total))
-
         y = altura_total - margem
 
         for bloco in blocos:
@@ -353,6 +402,7 @@ class MovimentacaoTabUI(QWidget):
             direcao = mov['direcao'].capitalize() if mov['direcao'] else ""
             descricao = mov['descricao'] or ""
             valor_operacao = float(mov['valor_operacao'] or 0)
+            saldo_atual = saldo_por_id.get(mov['id'], 0)
 
             c.setFont("Helvetica-Bold", 14)
             c.drawString(margem, y, f"Movimentação ID: {mov['id']} | Tipo: {tipo}")
@@ -420,6 +470,13 @@ class MovimentacaoTabUI(QWidget):
                 c.drawString(margem, y, f"Valor da Operação: R$ {valor_operacao:.2f}")
                 y -= 15
 
+            # SALDO TOTAL APÓS ESTA MOVIMENTAÇÃO
+            c.setFont("Helvetica-Bold", 11)
+            c.setFillColorRGB(0, 0, 1)  # azul
+            c.drawString(margem, y, f"SALDO TOTAL APÓS ESTA MOVIMENTAÇÃO: R$ {float(saldo_atual):,.2f}")
+            c.setFillColorRGB(0, 0, 0)
+            y -= 18
+
             c.setFont("Helvetica-Oblique", 9)
             c.drawString(margem, y, f"Gerado em: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}")
             y -= espacamento_blocos
@@ -471,6 +528,9 @@ class MovimentacaoTabUI(QWidget):
         data_de = data_de.toPython()
         data_ate = data_ate.toPython()
 
+        fornecedor_id = self.fornecedor['id']
+
+        # Busca as movimentações a exportar
         with get_cursor() as cursor:
             cursor.execute("""
                            SELECT m.id,
@@ -483,16 +543,60 @@ class MovimentacaoTabUI(QWidget):
                                   m.valor_operacao
                            FROM movimentacoes m
                                     JOIN fornecedores f ON m.fornecedor_id = f.id
-                           WHERE m.data >= %s
+                           WHERE m.fornecedor_id = %s
+                             AND m.data >= %s
                              AND m.data <= %s
                            ORDER BY m.data, m.id
-                           """, (data_de, data_ate))
+                           """, (fornecedor_id, data_de, data_ate))
             movimentacoes = cursor.fetchall()
 
         if not movimentacoes:
             QMessageBox.warning(self, "Exportar JPG", "Nenhuma movimentação encontrada no período selecionado.")
             return
 
+        # Calcula o saldo progressivo para cada movimentação exportada
+        def obter_saldos_acumulados(fornecedor_id, data_de, data_ate):
+            with get_cursor() as cursor:
+                cursor.execute("""
+                               SELECT m.id, m.data, m.tipo, m.direcao, m.valor_operacao
+                               FROM movimentacoes m
+                               WHERE m.fornecedor_id = %s
+                               ORDER BY m.data, m.id
+                               """, (fornecedor_id,))
+                todas_movs = cursor.fetchall()
+
+            saldo = Decimal("0.00")
+            saldo_por_id = {}
+            for mov in todas_movs:
+                tipo = remove_acento(mov['tipo'] or '')
+                direcao = remove_acento(mov['direcao'] or '')
+                valor_op = Decimal(mov['valor_operacao']) if mov['valor_operacao'] is not None else Decimal('0.00')
+                if tipo == "compra":
+                    saldo += valor_op
+                elif tipo == "venda":
+                    saldo -= valor_op
+                elif tipo == "transacao":
+                    if direcao == "entrada":
+                        saldo += valor_op
+                    elif direcao == "saida":
+                        saldo -= valor_op
+                saldo_por_id[mov['id']] = saldo
+
+            with get_cursor() as cursor:
+                cursor.execute("""
+                               SELECT m.id
+                               FROM movimentacoes m
+                               WHERE m.fornecedor_id = %s
+                                 AND m.data >= %s
+                                 AND m.data <= %s
+                               ORDER BY m.data, m.id
+                               """, (fornecedor_id, data_de, data_ate))
+                exportadas = [row['id'] for row in cursor.fetchall()]
+            return {mid: saldo_por_id[mid] for mid in exportadas}
+
+        saldo_por_id = obter_saldos_acumulados(fornecedor_id, data_de, data_ate)
+
+        # Layout de imagem
         largura = 1200
         margem = 30
 
@@ -503,7 +607,6 @@ class MovimentacaoTabUI(QWidget):
         except IOError:
             fonte = fonte_bold = fonte_mono = ImageFont.load_default()
 
-        # Calcule altura total
         altura_total = margem
         blocos = []
         for mov in movimentacoes:
@@ -523,14 +626,13 @@ class MovimentacaoTabUI(QWidget):
                                    """, (mov['id'],))
                     itens = cursor.fetchall()
             bloco['itens'] = itens
-            bloco['altura'] = 150 + 35 * (len(itens) if itens else 1) + 60
+            bloco['altura'] = 180 + 35 * (len(itens) if itens else 1) + 80  # Mais espaço por conta do saldo
             altura_total += bloco['altura'] + 25
             blocos.append(bloco)
 
         imagem = Image.new("RGB", (largura, altura_total), "white")
         draw = ImageDraw.Draw(imagem)
         y_base = margem
-
         marca_dagua_blocos = []
 
         for bloco in blocos:
@@ -540,6 +642,7 @@ class MovimentacaoTabUI(QWidget):
             direcao = mov['direcao'].capitalize() if mov['direcao'] else ""
             descricao = mov['descricao'] or ""
             valor_operacao = float(mov['valor_operacao'] or 0)
+            saldo_atual = saldo_por_id.get(mov['id'], 0)
             y = y_base
 
             draw.text((margem, y), f"Movimentação ID: {mov['id']} | Tipo: {tipo}", fill="black", font=fonte_bold)
@@ -590,10 +693,15 @@ class MovimentacaoTabUI(QWidget):
                 draw.text((margem, y), f"Valor da Operação: R$ {valor_operacao:.2f}", fill="black", font=fonte_bold)
                 y += 27
 
-            draw.text((margem, y + 25), f"Gerado em: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}", fill="gray",
+            # Exibe saldo acumulado após essa movimentação
+            draw.text((margem, y), f"SALDO TOTAL APÓS ESTA MOVIMENTAÇÃO: R$ {float(saldo_atual):,.2f}", fill="blue",
+                      font=fonte_bold)
+            y += 32
+
+            draw.text((margem, y), f"Gerado em: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}", fill="gray",
                       font=fonte)
 
-            # Armazena o bloco para marca d'água posterior
+            # Marca d'água
             marca_dagua_blocos.append({
                 "texto": str(mov['fornecedores_numerobalanca']),
                 "x_inicio": margem,
@@ -604,7 +712,7 @@ class MovimentacaoTabUI(QWidget):
 
             y_base += bloco['altura'] + 25
 
-        # Agora aplica as marcas d'água, reatribuindo imagem a cada bloco
+        # Aplica as marcas d'água reatribuindo imagem
         for md in marca_dagua_blocos:
             imagem = self.adicionar_marca_dagua_area(
                 imagem,
@@ -1053,7 +1161,6 @@ class MovimentacaoTabUI(QWidget):
             self.tabela_itens.setItem(i, 2, QTableWidgetItem(preco_formatado))
             total_formatado = self.locale.toString(preco_unitario * float(item['quantidade']), 'f', 2)
             self.tabela_itens.setItem(i, 3, QTableWidgetItem(total_formatado))
-
 
 class MovimentacoesUI(QWidget):
     def __init__(self):
