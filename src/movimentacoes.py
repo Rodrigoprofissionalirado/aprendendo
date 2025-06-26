@@ -183,28 +183,72 @@ class MovimentacaoTabUI(QWidget):
             QMessageBox.warning(self, "Erro", "Movimentação não encontrada.")
             return
 
-        idx_fornecedor = self.combo_fornecedor.findData(movimentacao['fornecedor_id'])
-        self.combo_fornecedor.setCurrentIndex(idx_fornecedor if idx_fornecedor >= 0 else 0)
-        self.input_data.setDate(QDate(movimentacao['data']))
-        idx_tipo = self.combo_tipo.findText(movimentacao['tipo'])
-        self.combo_tipo.setCurrentIndex(idx_tipo if idx_tipo >= 0 else 0)
-        idx_direcao = self.combo_direcao.findText(movimentacao['direcao'])
-        self.combo_direcao.setCurrentIndex(idx_direcao if idx_direcao >= 0 else 0)
-        self.input_descricao.setText(str(movimentacao['descricao']))
-        self.input_valor_operacao.setText(str(movimentacao['valor_operacao']))
+        # Limpa o formulário antes de preencher
+        self.limpar_campos()
+        self.limpar_itens()
 
-        self.itens_movimentacao = []
-        for item in itens:
-            self.itens_movimentacao.append({
-                "produto_id": item['produto_id'],
-                "nome": item['produto_nome'],
-                "quantidade": item['quantidade'],
-                "preco": item['preco_unitario'],
-                "total": item['total']
-            })
+        # Data
+        self.input_data.setDate(QDate(movimentacao['data']))
+
+        # Tipo (primeiro!)
+        # Procura ignorando acento e case
+        def normalize(txt):
+            import unicodedata
+            return ''.join(
+                c for c in unicodedata.normalize('NFKD', txt) if not unicodedata.combining(c)).lower().strip()
+
+        tipo_mov = normalize(movimentacao['tipo'])
+        idx_tipo = -1
+        for i in range(self.combo_tipo.count()):
+            if normalize(self.combo_tipo.itemText(i)) == tipo_mov:
+                idx_tipo = i
+                break
+        self.combo_tipo.setCurrentIndex(idx_tipo if idx_tipo >= 0 else 0)
+        self.tipo_changed()
+
+        # Agora, só então, preencha os campos específicos:
+        if movimentacao['tipo'].lower() == "transação":
+            # Direção
+            idx_direcao = self.combo_direcao.findText(movimentacao['direcao'].capitalize())
+            self.combo_direcao.setCurrentIndex(idx_direcao if idx_direcao >= 0 else 0)
+            # Valor da operação
+            self.input_valor_operacao.setText(str(movimentacao['valor_operacao']))
+            # Limpa itens (não há itens em transação)
+            self.itens_movimentacao = []
+            self.atualizar_tabela_itens_adicionados()
+            self.input_valor_abatimento.clear()
+        else:
+            self.input_valor_operacao.setText("")
+            # Descrição e itens
+            self.itens_movimentacao = []
+            for item in itens:
+                self.itens_movimentacao.append({
+                    "produto_id": item['produto_id'],
+                    "nome": item['produto_nome'],
+                    "quantidade": item['quantidade'],
+                    "preco": item['preco_unitario'],
+                    "total": item['total']
+                })
+            self.atualizar_tabela_itens_adicionados()
+            # Abatimento: tente encontrar se há uma transação de entrada de abatimento para esta movimentação
+            with get_cursor() as cursor:
+                cursor.execute("""
+                               SELECT valor_operacao
+                               FROM movimentacoes
+                               WHERE tipo = 'transação'
+                                 AND direcao = 'entrada'
+                                 AND descricao LIKE %s
+                               """, (f"Abatimento automático referente à movimentação {movimentacao_id}",))
+                abat = cursor.fetchone()
+            if abat:
+                self.input_valor_abatimento.setText(str(abat['valor_operacao']))
+            else:
+                self.input_valor_abatimento.setText("")
+
+        # Descrição (sempre)
+        self.input_descricao.setText(str(movimentacao['descricao']) if movimentacao['descricao'] else "")
 
         self.movimentacao_edit_id = movimentacao_id
-        self.atualizar_tabela_itens_adicionados()
 
     def excluir_movimentacao_finalizada(self):
         linha = self.tabela_movimentacoes.currentRow()
@@ -234,7 +278,7 @@ class MovimentacaoTabUI(QWidget):
                 cursor.execute("DELETE FROM movimentacoes WHERE id = %s", (movimentacao_id,))
             QMessageBox.information(self, "Sucesso", "Movimentação excluída com sucesso.")
             self.atualizar_tabela()
-            self.tabela_itens_movimentacao.setRowCount(0)
+            self.tabela_itens.setRowCount(0)
         except Exception as e:
             QMessageBox.critical(self, "Erro", f"Erro ao excluir movimentação: {e}")
 
@@ -1073,7 +1117,6 @@ class MovimentacaoTabUI(QWidget):
         direcao = self.combo_direcao.currentText().lower() if tipo == "transação" else None
         descricao = self.input_descricao.text().strip()
 
-        # Abatimento: salva como uma transação de entrada separada
         valor_abatimento = None
         if tipo != "transação":
             valor_texto = self.input_valor_abatimento.text().replace(',', '.')
@@ -1096,35 +1139,86 @@ class MovimentacaoTabUI(QWidget):
             valor_abatimento = Decimal(self.input_valor_abatimento.text().replace(',',
                                                                                   '.')) if self.input_valor_abatimento.text() else Decimal(
                 '0.00')
-            valor_operacao = total - valor_abatimento  # este valor vai para a coluna valor_operacao
+            valor_operacao = total - valor_abatimento
 
-        with get_cursor(commit=True) as cursor:
-            # Compra/Venda: salva normalmente
-            cursor.execute(
-                "INSERT INTO movimentacoes (fornecedor_id, data, tipo, direcao, descricao, valor_operacao) VALUES (%s, %s, %s, %s, %s, %s)",
-                (self.fornecedor['id'], data, tipo, direcao, descricao, valor_operacao)
-            )
-            movimentacao_id = cursor.lastrowid
-            if tipo != "transação":
-                for item in self.itens_movimentacao:
+        if self.movimentacao_edit_id is not None:
+            movimentacao_id = self.movimentacao_edit_id
+            try:
+                with get_cursor(commit=True) as cursor:
+                    # UPDATE para o registro principal
                     cursor.execute(
-                        "INSERT INTO itens_movimentacao (movimentacao_id, produto_id, quantidade, preco_unitario) VALUES (%s, %s, %s, %s)",
-                        (movimentacao_id, item["produto_id"], item["quantidade"], item["preco"])
+                        "UPDATE movimentacoes SET data=%s, tipo=%s, direcao=%s, descricao=%s, valor_operacao=%s WHERE id=%s",
+                        (data, tipo, direcao, descricao, valor_operacao, movimentacao_id)
                     )
-                # Se houver abatimento, cria uma transação de entrada separada
-                if valor_abatimento and valor_abatimento > 0:
-                    cursor.execute(
-                        "INSERT INTO movimentacoes (fornecedor_id, data, tipo, direcao, descricao, valor_operacao) VALUES (%s, %s, %s, %s, %s, %s)",
-                        (
-                            self.fornecedor['id'],
-                            data,
-                            "transação",
-                            "entrada",
-                            f"Abatimento automático referente à movimentação {movimentacao_id}",
-                            valor_abatimento
+                    # Para compra/venda, atualize itens
+                    cursor.execute("DELETE FROM itens_movimentacao WHERE movimentacao_id = %s", (movimentacao_id,))
+                    if tipo != "transação":
+                        for item in self.itens_movimentacao:
+                            cursor.execute(
+                                "INSERT INTO itens_movimentacao (movimentacao_id, produto_id, quantidade, preco_unitario) VALUES (%s, %s, %s, %s)",
+                                (movimentacao_id, item["produto_id"], item["quantidade"], item["preco"])
+                            )
+                    # Atualiza/insere/limpa abatimento, se houver
+                    cursor.execute("""
+                                   SELECT id
+                                   FROM movimentacoes
+                                   WHERE tipo = 'transação'
+                                     AND direcao = 'entrada'
+                                     AND descricao LIKE %s
+                                   """, (f"Abatimento automático referente à movimentação {movimentacao_id}",))
+                    abat = cursor.fetchone()
+                    if tipo != "transação" and valor_abatimento and valor_abatimento > 0:
+                        if abat:
+                            cursor.execute(
+                                "UPDATE movimentacoes SET data=%s, valor_operacao=%s WHERE id=%s",
+                                (data, valor_abatimento, abat['id'])
+                            )
+                        else:
+                            cursor.execute(
+                                "INSERT INTO movimentacoes (fornecedor_id, data, tipo, direcao, descricao, valor_operacao) VALUES (%s, %s, %s, %s, %s, %s)",
+                                (
+                                    self.fornecedor['id'],
+                                    data,
+                                    "transação",
+                                    "entrada",
+                                    f"Abatimento automático referente à movimentação {movimentacao_id}",
+                                    valor_abatimento
+                                )
+                            )
+                    elif abat:
+                        cursor.execute("DELETE FROM movimentacoes WHERE id=%s", (abat['id'],))
+                QMessageBox.information(self, "Sucesso", "Movimentação editada com sucesso.")
+            except Exception as e:
+                QMessageBox.critical(self, "Erro", f"Erro ao editar movimentação: {e}")
+            self.movimentacao_edit_id = None
+        else:
+            # Novo registro (inclusão)
+            with get_cursor(commit=True) as cursor:
+                cursor.execute(
+                    "INSERT INTO movimentacoes (fornecedor_id, data, tipo, direcao, descricao, valor_operacao) VALUES (%s, %s, %s, %s, %s, %s)",
+                    (self.fornecedor['id'], data, tipo, direcao, descricao, valor_operacao)
+                )
+                movimentacao_id = cursor.lastrowid
+                if tipo != "transação":
+                    for item in self.itens_movimentacao:
+                        cursor.execute(
+                            "INSERT INTO itens_movimentacao (movimentacao_id, produto_id, quantidade, preco_unitario) VALUES (%s, %s, %s, %s)",
+                            (movimentacao_id, item["produto_id"], item["quantidade"], item["preco"])
                         )
-                    )
-        QMessageBox.information(self, "Sucesso", "Movimentação cadastrada com sucesso.")
+                    if valor_abatimento and valor_abatimento > 0:
+                        cursor.execute(
+                            "INSERT INTO movimentacoes (fornecedor_id, data, tipo, direcao, descricao, valor_operacao) VALUES (%s, %s, %s, %s, %s, %s)",
+                            (
+                                self.fornecedor['id'],
+                                data,
+                                "transação",
+                                "entrada",
+                                f"Abatimento automático referente à movimentação {movimentacao_id}",
+                                valor_abatimento
+                            )
+                        )
+            QMessageBox.information(self, "Sucesso", "Movimentação cadastrada com sucesso.")
+
         self.limpar_itens()
         self.input_valor_abatimento.clear()
         self.atualizar_tabela()
