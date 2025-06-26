@@ -293,7 +293,6 @@ class MovimentacaoTabUI(QWidget):
 
         fornecedor_id = self.fornecedor['id']
 
-        # Busca as movimentações a exportar
         with get_cursor() as cursor:
             cursor.execute("""
                            SELECT m.id,
@@ -317,7 +316,7 @@ class MovimentacaoTabUI(QWidget):
             QMessageBox.warning(self, "Exportar PDF", "Nenhuma movimentação encontrada no período selecionado.")
             return
 
-        # Calcula o saldo progressivo para cada movimentação exportada
+        # Função para saldo acumulado
         def obter_saldos_acumulados(fornecedor_id, data_de, data_ate):
             with get_cursor() as cursor:
                 cursor.execute("""
@@ -362,12 +361,12 @@ class MovimentacaoTabUI(QWidget):
         from reportlab.lib.pagesizes import A4
         from reportlab.pdfgen import canvas
         from reportlab.lib.units import mm
+        from reportlab.lib.colors import Color
 
         largura, _ = A4
         margem = 20 * mm
         espacamento_blocos = 10 * mm
 
-        # Primeiro, calcula a altura total
         altura_total = margem
         blocos = []
         for mov in movimentacoes:
@@ -387,7 +386,7 @@ class MovimentacaoTabUI(QWidget):
                                    """, (mov['id'],))
                     itens = cursor.fetchall()
             bloco['itens'] = itens
-            bloco['altura'] = 110 + 15 * (len(itens) if itens else 1) + 60  # mais espaço por saldo
+            bloco['altura'] = 110 + 15 * (len(itens) if itens else 1) + 60
             altura_total += bloco['altura'] + espacamento_blocos
             blocos.append(bloco)
 
@@ -404,22 +403,23 @@ class MovimentacaoTabUI(QWidget):
             valor_operacao = float(mov['valor_operacao'] or 0)
             saldo_atual = saldo_por_id.get(mov['id'], 0)
 
-            c.setFont("Helvetica-Bold", 14)
+            c.setFont("Helvetica-Bold", 13)
+            c.setFillColorRGB(0, 0, 0)
             c.drawString(margem, y, f"Movimentação ID: {mov['id']} | Tipo: {tipo}")
-            y -= 18
-            c.setFont("Helvetica", 12)
+            y -= 16
+            c.setFont("Helvetica", 11)
             c.drawString(margem, y, f"Fornecedor: {mov['fornecedor']}")
-            y -= 15
+            y -= 13
             c.drawString(margem, y, f"Nº Balança: {mov['fornecedores_numerobalanca']}")
-            y -= 15
+            y -= 13
             c.drawString(margem, y, f"Data: {mov['data'].strftime('%d/%m/%Y')}")
-            y -= 15
+            y -= 13
             if direcao:
                 c.drawString(margem, y, f"Direção: {direcao}")
-                y -= 15
+                y -= 13
             if descricao:
                 c.drawString(margem, y, f"Descrição: {descricao}")
-                y -= 15
+                y -= 13
 
             # Marca d'água para o bloco
             self.adicionar_marca_dagua_pdf_area(
@@ -427,27 +427,28 @@ class MovimentacaoTabUI(QWidget):
                 texto=str(mov['fornecedores_numerobalanca']),
                 x_inicio=margem,
                 x_fim=largura - margem,
-                y_topo=y + 78,  # topo do bloco (ajustar se desejar)
-                altura=bloco['altura'] - 20,
-                tamanho_fonte=30,
+                y_topo=y + 73,  # topo do bloco (ajustar se desejar)
+                altura=bloco['altura'] - 18,
+                tamanho_fonte=24,  # menor
                 cor=(0.8, 0.8, 0.8),
                 angulo=25
             )
 
             if itens:
-                y -= 10
-                c.setFont("Helvetica-Bold", 12)
-                c.drawString(margem, y, "Produtos")
-                y -= 15
+                y -= 8
                 c.setFont("Helvetica-Bold", 11)
+                c.setFillColorRGB(0, 0, 0)
+                c.drawString(margem, y, "Produtos")
+                y -= 12
+                c.setFont("Helvetica-Bold", 10)
                 c.drawString(margem, y, "Produto")
                 c.drawString(margem + 180, y, "Qtd")
                 c.drawString(margem + 240, y, "Unitário")
                 c.drawString(margem + 330, y, "Total")
-                y -= 10
+                y -= 8
                 c.line(margem, y, largura - margem, y)
-                y -= 10
-                c.setFont("Helvetica", 11)
+                y -= 8
+                c.setFont("Helvetica", 10)
                 total = 0
                 for item in itens:
                     c.drawString(margem, y, item['produto_nome'])
@@ -455,29 +456,34 @@ class MovimentacaoTabUI(QWidget):
                     c.drawString(margem + 240, y, f"R$ {item['preco_unitario']:.2f}")
                     c.drawString(margem + 330, y, f"R$ {item['total']:.2f}")
                     total += float(item['total'])
-                    y -= 15
-                y -= 10
+                    y -= 13
+                y -= 8
                 c.line(margem, y, largura - margem, y)
-                y -= 12
-                c.setFont("Helvetica-Bold", 12)
+                y -= 10
+                c.setFont("Helvetica-Bold", 11)
+                c.setFillColorRGB(0, 0, 0)
                 c.drawString(margem, y, f"Subtotal: R$ {total:.2f}")
-                y -= 15
+                y -= 12
                 c.drawString(margem, y, f"Total Final (com abatimento): R$ {valor_operacao:.2f}")
-                y -= 15
+                y -= 13
             else:
-                y -= 15
-                c.setFont("Helvetica-Bold", 12)
+                y -= 13
+                c.setFont("Helvetica-Bold", 11)
+                c.setFillColorRGB(0, 0, 0)
                 c.drawString(margem, y, f"Valor da Operação: R$ {valor_operacao:.2f}")
-                y -= 15
+                y -= 13
 
-            # SALDO TOTAL APÓS ESTA MOVIMENTAÇÃO
-            c.setFont("Helvetica-Bold", 11)
-            c.setFillColorRGB(0, 0, 1)  # azul
+            # SALDO TOTAL APÓS ESTA MOVIMENTAÇÃO (cor e fonte menor)
+            c.setFont("Helvetica-Bold", 10)
+            if saldo_atual < 0:
+                c.setFillColorRGB(1, 0, 0)  # vermelho
+            else:
+                c.setFillColorRGB(0, 0.39, 0)  # verde escuro (aprox. #006400)
             c.drawString(margem, y, f"SALDO TOTAL APÓS ESTA MOVIMENTAÇÃO: R$ {float(saldo_atual):,.2f}")
             c.setFillColorRGB(0, 0, 0)
-            y -= 18
+            y -= 14
 
-            c.setFont("Helvetica-Oblique", 9)
+            c.setFont("Helvetica-Oblique", 8)
             c.drawString(margem, y, f"Gerado em: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}")
             y -= espacamento_blocos
 
@@ -554,7 +560,7 @@ class MovimentacaoTabUI(QWidget):
             QMessageBox.warning(self, "Exportar JPG", "Nenhuma movimentação encontrada no período selecionado.")
             return
 
-        # Calcula o saldo progressivo para cada movimentação exportada
+        # Função para saldo acumulado
         def obter_saldos_acumulados(fornecedor_id, data_de, data_ate):
             with get_cursor() as cursor:
                 cursor.execute("""
@@ -604,8 +610,10 @@ class MovimentacaoTabUI(QWidget):
             fonte = ImageFont.truetype("arial.ttf", 18)
             fonte_bold = ImageFont.truetype("arialbd.ttf", 24)
             fonte_mono = ImageFont.truetype("arial.ttf", 16)
+            fonte_menor = ImageFont.truetype("arial.ttf", 15)
+            fonte_saldo = ImageFont.truetype("arialbd.ttf", 17)
         except IOError:
-            fonte = fonte_bold = fonte_mono = ImageFont.load_default()
+            fonte = fonte_bold = fonte_mono = fonte_menor = fonte_saldo = ImageFont.load_default()
 
         altura_total = margem
         blocos = []
@@ -646,31 +654,31 @@ class MovimentacaoTabUI(QWidget):
             y = y_base
 
             draw.text((margem, y), f"Movimentação ID: {mov['id']} | Tipo: {tipo}", fill="black", font=fonte_bold)
-            y += 38
+            y += 36
             draw.text((margem, y), f"Fornecedor: {mov['fornecedor']}", fill="black", font=fonte)
-            y += 28
+            y += 24
             draw.text((margem, y), f"Nº Balança: {mov['fornecedores_numerobalanca']}", fill="black", font=fonte)
-            y += 28
+            y += 24
             draw.text((margem, y), f"Data: {mov['data'].strftime('%d/%m/%Y')}", fill="black", font=fonte)
-            y += 28
+            y += 24
             if direcao:
                 draw.text((margem, y), f"Direção: {direcao}", fill="black", font=fonte)
-                y += 28
+                y += 24
             if descricao:
                 draw.text((margem, y), f"Descrição: {descricao}", fill="black", font=fonte)
-                y += 28
+                y += 24
 
             if itens:
-                y += 8
+                y += 6
                 draw.text((margem, y), "Produtos", fill="black", font=fonte_bold)
-                y += 33
-                draw.text((margem, y), "Produto", fill="black", font=fonte_bold)
-                draw.text((margem + 390, y), "Qtd", fill="black", font=fonte_bold)
-                draw.text((margem + 500, y), "Unitário", fill="black", font=fonte_bold)
-                draw.text((margem + 650, y), "Total", fill="black", font=fonte_bold)
+                y += 26
+                draw.text((margem, y), "Produto", fill="black", font=fonte_menor)
+                draw.text((margem + 390, y), "Qtd", fill="black", font=fonte_menor)
+                draw.text((margem + 500, y), "Unitário", fill="black", font=fonte_menor)
+                draw.text((margem + 650, y), "Total", fill="black", font=fonte_menor)
                 y += 5
                 draw.line((margem, y + 20, largura - margem, y + 20), fill="black", width=1)
-                y += 30
+                y += 22
 
                 total = 0
                 for item in itens:
@@ -679,29 +687,32 @@ class MovimentacaoTabUI(QWidget):
                     draw.text((margem + 500, y), f"R$ {item['preco_unitario']:.2f}", fill="black", font=fonte_mono)
                     draw.text((margem + 650, y), f"R$ {item['total']:.2f}", fill="black", font=fonte_mono)
                     total += float(item['total'])
-                    y += 35
-                y += 10
+                    y += 28
+                y += 5
                 draw.line((margem, y, largura - margem, y), fill="black", width=1)
-                y += 10
-                draw.text((margem, y), f"Subtotal: R$ {total:.2f}", fill="black", font=fonte_bold)
-                y += 27
+                y += 7
+                draw.text((margem, y), f"Subtotal: R$ {total:.2f}", fill="black", font=fonte_menor)
+                y += 19
                 draw.text((margem, y), f"Total Final (com abatimento): R$ {valor_operacao:.2f}", fill="black",
-                          font=fonte_bold)
-                y += 27
+                          font=fonte_menor)
+                y += 19
             else:
-                y += 10
-                draw.text((margem, y), f"Valor da Operação: R$ {valor_operacao:.2f}", fill="black", font=fonte_bold)
-                y += 27
+                y += 8
+                draw.text((margem, y), f"Valor da Operação: R$ {valor_operacao:.2f}", fill="black", font=fonte_menor)
+                y += 19
 
-            # Exibe saldo acumulado após essa movimentação
-            draw.text((margem, y), f"SALDO TOTAL APÓS ESTA MOVIMENTAÇÃO: R$ {float(saldo_atual):,.2f}", fill="blue",
-                      font=fonte_bold)
-            y += 32
+            # S A L D O   (com cor)
+            saldo_str = f"SALDO TOTAL APÓS ESTA MOVIMENTAÇÃO: R$ {float(saldo_atual):,.2f}"
+            if saldo_atual < 0:
+                cor_saldo = (220, 0, 0)  # vermelho
+            else:
+                cor_saldo = (0, 70, 0)  # verde escuro (aprox. #006400)
+            draw.text((margem, y), saldo_str, fill=cor_saldo, font=fonte_saldo)
+            y += 21
 
             draw.text((margem, y), f"Gerado em: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}", fill="gray",
-                      font=fonte)
+                      font=fonte_menor)
 
-            # Marca d'água
             marca_dagua_blocos.append({
                 "texto": str(mov['fornecedores_numerobalanca']),
                 "x_inicio": margem,
