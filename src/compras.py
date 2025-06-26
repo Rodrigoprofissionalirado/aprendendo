@@ -225,7 +225,8 @@ class ComprasUI(QWidget):
     def obter_detalhes_compra(self, compra_id):
         with get_cursor() as cursor:
             cursor.execute("""
-                           SELECT f.nome AS fornecedor,
+                           SELECT f.id   AS fornecedor_id,
+                                  f.nome AS fornecedor,
                                   f.fornecedores_numerobalanca,
                                   c.data_compra,
                                   c.valor_abatimento
@@ -245,7 +246,6 @@ class ComprasUI(QWidget):
                            WHERE i.compra_id = %s
                            """, (compra_id,))
             itens = cursor.fetchall()
-
         return compra, itens
 
     # ---- Categoria Fallback ("Padrão") ----
@@ -1344,12 +1344,12 @@ class ComprasUI(QWidget):
         self.janela_debitos = janela_debitos
 
     def exportar_compra_pdf(self):
-        linha = self.tabela_compras.currentRow()
+        linha = self.tabela_compras_aberto.currentRow()
         if linha < 0:
             QMessageBox.warning(self, "Exportar PDF", "Selecione uma compra na tabela para exportar.")
             return
 
-        compra_id_item = self.tabela_compras.item(linha, 0)
+        compra_id_item = self.tabela_compras_aberto.item(linha, 0)
         if not compra_id_item:
             return
 
@@ -1357,7 +1357,11 @@ class ComprasUI(QWidget):
 
         with get_cursor() as cursor:
             cursor.execute("""
-                           SELECT f.nome AS fornecedor, f.fornecedores_numerobalanca, c.data_compra, c.valor_abatimento
+                           SELECT f.id   as fornecedor_id,
+                                  f.nome AS fornecedor,
+                                  f.fornecedores_numerobalanca,
+                                  c.data_compra,
+                                  c.valor_abatimento
                            FROM compras c
                                     JOIN fornecedores f ON c.fornecedor_id = f.id
                            WHERE c.id = %s
@@ -1378,6 +1382,9 @@ class ComprasUI(QWidget):
         if not compra:
             QMessageBox.warning(self, "Exportar PDF", "Compra não encontrada.")
             return
+
+        # Saldo do fornecedor
+        saldo = self.obter_saldo_devedor_fornecedor(compra['fornecedor_id'])
 
         filename = f"compra_{compra_id}.pdf"
         c = canvas.Canvas(filename, pagesize=A4)
@@ -1410,7 +1417,7 @@ class ComprasUI(QWidget):
         y -= 8 * mm
         altura_linha = 6 * mm
 
-        altura_tabela = altura_linha * len(itens)
+        altura_tabela = altura_linha * (len(itens) + (1 if float(compra['valor_abatimento']) != 0 else 0))
         x_inicio = 20 * mm
         x_fim = 190 * mm
         y_topo = y
@@ -1439,6 +1446,13 @@ class ComprasUI(QWidget):
             total += float(item['total'])
             y -= altura_linha
 
+        # Mostrar abatimento/adiantamento na tabela
+        if float(compra['valor_abatimento']) != 0:
+            c.setFont("Helvetica-Oblique", 11)
+            c.drawString(20 * mm, y, "Abatimento/Adiantamento")
+            c.drawString(140 * mm, y, f"- R$ {compra['valor_abatimento']:.2f}")
+            y -= altura_linha
+
         y_linha_final = y + altura_linha / 2
         c.line(20 * mm, y_linha_final, 190 * mm, y_linha_final)
 
@@ -1446,10 +1460,16 @@ class ComprasUI(QWidget):
         c.setFont("Helvetica-Bold", 12)
         c.drawString(20 * mm, y, f"Subtotal: R$ {total:.2f}")
         y -= 6 * mm
-        c.drawString(20 * mm, y, f"Abatimento: R$ {compra['valor_abatimento']:.2f}")
-        y -= 6 * mm
         total_com_abatimento = total - float(compra['valor_abatimento'])
         c.drawString(20 * mm, y, f"Total Final: R$ {total_com_abatimento:.2f}")
+
+        # Exibir saldo do fornecedor ao final
+        y -= 10 * mm
+        c.setFont("Helvetica-Bold", 11)
+        if saldo >= 0:
+            c.drawString(20 * mm, y, f"Saldo positivo do fornecedor: R$ {saldo:.2f}")
+        else:
+            c.drawString(20 * mm, y, f"Saldo devedor do fornecedor: R$ {abs(saldo):.2f}")
 
         y -= 20 * mm
         c.setFont("Helvetica-Oblique", 9)
@@ -1504,7 +1524,10 @@ class ComprasUI(QWidget):
             QMessageBox.warning(self, "Exportar JPG", "Compra não encontrada.")
             return
 
-        largura, altura = 800, 600 + len(itens) * 25
+        # Obter saldo do fornecedor
+        saldo = self.obter_saldo_devedor_fornecedor(compra['fornecedor_id'])
+
+        largura, altura = 800, 600 + (len(itens) + 1) * 25  # +1 para abatimento se houver
         imagem = Image.new("RGB", (largura, altura), "white")
         draw = ImageDraw.Draw(imagem)
 
@@ -1546,9 +1569,16 @@ class ComprasUI(QWidget):
             total += float(item['total'])
             y += altura_linha
 
+        # Adiciona linha de abatimento/adiantamento na tabela, se houver
+        if float(compra['valor_abatimento']) != 0:
+            draw.text((30, y), "Abatimento/Adiantamento", fill="black", font=fonte_mono)
+            draw.text((570, y), f"-{float(compra['valor_abatimento']):.2f}", fill="black", font=fonte_mono)
+            y += altura_linha
+
         y_tabela_fim = y + 30
         linhas_y = [y_linha_cabecalho]
-        linhas_y += [y_linha_cabecalho + 25 + i * altura_linha for i in range(len(itens) + 1)]
+        linhas_y += [y_linha_cabecalho + 25 + i * altura_linha for i in
+                     range(len(itens) + (1 if float(compra['valor_abatimento']) != 0 else 0) + 1)]
 
         for linha_y in linhas_y:
             draw.line((colunas_x[0], linha_y, colunas_x[-1], linha_y), fill="black", width=1)
@@ -1558,11 +1588,17 @@ class ComprasUI(QWidget):
         y = y_tabela_fim
         draw.text((30, y), f"Subtotal: R$ {total:.2f}", fill="black", font=fonte_bold)
         y += 25
-        draw.text((30, y), f"Abatimento: R$ {compra['valor_abatimento']:.2f}", fill="black", font=fonte_bold)
+        total_com_abatimento = total - float(compra['valor_abatimento'])
+        draw.text((30, y), f"Total Final: R$ {total_com_abatimento:.2f}", fill="black", font=fonte_bold)
         y += 25
-        draw.text((30, y), f"Total Final: R$ {total - float(compra['valor_abatimento']):.2f}", fill="black", font=fonte_bold)
 
+        # Saldo do fornecedor ao final
+        if saldo >= 0:
+            draw.text((30, y), f"Saldo positivo do fornecedor: R$ {saldo:.2f}", fill="black", font=fonte_bold)
+        else:
+            draw.text((30, y), f"Saldo devedor do fornecedor: R$ {abs(saldo):.2f}", fill="black", font=fonte_bold)
         y += 40
+
         draw.text((30, y), f"Gerado em: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}", fill="gray", font=fonte)
 
         # Marca d'água na área da tabela
@@ -1572,7 +1608,7 @@ class ComprasUI(QWidget):
             x_inicio=30,
             x_fim=750,
             y_inicio=y_linha_cabecalho,
-            altura=altura_linha*len(itens),
+            altura=altura_linha * (len(itens) + (1 if float(compra['valor_abatimento']) != 0 else 0)),
             fonte_path="arial.ttf",
             tamanho_fonte=30,
             opacidade=80,
