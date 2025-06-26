@@ -1303,6 +1303,7 @@ class ComprasUI(QWidget):
         self.filtro_combo_fornecedor.clear()
         self.filtro_combo_fornecedor.addItem("Todos os Fornecedores", None)
         for f in self.listar_fornecedores():
+            self.combo_fornecedor.addItem("", None)
             self.combo_fornecedor.addItem(f["nome"], f["id"])
             self.filtro_combo_fornecedor.addItem(f["nome"], f["id"])
 
