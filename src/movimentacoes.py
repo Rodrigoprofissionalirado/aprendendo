@@ -217,6 +217,28 @@ class MovimentacaoTabUI(QWidget):
         # Chame o evento padrão para manter o comportamento normal
         super(type(line_edit), line_edit).focusInEvent(event)
 
+    def atualizar_item_editado(self, row, column):
+        if row < 0 or row >= len(self.itens_movimentacao):
+            return
+
+        try:
+            if column == 1:  # Quantidade
+                nova_qtd = int(self.tabela_itens_adicionados.item(row, 1).text())
+                self.itens_movimentacao[row]['quantidade'] = nova_qtd
+            elif column == 2:  # Preço unitário
+                novo_preco_str = self.tabela_itens_adicionados.item(row, 2).text().replace(',', '.')
+                novo_preco = float(novo_preco_str)
+                self.itens_movimentacao[row]['preco'] = novo_preco
+
+            qtd = self.itens_movimentacao[row]['quantidade']
+            preco = self.itens_movimentacao[row]['preco']
+            self.itens_movimentacao[row]['total'] = qtd * preco
+
+            self.atualizar_tabela_itens_adicionados()
+
+        except Exception:
+            QMessageBox.warning(self, "Erro", "Valor inválido. Digite um número válido.")
+
     def init_ui(self):
         layout_root = QHBoxLayout(self)
         layout_esq = QVBoxLayout()
@@ -304,7 +326,8 @@ class MovimentacaoTabUI(QWidget):
         self.tabela_itens_adicionados = QTableWidget()
         self.tabela_itens_adicionados.setColumnCount(4)
         self.tabela_itens_adicionados.setHorizontalHeaderLabels(["Produto", "Qtd", "Valor unitário", "Total"])
-        self.tabela_itens_adicionados.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.tabela_itens_adicionados.setEditTriggers(QTableWidget.DoubleClicked | QTableWidget.SelectedClicked)
+        self.tabela_itens_adicionados.cellChanged.connect(self.atualizar_item_editado)
         form_grid.addWidget(QLabel("Itens (antes de salvar):"), 9, 0, 1, 2)
         form_grid.addWidget(self.tabela_itens_adicionados, 10, 0, 1, 2)
 
