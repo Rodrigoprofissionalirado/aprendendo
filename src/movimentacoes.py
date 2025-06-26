@@ -199,6 +199,24 @@ class MovimentacaoTabUI(QWidget):
         self.limpar_itens()
         self.carregar_produtos()
 
+    def limpar_campos(self):
+        self.input_data.setDate(QDate.currentDate())
+        self.input_valor_abatimento.clear()
+        self.combo_tipo.setCurrentIndex(0)
+        self.combo_direcao.setCurrentIndex(0)
+        self.input_descricao.clear()
+        self.input_valor_operacao.clear()
+        self.combo_produto.setCurrentIndex(0)
+        self.input_quantidade.setValue(1)
+        # Se houver outros campos a limpar, adicione aqui.
+
+    def combo_produto_focus_in_event(self, event):
+        line_edit = self.combo_produto.lineEdit()
+        if line_edit.text() == "" or line_edit.text() == "Selecione um produto":
+            line_edit.clear()
+        # Chame o evento padrão para manter o comportamento normal
+        super(type(line_edit), line_edit).focusInEvent(event)
+
     def init_ui(self):
         layout_root = QHBoxLayout(self)
         layout_esq = QVBoxLayout()
@@ -267,6 +285,9 @@ class MovimentacaoTabUI(QWidget):
         self.layout_produto = QGridLayout()
         self.combo_produto = QComboBox()
         self.combo_produto.setEditable(True)  # Permitir escrever o nome
+        self.combo_produto.lineEdit().setPlaceholderText("Selecione um produto")
+        # Conecte o evento de focusIn
+        self.combo_produto.lineEdit().focusInEvent = self.combo_produto_focus_in_event
         self.input_quantidade = QSpinBox()
         self.input_quantidade.setMinimum(1)
         self.input_quantidade.setMaximum(99999)
@@ -359,12 +380,12 @@ class MovimentacaoTabUI(QWidget):
         layout_dir = QVBoxLayout()
         layout_dir.addWidget(QLabel("Itens da movimentação selecionada:"))
         self.tabela_itens = QTableWidget()
-        self.tabela_itens.setColumnCount(3)
-        self.tabela_itens.setHorizontalHeaderLabels(["Produto", "Qtd", "Total"])
+        self.tabela_itens.setColumnCount(4)
+        self.tabela_itens.setHorizontalHeaderLabels(["Produto", "Qtd", "Preço", "Total"])
         self.tabela_itens.setEditTriggers(QTableWidget.NoEditTriggers)
         self.tabela_itens.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         layout_dir.addWidget(self.tabela_itens)
-        layout_root.addLayout(layout_dir, 2)
+        layout_root.addLayout(layout_dir, 1)
 
         self.tipo_changed()
         self.atualiza_saldo_total()
@@ -397,7 +418,7 @@ class MovimentacaoTabUI(QWidget):
             """)
             produtos = cursor.fetchall()
         self.produtos = produtos
-        self.combo_produto.addItem("Selecione um produto", None)
+        self.combo_produto.addItem("", None)  # Insere um item vazio no topo, opcional
         for p in produtos:
             self.combo_produto.addItem(p["nome"], p["id"])
 
@@ -578,8 +599,11 @@ class MovimentacaoTabUI(QWidget):
         for i, item in enumerate(itens):
             self.tabela_itens.setItem(i, 0, QTableWidgetItem(item["produto_nome"]))
             self.tabela_itens.setItem(i, 1, QTableWidgetItem(str(item["quantidade"])))
-            total_formatado = self.locale.toString(float(item['preco_unitario'] * item['quantidade']), 'f', 2)
-            self.tabela_itens.setItem(i, 2, QTableWidgetItem(total_formatado))
+            preco_unitario = float(item['preco_unitario'])
+            preco_formatado = self.locale.toString(preco_unitario, 'f', 2)
+            self.tabela_itens.setItem(i, 2, QTableWidgetItem(preco_formatado))
+            total_formatado = self.locale.toString(preco_unitario * float(item['quantidade']), 'f', 2)
+            self.tabela_itens.setItem(i, 3, QTableWidgetItem(total_formatado))
 
 
 class MovimentacoesUI(QWidget):
