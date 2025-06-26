@@ -1,4 +1,5 @@
 import sys
+import unicodedata
 from PySide6.QtWidgets import (
     QApplication, QWidget, QLabel, QPushButton, QVBoxLayout, QHBoxLayout,
     QGridLayout, QComboBox, QDateEdit, QLineEdit, QSpinBox, QTableWidget,
@@ -7,6 +8,14 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QDate, QLocale
 from decimal import Decimal
 from db_context import get_cursor
+
+def remove_acento(txt):
+    if not txt:
+        return ""
+    return ''.join(
+        c for c in unicodedata.normalize('NFKD', txt)
+        if not unicodedata.combining(c)
+    ).lower().strip()
 
 class MovimentacaoTabUI(QWidget):
     STATUS_LIST = [
@@ -47,7 +56,7 @@ class MovimentacaoTabUI(QWidget):
         query = """
                 SELECT m.id, m.data, m.tipo, m.direcao, m.descricao, m.valor_operacao
                 FROM movimentacoes m
-                WHERE m.fornecedor_id = %s \
+                WHERE m.fornecedor_id = %s 
                 """
         params = [self.fornecedor['id']]
         if data_de:
@@ -76,31 +85,23 @@ class MovimentacaoTabUI(QWidget):
         saldo = Decimal("0.00")
         with get_cursor() as cursor:
             cursor.execute("""
-                           SELECT tipo, direcao, valor_operacao, id
+                           SELECT tipo, direcao, valor_operacao
                            FROM movimentacoes
                            WHERE fornecedor_id = %s
                            """, (self.fornecedor['id'],))
             movimentacoes = cursor.fetchall()
             for mov in movimentacoes:
-                tipo = (mov['tipo'] or '').lower()
-                direcao = (mov['direcao'] or '').lower()
+                tipo = remove_acento(mov['tipo'] or '')
+                direcao = remove_acento(mov['direcao'] or '')
                 valor_op = Decimal(mov['valor_operacao']) if mov['valor_operacao'] is not None else Decimal('0.00')
                 if tipo == "compra":
-                    cursor.execute(
-                        "SELECT SUM(quantidade * preco_unitario) FROM itens_movimentacao WHERE movimentacao_id = %s",
-                        (mov['id'],))
-                    total_itens = cursor.fetchone()[0] or 0
-                    saldo += Decimal(str(total_itens))
+                    saldo += valor_op
                 elif tipo == "venda":
-                    cursor.execute(
-                        "SELECT SUM(quantidade * preco_unitario) FROM itens_movimentacao WHERE movimentacao_id = %s",
-                        (mov['id'],))
-                    total_itens = cursor.fetchone()[0] or 0
-                    saldo -= Decimal(str(total_itens))
-                elif tipo == "transação":
+                    saldo -= valor_op
+                elif tipo == "transacao":
                     if direcao == "entrada":
                         saldo += valor_op
-                    elif direcao == "saída":
+                    elif direcao == "saida":
                         saldo -= valor_op
         return saldo
 
@@ -121,7 +122,7 @@ class MovimentacaoTabUI(QWidget):
         form_grid.addWidget(QLabel("Data"), 1, 0)
         form_grid.addWidget(self.input_data, 1, 1)
 
-        # Categoria (principal/padrão do fornecedor)
+        # Categoria
         self.combo_categoria = QComboBox()
         self.combo_categoria.addItem("Categoria principal", 0)
         categoria_principal = self.obter_categoria_principal()
@@ -168,42 +169,27 @@ class MovimentacaoTabUI(QWidget):
         self.input_valor_operacao.setVisible(False)
         self.label_valor_operacao.setVisible(False)
 
-        # Produtos (só para compra/venda, com campo preço editável e combo editável)
+        # Produtos (só para compra/venda) - sem campo de preço unitário editável!
         self.layout_produto = QGridLayout()
         self.combo_produto = QComboBox()
         self.combo_produto.setEditable(True)  # Permitir escrever o nome
         self.input_quantidade = QSpinBox()
         self.input_quantidade.setMinimum(1)
         self.input_quantidade.setMaximum(99999)
-        self.input_preco = QLineEdit()
-        self.input_preco.setPlaceholderText("Valor unitário")
         self.layout_produto.addWidget(QLabel("Produto"), 0, 0)
         self.layout_produto.addWidget(self.combo_produto, 0, 1)
         self.layout_produto.addWidget(QLabel("Quantidade"), 1, 0)
         self.layout_produto.addWidget(self.input_quantidade, 1, 1)
-        self.layout_produto.addWidget(QLabel("Valor unitário"), 2, 0)
-        self.layout_produto.addWidget(self.input_preco, 2, 1)
         btn_add_item = QPushButton("Adicionar Produto")
         btn_add_item.clicked.connect(self.adicionar_item)
-        self.layout_produto.addWidget(btn_add_item, 3, 0, 1, 2)
+        self.layout_produto.addWidget(btn_add_item, 2, 0, 1, 2)
         form_grid.addLayout(self.layout_produto, 8, 0, 1, 2)
 
+        # Tabela de itens adicionados (apenas visualização do preço e total)
         self.tabela_itens_adicionados = QTableWidget()
         self.tabela_itens_adicionados.setColumnCount(4)
         self.tabela_itens_adicionados.setHorizontalHeaderLabels(["Produto", "Qtd", "Valor unitário", "Total"])
-        self.tabela_itens_adicionados.setEditTriggers(
-            QTableWidget.DoubleClicked | QTableWidget.SelectedClicked | QTableWidget.EditKeyPressed
-        )
-        self.tabela_itens_adicionados.cellChanged.connect(self.editar_preco_item)
-        form_grid.addWidget(QLabel("Itens (antes de salvar):"), 9, 0, 1, 2)
-        form_grid.addWidget(self.tabela_itens_adicionados, 10, 0, 1, 2)
-
-        self.tabela_itens_adicionados = QTableWidget()
-        self.tabela_itens_adicionados.setColumnCount(3)
-        self.tabela_itens_adicionados.setHorizontalHeaderLabels(["Produto", "Qtd", "Total"])
-        self.tabela_itens_adicionados.setEditTriggers(QTableWidget.DoubleClicked | QTableWidget.SelectedClicked)
-        # Permitir editar a quantidade diretamente na tabela (opcional)
-        self.tabela_itens_adicionados.cellChanged.connect(self.editar_quantidade_item)
+        self.tabela_itens_adicionados.setEditTriggers(QTableWidget.NoEditTriggers)
         form_grid.addWidget(QLabel("Itens (antes de salvar):"), 9, 0, 1, 2)
         form_grid.addWidget(self.tabela_itens_adicionados, 10, 0, 1, 2)
 
@@ -293,42 +279,15 @@ class MovimentacaoTabUI(QWidget):
         self.label_total_movimentacao.setVisible(not is_transacao)
         self.atualizar_total_movimentacao()
 
-    def editar_preco_item(self, row, column):
-        # Só permitir edição na coluna de valor unitário
-        if column != 2:
-            return
-        try:
-            novo_preco_str = self.tabela_itens_adicionados.item(row, 2).text().replace(',', '.')
-            novo_preco = Decimal(novo_preco_str)
-            quantidade = self.itens_movimentacao[row]['quantidade']
-            self.itens_movimentacao[row]['preco'] = novo_preco
-            self.itens_movimentacao[row]['total'] = novo_preco * quantidade
-            # Atualiza o total visualmente na tabela
-            total_formatado = self.locale.toString(float(self.itens_movimentacao[row]['total']), 'f', 2)
-            self.tabela_itens_adicionados.setItem(row, 3, QTableWidgetItem(total_formatado))
-            self.atualizar_total_movimentacao()
-        except Exception:
-            QMessageBox.warning(self, "Erro", "Digite um valor válido para o preço unitário.")
-
     def carregar_produtos(self):
         self.combo_produto.clear()
-        self.combo_produto.setEditable(True)  # Permitir escrever
-        # Buscar o valor unitário inicial baseado na tabela ajustes_fixos_produto_fornecedor_categoria
+        self.combo_produto.setEditable(True)
         with get_cursor() as cursor:
             cursor.execute("""
-                           SELECT p.id,
-                                  p.nome,
-                                  COALESCE(
-                                          (SELECT af.ajuste_fixo
-                                           FROM ajustes_fixos_produto_fornecedor_categoria af
-                                           WHERE af.produto_id = p.id
-                                             AND af.categoria_id = %s
-                                          LIMIT 1 ),
-                        p.preco_base
-                    ) AS preco_unitario_ajustado
-                           FROM produtos p
-                           ORDER BY p.nome
-                           """, (self.combo_categoria.currentData(),))
+                SELECT p.id, p.nome, p.preco_base
+                FROM produtos p
+                ORDER BY p.nome
+            """)
             produtos = cursor.fetchall()
         self.produtos = produtos
         self.combo_produto.addItem("Selecione um produto", None)
@@ -341,27 +300,39 @@ class MovimentacaoTabUI(QWidget):
         if produto_id is None or quantidade <= 0:
             QMessageBox.warning(self, "Erro", "Selecione um produto e uma quantidade válida.")
             return
+
         produto = next((p for p in self.produtos if p["id"] == produto_id), None)
         if produto is None:
             QMessageBox.critical(self, "Erro", "Produto não encontrado.")
             return
-        preco = self.input_preco.text().replace(",", ".")
-        try:
-            preco = Decimal(preco) if preco else Decimal(produto["preco_unitario_ajustado"])
-        except Exception:
-            preco = Decimal(produto["preco_unitario_ajustado"])
-        total = preco * quantidade
+
+        categoria_id = self.combo_categoria.currentData()
+        with get_cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT ajuste_fixo
+                FROM ajustes_fixos_produto_fornecedor_categoria
+                WHERE produto_id = %s AND categoria_id = %s
+                """,
+                (produto_id, categoria_id)
+            )
+            ajuste_row = cursor.fetchone()
+        ajuste_fixo = Decimal(str(ajuste_row["ajuste_fixo"])) if ajuste_row and "ajuste_fixo" in ajuste_row else Decimal("0.00")
+
+        preco_base = produto["preco_base"]
+        preco_unitario = Decimal(str(preco_base)) + ajuste_fixo
+        total = quantidade * preco_unitario
+
         self.itens_movimentacao.append({
             "produto_id": produto_id,
             "nome": produto["nome"],
             "quantidade": quantidade,
-            "preco": preco,
+            "preco": preco_unitario,
             "total": total
         })
         self.atualizar_tabela_itens_adicionados()
         self.combo_produto.setCurrentIndex(0)
         self.input_quantidade.setValue(1)
-        self.input_preco.clear()
 
     def atualizar_tabela_itens_adicionados(self):
         self.tabela_itens_adicionados.blockSignals(True)
@@ -375,10 +346,6 @@ class MovimentacaoTabUI(QWidget):
             self.tabela_itens_adicionados.setItem(i, 3, QTableWidgetItem(total_formatado))
         self.tabela_itens_adicionados.blockSignals(False)
         self.atualizar_total_movimentacao()
-
-    def editar_quantidade_item(self, row, column):
-        # Se implementar edição direta de quantidade/total
-        pass
 
     def remover_item(self):
         selected = self.tabela_itens_adicionados.currentRow()
@@ -409,7 +376,6 @@ class MovimentacaoTabUI(QWidget):
         data = self.input_data.date().toPython()
         direcao = self.combo_direcao.currentText().lower() if tipo == "transação" else None
         descricao = self.input_descricao.text().strip()
-        categoria_id = self.combo_categoria.currentData() if self.combo_categoria.isVisible() else None
 
         # Abatimento: salva como uma transação de entrada separada
         valor_abatimento = None
@@ -427,16 +393,20 @@ class MovimentacaoTabUI(QWidget):
                 QMessageBox.warning(self, "Erro", "Digite um valor válido para a operação.")
                 return
         else:
-            valor_operacao = None
             if not self.itens_movimentacao:
                 QMessageBox.warning(self, "Erro", "Adicione pelo menos um item antes de salvar.")
                 return
+            total = sum(Decimal(str(item['total'])) for item in self.itens_movimentacao)
+            valor_abatimento = Decimal(self.input_valor_abatimento.text().replace(',',
+                                                                                  '.')) if self.input_valor_abatimento.text() else Decimal(
+                '0.00')
+            valor_operacao = total - valor_abatimento  # este valor vai para a coluna valor_operacao
 
         with get_cursor(commit=True) as cursor:
             # Compra/Venda: salva normalmente
             cursor.execute(
-                "INSERT INTO movimentacoes (fornecedor_id, data, tipo, direcao, descricao, valor_operacao, categoria_id) VALUES (%s, %s, %s, %s, %s, %s, %s)",
-                (self.fornecedor['id'], data, tipo, direcao, descricao, valor_operacao, categoria_id)
+                "INSERT INTO movimentacoes (fornecedor_id, data, tipo, direcao, descricao, valor_operacao) VALUES (%s, %s, %s, %s, %s, %s)",
+                (self.fornecedor['id'], data, tipo, direcao, descricao, valor_operacao)
             )
             movimentacao_id = cursor.lastrowid
             if tipo != "transação":
@@ -448,15 +418,14 @@ class MovimentacaoTabUI(QWidget):
                 # Se houver abatimento, cria uma transação de entrada separada
                 if valor_abatimento and valor_abatimento > 0:
                     cursor.execute(
-                        "INSERT INTO movimentacoes (fornecedor_id, data, tipo, direcao, descricao, valor_operacao, categoria_id) VALUES (%s, %s, %s, %s, %s, %s, %s)",
+                        "INSERT INTO movimentacoes (fornecedor_id, data, tipo, direcao, descricao, valor_operacao) VALUES (%s, %s, %s, %s, %s, %s)",
                         (
                             self.fornecedor['id'],
                             data,
                             "transação",
                             "entrada",
                             f"Abatimento automático referente à movimentação {movimentacao_id}",
-                            valor_abatimento,
-                            categoria_id
+                            valor_abatimento
                         )
                     )
         QMessageBox.information(self, "Sucesso", "Movimentação cadastrada com sucesso.")
