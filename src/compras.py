@@ -211,29 +211,41 @@ class ComprasUI(QWidget):
             self.campo_texto_copiavel.setText("")
             return
         with get_cursor() as cursor:
+            # Primeiro tenta pegar a conta personalizada (da compra)
             cursor.execute("""
-                           SELECT dbf.banco, dbf.agencia, dbf.conta, dbf.nome_conta
+                           SELECT c.total, dbf.banco, dbf.agencia, dbf.conta, dbf.nome_conta, dbf.CPFouCNPJ
                            FROM compras c
                                     LEFT JOIN dados_bancarios_fornecedor dbf ON c.dados_bancarios_id = dbf.id
                            WHERE c.id = %s
                            """, (compra_id,))
             row = cursor.fetchone()
             if row and row['banco']:
-                texto = f"{row['nome_conta'] or row['banco']} - Ag:{row['agencia']} Conta:{row['conta']}"
+                valor = f"{row['total']:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+                tipo_doc = "CNPJ" if row['CPFouCNPJ'] and len(row['CPFouCNPJ']) > 14 else "CPF"
+                texto = (
+                    f"{row['nome_conta'] or row['banco']} - R$ {valor}\n"
+                    f"{row['banco']} (Ag: {row['agencia']}, Conta: {row['conta']})\n"
+                    f"{tipo_doc}: {row['CPFouCNPJ']}"
+                )
                 self.campo_texto_copiavel.setText(texto)
             else:
-                # Se não há conta personalizada, pode buscar a padrão:
+                # Se não houver conta personalizada, busca a padrão do fornecedor com o mesmo formato
                 cursor.execute("""
-                               SELECT banco, agencia, conta, nome_conta
-                               FROM dados_bancarios_fornecedor
-                               WHERE fornecedor_id = (SELECT fornecedor_id
-                                                      FROM compras
-                                                      WHERE id = %s)
-                                 AND padrao = 1 LIMIT 1
+                               SELECT dbf.banco, dbf.agencia, dbf.conta, dbf.nome_conta, dbf.CPFouCNPJ, c.total
+                               FROM compras c
+                                        JOIN dados_bancarios_fornecedor dbf
+                                             ON dbf.fornecedor_id = c.fornecedor_id AND dbf.padrao = 1
+                               WHERE c.id = %s LIMIT 1
                                """, (compra_id,))
                 row = cursor.fetchone()
                 if row:
-                    texto = f"{row['nome_conta'] or row['banco']} - Ag:{row['agencia']} Conta:{row['conta']}"
+                    valor = f"{row['total']:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+                    tipo_doc = "CNPJ" if row['CPFouCNPJ'] and len(row['CPFouCNPJ']) > 14 else "CPF"
+                    texto = (
+                        f"{row['nome_conta'] or row['banco']} - R$ {valor}\n"
+                        f"{row['banco']} (Ag: {row['agencia']}, Conta: {row['conta']})\n"
+                        f"{tipo_doc}: {row['CPFouCNPJ']}"
+                    )
                     self.campo_texto_copiavel.setText(texto)
                 else:
                     self.campo_texto_copiavel.setText("")
@@ -583,6 +595,7 @@ class ComprasUI(QWidget):
         ])
         self.tabela_compras_aberto.setEditTriggers(QTableWidget.DoubleClicked)
         self.tabela_compras_aberto.cellClicked.connect(lambda row, col: self.mostrar_itens_da_compra(row, col, tabela=self.tabela_compras_aberto))
+        self.tabela_compras_aberto.itemSelectionChanged.connect(self.atualizar_campo_texto_copiavel)
         layout_compras_com_filtros.addWidget(self.tabela_compras_aberto)
 
         # Área direita, igual antes
@@ -678,19 +691,13 @@ class ComprasUI(QWidget):
             compra_id_local = self.obter_compra_id_selecionado()
             if conta_id and compra_id_local:
                 with get_cursor() as cursor:
+                    # Atualiza a conta da compra
                     cursor.execute(
                         "UPDATE compras SET dados_bancarios_id = %s WHERE id = %s",
                         (conta_id, compra_id_local)
                     )
-                    # Buscar os dados completos da conta escolhida para exibir no campo copiável
-                    cursor.execute(
-                        "SELECT banco, agencia, conta, nome_conta FROM dados_bancarios_fornecedor WHERE id = %s",
-                        (conta_id,)
-                    )
-                    row = cursor.fetchone()
-                    if row:
-                        texto = f"{row['nome_conta'] or row['banco']} - Ag:{row['agencia']} Conta:{row['conta']}"
-                        self.campo_texto_copiavel.setText(texto)
+                # Chama o méodo para atualizar o campo copiável
+                self.atualizar_campo_texto_copiavel()
             dialog.accept()
 
         def on_cancel():
@@ -1280,21 +1287,7 @@ class ComprasUI(QWidget):
             self.label_total_com_abatimento.setText(
                 f"Total com Abatimento: R$ {self.locale.toString(total_final, 'f', 2)}"
             )
-
-        # Atualiza campo copiável
-        with get_cursor() as cursor:
-            cursor.execute("SELECT fornecedor_id FROM compras WHERE id = %s", (compra_id,))
-            compra_info = cursor.fetchone()
-
-        if compra_info:
-            fornecedor_id = compra_info["fornecedor_id"]
-            nome_conta = self.buscar_nome_conta_padrao(fornecedor_id)
-            texto_copiavel = f"{nome_conta} - R$ {self.locale.toString(total_final, 'f', 2)}"
-            self.campo_texto_copiavel.setText(texto_copiavel)
-            self.campo_texto_copiavel.setStyleSheet("color: black; font-weight: bold; font-size: 13px;")
-        else:
-            self.campo_texto_copiavel.setText("Conta não encontrada")
-            self.campo_texto_copiavel.setStyleSheet("color: red; font-weight: bold; font-size: 13px;")
+        self.atualizar_campo_texto_copiavel()
 
     def buscar_nome_conta_padrao(self, fornecedor_id):
         try:
