@@ -315,17 +315,22 @@ class MovimentacaoTabUI(QWidget):
                 self.itens_movimentacao[row]['quantidade'] = nova_qtd
             elif column == 2:  # Preço unitário
                 novo_preco_str = self.tabela_itens_adicionados.item(row, 2).text().replace(',', '.')
-                novo_preco = float(novo_preco_str)
+                from decimal import Decimal, InvalidOperation
+                try:
+                    novo_preco = Decimal(novo_preco_str)
+                except InvalidOperation:
+                    QMessageBox.warning(self, "Erro", "Valor de preço inválido.")
+                    return
                 self.itens_movimentacao[row]['preco'] = novo_preco
 
             qtd = self.itens_movimentacao[row]['quantidade']
             preco = self.itens_movimentacao[row]['preco']
-            self.itens_movimentacao[row]['total'] = qtd * preco
+            self.itens_movimentacao[row]['total'] = Decimal(str(qtd)) * preco
 
             self.atualizar_tabela_itens_adicionados()
 
-        except Exception:
-            QMessageBox.warning(self, "Erro", "Valor inválido. Digite um número válido.")
+        except Exception as e:
+            QMessageBox.warning(self, "Erro", f"Valor inválido: {e}")
 
     def exportar_movimentacoes_pdf(self):
         dialog = DialogFiltroData(self.filtro_data_de.date(), self.filtro_data_ate.date(), self)
@@ -442,7 +447,7 @@ class MovimentacaoTabUI(QWidget):
             mov = bloco['mov']
             itens = bloco['itens']
             tipo = mov['tipo'].capitalize()
-            direcao = mov['direcao'].capitalize() if mov['direcao'] else ""
+            direcao = (mov.get('direcao') or "").capitalize()
             descricao = mov['descricao'] or ""
             valor_operacao = float(mov['valor_operacao'] or 0)
             saldo_atual = saldo_por_id.get(mov['id'], 0)
@@ -691,7 +696,7 @@ class MovimentacaoTabUI(QWidget):
             mov = bloco['mov']
             itens = bloco['itens']
             tipo = mov['tipo'].capitalize()
-            direcao = mov['direcao'].capitalize() if mov['direcao'] else ""
+            direcao = (mov.get('direcao') or "").capitalize()
             descricao = mov['descricao'] or ""
             valor_operacao = float(mov['valor_operacao'] or 0)
             saldo_atual = saldo_por_id.get(mov['id'], 0)
