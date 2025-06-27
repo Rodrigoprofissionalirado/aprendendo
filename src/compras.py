@@ -4,7 +4,7 @@ from PySide6.QtWidgets import (
     QApplication, QWidget, QLabel, QPushButton, QVBoxLayout,
     QHBoxLayout, QGridLayout, QComboBox, QDateEdit, QLineEdit,
     QSpinBox, QTableWidget, QTableWidgetItem, QMessageBox, QTabWidget,
-    QDialog
+    QDialog, QDialogButtonBox
 )
 from PySide6.QtCore import Qt, QTimer, QDate, QLocale
 from decimal import Decimal, ROUND_HALF_UP
@@ -80,6 +80,29 @@ class ComprasUI(QWidget):
                 SELECT id, nome FROM fornecedores ORDER BY nome
             """)
             return cursor.fetchall()
+
+    def listar_contas_do_fornecedor(self, fornecedor_id):
+        if not fornecedor_id:
+            return []
+        with get_cursor() as cursor:
+            cursor.execute("""
+                           SELECT id, banco, agencia, conta, nome_conta, padrao
+                           FROM dados_bancarios_fornecedor
+                           WHERE fornecedor_id = %s
+                           ORDER BY padrao DESC, nome_conta, banco
+                           """, (fornecedor_id,))
+            rows = cursor.fetchall()
+            return [
+                {
+                    'id': row['id'],
+                    'apelido': row['nome_conta'] or row['banco'],
+                    'banco': row['banco'],
+                    'agencia': row['agencia'],
+                    'conta': row['conta'],
+                    'padrao': row['padrao'],
+                }
+                for row in rows
+            ]
 
     def listar_produtos(self):
         with get_cursor() as cursor:
@@ -182,6 +205,39 @@ class ComprasUI(QWidget):
                            WHERE id = %s
                            """, (compra_id, compra_id))
 
+    def atualizar_campo_texto_copiavel(self):
+        compra_id = self.obter_compra_id_selecionado()
+        if not compra_id:
+            self.campo_texto_copiavel.setText("")
+            return
+        with get_cursor() as cursor:
+            cursor.execute("""
+                           SELECT dbf.banco, dbf.agencia, dbf.conta, dbf.nome_conta
+                           FROM compras c
+                                    LEFT JOIN dados_bancarios_fornecedor dbf ON c.dados_bancarios_id = dbf.id
+                           WHERE c.id = %s
+                           """, (compra_id,))
+            row = cursor.fetchone()
+            if row and row['banco']:
+                texto = f"{row['nome_conta'] or row['banco']} - Ag:{row['agencia']} Conta:{row['conta']}"
+                self.campo_texto_copiavel.setText(texto)
+            else:
+                # Se não há conta personalizada, pode buscar a padrão:
+                cursor.execute("""
+                               SELECT banco, agencia, conta, nome_conta
+                               FROM dados_bancarios_fornecedor
+                               WHERE fornecedor_id = (SELECT fornecedor_id
+                                                      FROM compras
+                                                      WHERE id = %s)
+                                 AND padrao = 1 LIMIT 1
+                               """, (compra_id,))
+                row = cursor.fetchone()
+                if row:
+                    texto = f"{row['nome_conta'] or row['banco']} - Ag:{row['agencia']} Conta:{row['conta']}"
+                    self.campo_texto_copiavel.setText(texto)
+                else:
+                    self.campo_texto_copiavel.setText("")
+
     def atualizar_status_compra(self, compra_id, novo_status):
         with get_cursor(commit=True) as cursor:
             cursor.execute("UPDATE compras SET status = %s WHERE id = %s", (novo_status, compra_id))
@@ -204,6 +260,17 @@ class ComprasUI(QWidget):
             return None
         item = tabela.item(linha, 0)
         return int(item.text()) if item else None
+
+    def obter_fornecedor_id_da_compra(self, compra_id):
+        if not compra_id:
+            return None
+        with get_cursor() as cursor:
+            cursor.execute("SELECT fornecedor_id FROM compras WHERE id = %s", (compra_id,))
+            row = cursor.fetchone()
+            if row:
+                # Se row for dict: row['fornecedor_id'], se for tupla: row[0]
+                return row['fornecedor_id']
+        return None
 
     def obter_detalhes_compra(self, compra_id):
         with get_cursor() as cursor:
@@ -537,6 +604,12 @@ class ComprasUI(QWidget):
         layout_direita.addWidget(self.campo_texto_copiavel)
         self.campo_texto_copiavel.mousePressEvent = self.copiar_campo_texto_copiavel
 
+        # --- NOVO BOTÃO PARA TROCAR CONTA DO FORNECEDOR ---
+        self.btn_trocar_conta_fornecedor = QPushButton("Trocar conta do fornecedor (só para esta compra)")
+        self.btn_trocar_conta_fornecedor.clicked.connect(self.abrir_dialog_troca_conta_fornecedor)
+        layout_direita.addWidget(self.btn_trocar_conta_fornecedor)
+        # ---------------------------------------------------
+
         self.btn_exportar_pdf = QPushButton("Exportar PDF")
         self.btn_exportar_pdf.clicked.connect(self.exportar_compra_pdf)
         layout_direita.addWidget(self.btn_exportar_pdf)
@@ -564,6 +637,69 @@ class ComprasUI(QWidget):
         self.combo_produto.setCurrentIndex(-1)
         self.combo_produto.blockSignals(False)
         self.atualizar_tabelas()
+
+    def abrir_dialog_troca_conta_fornecedor(self):
+        from PySide6.QtWidgets import QDialog, QVBoxLayout, QDialogButtonBox, QComboBox, QLabel, QMessageBox
+
+        compra_id = self.obter_compra_id_selecionado()
+        if not compra_id:
+            QMessageBox.warning(self, "Atenção", "Selecione uma compra primeiro.")
+            return
+
+        fornecedor_id = self.obter_fornecedor_id_da_compra(compra_id)
+        if not fornecedor_id:
+            QMessageBox.warning(self, "Erro", "Não foi possível identificar o fornecedor da compra selecionada.")
+            return
+
+        contas_do_fornecedor = self.listar_contas_do_fornecedor(fornecedor_id)
+        if not contas_do_fornecedor:
+            QMessageBox.information(self, "Sem contas", "Este fornecedor não possui contas bancárias cadastradas.")
+            return
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Escolher conta do fornecedor para esta compra")
+
+        layout = QVBoxLayout(dialog)
+        layout.addWidget(QLabel("Selecione a conta bancária:"))
+
+        combo_contas = QComboBox(dialog)
+        for conta in contas_do_fornecedor:
+            texto = f"{conta['apelido']} - {conta['banco']} Ag:{conta['agencia']} Conta:{conta['conta']}"
+            if conta.get('padrao'):
+                texto += " (padrão)"
+            combo_contas.addItem(texto, conta['id'])
+
+        layout.addWidget(combo_contas)
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        layout.addWidget(buttons)
+
+        def on_ok():
+            conta_id = combo_contas.currentData()
+            compra_id_local = self.obter_compra_id_selecionado()
+            if conta_id and compra_id_local:
+                with get_cursor() as cursor:
+                    cursor.execute(
+                        "UPDATE compras SET dados_bancarios_id = %s WHERE id = %s",
+                        (conta_id, compra_id_local)
+                    )
+                    # Buscar os dados completos da conta escolhida para exibir no campo copiável
+                    cursor.execute(
+                        "SELECT banco, agencia, conta, nome_conta FROM dados_bancarios_fornecedor WHERE id = %s",
+                        (conta_id,)
+                    )
+                    row = cursor.fetchone()
+                    if row:
+                        texto = f"{row['nome_conta'] or row['banco']} - Ag:{row['agencia']} Conta:{row['conta']}"
+                        self.campo_texto_copiavel.setText(texto)
+            dialog.accept()
+
+        def on_cancel():
+            dialog.reject()
+
+        buttons.accepted.connect(on_ok)
+        buttons.rejected.connect(on_cancel)
+
+        dialog.exec()
 
     def atualizar_tabelas(self):
         status_filtro = self.filtro_combo_status.currentData()
