@@ -823,16 +823,21 @@ class ComprasUI(QWidget):
             self.label_saldo_fornecedor.setStyleSheet(
                 "font-weight: bold; color: #808080; font-size: 13px; text-decoration: underline; cursor: pointer;")
             return
-        saldo = self.obter_saldo_devedor_fornecedor(fornecedor_id)
-        self.label_saldo_fornecedor.setText(f"Saldo: R$ {self.locale.toString(float(saldo), 'f', 2)}")
 
-        # Atualiza cor de acordo com saldo
+        saldo = float(self.obter_saldo_devedor_fornecedor(fornecedor_id))
+
+        # Define texto e cor de acordo com o saldo
         if saldo > 0:
+            texto = f"Saldo devedor: R$ {self.locale.toString(abs(saldo), 'f', 2)}"
             cor = "#b22222"  # vermelho
         elif saldo < 0:
+            texto = f"Saldo credor: R$ {self.locale.toString(abs(-saldo), 'f', 2)}"
             cor = "#228B22"  # verde
         else:
+            texto = "Saldo zerado: R$ 0,00"
             cor = "#808080"  # cinza
+
+        self.label_saldo_fornecedor.setText(texto)
         self.label_saldo_fornecedor.setStyleSheet(
             f"font-weight: bold; color: {cor}; font-size: 13px; text-decoration: underline; cursor: pointer;"
         )
