@@ -1472,8 +1472,8 @@ class ComprasUI(QWidget):
         # Exibir saldo do fornecedor ao final
         y -= 10 * mm
         c.setFont("Helvetica-Bold", 11)
-        if saldo >= 0:
-            c.drawString(20 * mm, y, f"Saldo positivo do fornecedor: R$ {saldo:.2f}")
+        if saldo <= 0:
+            c.drawString(20 * mm, y, f"Saldo positivo do fornecedor: R$ {-saldo:.2f}")
         else:
             c.drawString(20 * mm, y, f"Saldo devedor do fornecedor: R$ {abs(saldo):.2f}")
 
@@ -1599,8 +1599,8 @@ class ComprasUI(QWidget):
         y += 25
 
         # Saldo do fornecedor ao final
-        if saldo >= 0:
-            draw.text((30, y), f"Saldo positivo do fornecedor: R$ {saldo:.2f}", fill="black", font=fonte_bold)
+        if saldo <= 0:
+            draw.text((30, y), f"Saldo positivo do fornecedor: R$ {-saldo:.2f}", fill="black", font=fonte_bold)
         else:
             draw.text((30, y), f"Saldo devedor do fornecedor: R$ {abs(saldo):.2f}", fill="black", font=fonte_bold)
         y += 40
