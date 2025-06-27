@@ -59,8 +59,10 @@ class DebitosUI(QWidget):
 
         # Tabela
         self.tabela = QTableWidget()
-        self.tabela.setColumnCount(5)
-        self.tabela.setHorizontalHeaderLabels(["Data", "Descrição", "Valor", "Tipo", "Origem"])
+        self.tabela.setColumnCount(7)
+        self.tabela.setHorizontalHeaderLabels([
+            "Data", "Fornecedor", "Nº Balança", "Descrição", "Valor", "Tipo", "Origem"
+        ])
         layout_principal.addWidget(self.tabela)
 
         self.label_saldo = QLabel("Saldo devedor: R$ 0,00")
@@ -82,7 +84,6 @@ class DebitosUI(QWidget):
         self.btn_exportar_jpg = QPushButton("Exportar JPG")
         self.btn_exportar_jpg.clicked.connect(self.exportar_jpg)
         layout_botoes.addWidget(self.btn_exportar_jpg)
-
 
         layout_principal.addLayout(layout_botoes)
 
@@ -117,10 +118,12 @@ class DebitosUI(QWidget):
         data_ate = self.data_ate.date().toPython()
 
         query = """
-            SELECT d.data_lancamento, d.descricao, d.valor, d.tipo,
+            SELECT d.data_lancamento, f.nome as fornecedor_nome, f.fornecedores_numerobalanca, 
+                   d.descricao, d.valor, d.tipo,
                    IFNULL(c.id, 'Manual') as origem
             FROM debitos_fornecedores d
             LEFT JOIN compras c ON d.compra_id = c.id
+            LEFT JOIN fornecedores f ON d.fornecedor_id = f.id
             WHERE d.data_lancamento BETWEEN %s AND %s
         """
         params = [data_de, data_ate]
@@ -137,10 +140,12 @@ class DebitosUI(QWidget):
         saldo = 0.0
         for i, row in enumerate(resultados):
             self.tabela.setItem(i, 0, QTableWidgetItem(str(row["data_lancamento"])))
-            self.tabela.setItem(i, 1, QTableWidgetItem(row["descricao"]))
-            self.tabela.setItem(i, 2, QTableWidgetItem(f"R$ {row['valor']:.2f}"))
-            self.tabela.setItem(i, 3, QTableWidgetItem("Inclusão" if row["tipo"] == "inclusao" else "Abatimento"))
-            self.tabela.setItem(i, 4, QTableWidgetItem(str(row["origem"])))
+            self.tabela.setItem(i, 1, QTableWidgetItem(str(row.get("fornecedor_nome") or "")))
+            self.tabela.setItem(i, 2, QTableWidgetItem(str(row.get("fornecedores_numerobalanca") or "")))
+            self.tabela.setItem(i, 3, QTableWidgetItem(row["descricao"]))
+            self.tabela.setItem(i, 4, QTableWidgetItem(f"R$ {row['valor']:.2f}"))
+            self.tabela.setItem(i, 5, QTableWidgetItem("Inclusão" if row["tipo"] == "inclusao" else "Abatimento"))
+            self.tabela.setItem(i, 6, QTableWidgetItem(str(row["origem"])))
             saldo += float(row["valor"]) if row["tipo"] == "inclusao" else -float(row["valor"])
         self.label_saldo.setText(f"Saldo devedor: R$ {saldo:.2f}")
 
@@ -176,8 +181,7 @@ class DebitosUI(QWidget):
             cursor.execute("SELECT id, nome, fornecedores_numerobalanca FROM fornecedores ORDER BY nome")
             fornecedores = cursor.fetchall()
         for f in fornecedores:
-            nome_display = f"{f['nome']} (Bal: {f['fornecedores_numerobalanca']})" if f[
-                'fornecedores_numerobalanca'] else f['nome']
+            nome_display = f"{f['nome']} (Bal: {f['fornecedores_numerobalanca']})" if f['fornecedores_numerobalanca'] else f['nome']
             input_cliente.addItem(nome_display, f["id"])
 
         # Pré-seleciona o fornecedor do filtro, se houver (ou nenhum)
@@ -251,7 +255,7 @@ class DebitosUI(QWidget):
         if linha < 0:
             return
         data = self.tabela.item(linha, 0).text()
-        descricao = self.tabela.item(linha, 1).text()
+        descricao = self.tabela.item(linha, 3).text()
         confirm = QMessageBox.question(
             self, "Confirmação",
             f"Deseja excluir o débito de {data}\nDescrição: {descricao}?",
@@ -326,7 +330,6 @@ class DebitosUI(QWidget):
         painter.drawText(20, y, "Relatório de Débitos")
         y += 25
 
-        # Informações de filtro
         fornecedor = self.combo_fornecedor.currentText()
         data_inicio = self.data_de.date().toString("dd/MM/yyyy")
         data_fim = self.data_ate.date().toString("dd/MM/yyyy")
@@ -339,29 +342,28 @@ class DebitosUI(QWidget):
         painter.drawText(20, y, f"Período: {data_inicio} até {data_fim}")
         y += 30
 
-        # Cabeçalhos da tabela
-        x_offsets = [20, 180, 480, 650, 800]
-        col_widths = [160, 300, 170, 150, 150]
+        # Apenas as colunas originais
+        x_offsets = [20, 220, 700, 900, 1040]
+        col_widths = [200, 480, 200, 140, 140]
         headers = ["Data", "Descrição", "Valor", "Tipo", "Origem"]
 
         painter.setFont(QFont("Arial", 11, QFont.Bold))
         row_height = 25
 
-        # Desenhar cabeçalhos com borda
         for i, header in enumerate(headers):
             painter.drawRect(x_offsets[i], y, col_widths[i], row_height)
             painter.drawText(x_offsets[i] + 5, y + 17, header)
         y += row_height
 
-        # Dados da tabela + cálculo de totais
         painter.setFont(QFont("Arial", 10))
         total_inclusoes = 0.0
         total_abatimentos = 0.0
 
         for row in range(self.tabela.rowCount()):
-            tipo = self.tabela.item(row, 3).text().strip().lower()
-            valor_str = self.tabela.item(row, 2).text().replace("R$", "").replace(",", ".").strip()
-
+            # Só pega as colunas desejadas (0, 3, 4, 5, 6)
+            colunas_tabela = [0, 3, 4, 5, 6]
+            tipo = self.tabela.item(row, 5).text().strip().lower()
+            valor_str = self.tabela.item(row, 4).text().replace("R$", "").replace(",", ".").strip()
             try:
                 valor = float(valor_str)
             except ValueError:
@@ -372,32 +374,27 @@ class DebitosUI(QWidget):
             elif "abat" in tipo:
                 total_abatimentos += valor
 
-            for col in range(self.tabela.columnCount()):
+            for i, col in enumerate(colunas_tabela):
                 texto = self.tabela.item(row, col).text()
-                painter.drawRect(x_offsets[col], y, col_widths[col], row_height)
-                painter.drawText(x_offsets[col] + 5, y + 17, texto)
+                painter.drawRect(x_offsets[i], y, col_widths[i], row_height)
+                painter.drawText(x_offsets[i] + 5, y + 17, texto)
             y += row_height
 
-            # ➕ SE FOR PDF: quebra de página se estiver perto do fim da folha
             if printer and y > printer.height() - 100:
                 printer.newPage()
-                y = 30  # reinicia no topo da nova página
-
-                # Redesenha cabeçalhos na nova página
+                y = 30
                 painter.setFont(QFont("Arial", 11, QFont.Bold))
                 for i, header in enumerate(headers):
                     painter.drawRect(x_offsets[i], y, col_widths[i], row_height)
                     painter.drawText(x_offsets[i] + 5, y + 17, header)
                 y += row_height
 
-        # ➖ Linha horizontal separadora
         y += 10
-        painter.drawLine(20, y, 1150, y)
+        painter.drawLine(20, y, 1200, y)
         y += 20
 
         saldo_final = total_inclusoes - total_abatimentos
 
-        # Totais
         painter.setFont(QFont("Arial", 11, QFont.Bold))
         painter.drawText(20, y, f"Total de Inclusões: R$ {total_inclusoes:.2f}")
         y += 20
