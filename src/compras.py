@@ -182,23 +182,6 @@ class ComprasUI(QWidget):
                            WHERE id = %s
                            """, (compra_id, compra_id))
 
-            # --- ABAIXO: GESTÃO DO ABATIMENTO NO MÓDULO DE DÉBITOS ---
-            # Remove abatimentos anteriores desta compra, para evitar duplicidade
-            cursor.execute(
-                "DELETE FROM debitos_fornecedores WHERE compra_id = %s AND tipo = 'abatimento'",
-                (compra_id,)
-            )
-
-            # Se houver abatimento, lança nos débitos do fornecedor
-            if valor_abatimento and valor_abatimento > 0:
-                cursor.execute(
-                    """
-                    INSERT INTO debitos_fornecedores (fornecedor_id, compra_id, data_lancamento, descricao, valor, tipo)
-                    VALUES (%s, %s, %s, %s, %s, 'abatimento')
-                    """,
-                    (fornecedor_id, compra_id, data_compra, 'Abatimento em compra', abs(valor_abatimento))
-                )
-
     def atualizar_status_compra(self, compra_id, novo_status):
         with get_cursor(commit=True) as cursor:
             cursor.execute("UPDATE compras SET status = %s WHERE id = %s", (novo_status, compra_id))
@@ -873,106 +856,37 @@ class ComprasUI(QWidget):
                     )
             QMessageBox.information(self, "Sucesso", "Compra cadastrada com sucesso.")
         else:
-            # Buscar valores antigos
-            with get_cursor() as cursor:
-                cursor.execute("""
-                               SELECT total, valor_abatimento
-                               FROM compras
-                               WHERE id = %s
-                               """, (self.compra_edit_id,))
-                dados_antigos = cursor.fetchone()
-                total_antigo = Decimal(str(dados_antigos['total'] or 0))
-                abatimento_antigo = Decimal(str(dados_antigos['valor_abatimento'] or 0))
+            # Remover lançamentos antigos de abatimento/adiantamento
+            with get_cursor(commit=True) as cursor:
+                cursor.execute(
+                    "DELETE FROM debitos_fornecedores WHERE compra_id = %s AND (tipo = 'abatimento' OR tipo = 'inclusao')",
+                    (self.compra_edit_id,)
+                )
+                # Atualiza valor_abatimento na compra
+                cursor.execute("UPDATE compras SET valor_abatimento = %s WHERE id = %s",
+                               (valor_abatimento, self.compra_edit_id))
 
-                cursor.execute("""
-                               SELECT COALESCE(SUM(valor), 0) as valor_adiantamento
-                               FROM debitos_fornecedores
-                               WHERE compra_id = %s
-                                 AND tipo = 'inclusao'
-                               """, (self.compra_edit_id,))
-                adiantamento_row = cursor.fetchone()
-                valor_adiantamento_antigo = Decimal(str(adiantamento_row["valor_adiantamento"] or 0))
+                # Insere o lançamento correto, se houver valor
+                if tipo_lancamento == "adiantamento" and valor_inclusao > 0:
+                    cursor.execute(
+                        """
+                        INSERT INTO debitos_fornecedores
+                            (fornecedor_id, compra_id, data_lancamento, descricao, valor, tipo)
+                        VALUES (%s, %s, %s, %s, %s, 'inclusao')
+                        """,
+                        (fornecedor_id, self.compra_edit_id, data_compra, 'Inclusão em compra', abs(valor_inclusao))
+                    )
+                elif tipo_lancamento == "abatimento" and valor_abatimento > 0:
+                    cursor.execute(
+                        """
+                        INSERT INTO debitos_fornecedores
+                            (fornecedor_id, compra_id, data_lancamento, descricao, valor, tipo)
+                        VALUES (%s, %s, %s, %s, %s, 'abatimento')
+                        """,
+                        (fornecedor_id, self.compra_edit_id, data_compra, 'Abatimento em compra', abs(valor_abatimento))
+                    )
 
-            # Valor final antigo
-            if valor_adiantamento_antigo > 0:
-                valor_antigo_final = total_antigo + valor_adiantamento_antigo
-            else:
-                valor_antigo_final = total_antigo - abatimento_antigo
-
-            # Valor final novo
-            total_novo = sum(Decimal(str(item['total'])) for item in self.itens_compra)
-            if tipo_lancamento == "adiantamento":
-                valor_novo_final = total_novo + valor_inclusao
-            else:
-                valor_novo_final = total_novo - valor_abatimento
-
-            diferenca = valor_novo_final - valor_antigo_final
-
-            # Se houver diferença, perguntar o que fazer
-            if diferenca != 0:
-                dialog = DiferencaCompraDialog(float(diferenca), parent=self)
-                if dialog.exec() == QDialog.Accepted:
-                    if dialog.resultado == "converter_abate":
-                        # NOVA LÓGICA AJUSTADA:
-                        # Se diferença > 0: diminui do adiantamento, aumenta no abatimento
-                        # Se diferença < 0: aumenta no adiantamento, diminui do abatimento
-                        novo_adiantamento = valor_adiantamento_antigo
-                        novo_abatimento = abatimento_antigo
-                        if diferenca > 0:
-                            # Diminui do adiantamento caso exista, senão aumenta o abatimento
-                            if valor_adiantamento_antigo > 0:
-                                novo_adiantamento = max(Decimal("0.00"), valor_adiantamento_antigo - abs(diferenca))
-                                resto = abs(diferenca) - valor_adiantamento_antigo
-                                if resto > 0:
-                                    novo_abatimento = abatimento_antigo + resto
-                            else:
-                                novo_abatimento = abatimento_antigo + abs(diferenca)
-                        else:  # diferenca < 0
-                            # Aumenta o adiantamento caso exista, senão diminui o abatimento
-                            if valor_adiantamento_antigo > 0:
-                                novo_adiantamento = valor_adiantamento_antigo + abs(diferenca)
-                            elif abatimento_antigo > 0:
-                                novo_abatimento = max(Decimal("0.00"), abatimento_antigo - abs(diferenca))
-                                # Se abatimento zerar e ainda sobrar diferença, pode adicionar ao adiantamento
-                                resto = abs(diferenca) - abatimento_antigo
-                                if resto > 0:
-                                    novo_adiantamento = valor_adiantamento_antigo + resto
-                            else:
-                                novo_adiantamento = abs(diferenca)
-                        # Atualizar valores no banco
-                        with get_cursor(commit=True) as cursor:
-                            # Atualiza/zera adiantamento
-                            cursor.execute(
-                                "SELECT COUNT(*) as qtd FROM debitos_fornecedores WHERE compra_id = %s AND tipo = 'inclusao'",
-                                (self.compra_edit_id,)
-                            )
-                            result = cursor.fetchone()
-                            if result and result["qtd"] > 0:
-                                cursor.execute(
-                                    "UPDATE debitos_fornecedores SET valor = %s WHERE compra_id = %s AND tipo = 'inclusao'",
-                                    (abs(novo_adiantamento), self.compra_edit_id)
-                                )
-                            elif novo_adiantamento > 0:
-                                cursor.execute(
-                                    """
-                                    INSERT INTO debitos_fornecedores
-                                        (fornecedor_id, compra_id, data_lancamento, descricao, valor, tipo)
-                                    VALUES (%s, %s, %s, %s, %s, 'inclusao')
-                                    """,
-                                    (fornecedor_id, self.compra_edit_id, data_compra, 'Inclusão em compra',
-                                     abs(novo_adiantamento))
-                                )
-                            # Atualiza abatimento
-                            cursor.execute(
-                                "UPDATE compras SET valor_abatimento = %s WHERE id = %s",
-                                (abs(novo_abatimento), self.compra_edit_id)
-                            )
-                        valor_inclusao = abs(novo_adiantamento)
-                        valor_abatimento = abs(novo_abatimento)
-                    # Se resultado == "somente_alterar", apenas segue normal
-                else:
-                    return  # Usuário cancelou o diálogo, não salva!
-
+            # Atualiza os dados da compra e itens normalmente
             self.atualizar_compra(
                 self.compra_edit_id,
                 fornecedor_id,
@@ -981,43 +895,6 @@ class ComprasUI(QWidget):
                 self.itens_compra,
                 status
             )
-            # Atualiza lançamentos de adiantamento se necessário (abatimento já foi acima)
-            with get_cursor(commit=True) as cursor:
-                cursor.execute(
-                    "SELECT COUNT(*) as qtd FROM debitos_fornecedores WHERE compra_id = %s AND tipo = 'inclusao'",
-                    (self.compra_edit_id,)
-                )
-                result = cursor.fetchone()
-                if valor_inclusao > 0:
-                    if result and result["qtd"] > 0:
-                        cursor.execute(
-                            """
-                            UPDATE debitos_fornecedores
-                            SET valor           = %s,
-                                fornecedor_id   = %s,
-                                data_lancamento = %s,
-                                descricao       = %s
-                            WHERE compra_id = %s
-                              AND tipo = 'inclusao'
-                            """,
-                            (valor_inclusao, fornecedor_id, data_compra, 'Inclusão em compra', self.compra_edit_id)
-                        )
-                    else:
-                        cursor.execute(
-                            """
-                            INSERT INTO debitos_fornecedores
-                                (fornecedor_id, compra_id, data_lancamento, descricao, valor, tipo)
-                            VALUES (%s, %s, %s, %s, %s, 'inclusao')
-                            """,
-                            (fornecedor_id, self.compra_edit_id, data_compra, 'Inclusão em compra', valor_inclusao)
-                        )
-                else:
-                    if result and result["qtd"] > 0:
-                        cursor.execute(
-                            "UPDATE debitos_fornecedores SET valor = 0 WHERE compra_id = %s AND tipo = 'inclusao'",
-                            (self.compra_edit_id,)
-                        )
-
             QMessageBox.information(self, "Sucesso", "Compra editada com sucesso.")
 
         # Limpa e atualiza UI
