@@ -7,7 +7,7 @@ from PySide6.QtWidgets import (
     QTableWidgetItem, QMessageBox, QSizePolicy, QTabWidget, QDialog
 )
 from PySide6.QtCore import Qt, QDate, QLocale
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from db_context import get_cursor
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
@@ -18,6 +18,25 @@ from reportlab.pdfbase.ttfonts import TTFont
 from PIL import Image, ImageDraw, ImageFont
 from datetime import datetime
 
+def decimal_para_str_brasil(valor, locale=None):
+    # Converte Decimal para string formatada no padrão brasileiro
+    if locale is None:
+        locale = QLocale(QLocale.Portuguese, QLocale.Brazil)
+    return locale.toString(float(valor), 'f', 2)
+
+def str_brasil_para_decimal(texto):
+    # Converte string monetária brasileira para Decimal
+    texto = texto.replace('.', '').replace(',', '.')
+    try:
+        return Decimal(texto)
+    except (InvalidOperation, TypeError):
+        return Decimal('0.00')
+
+class FocusLineEdit(QLineEdit):
+    def focusInEvent(self, event):
+        if self.text() == "" or self.text() == "Selecione um produto":
+            self.clear()
+        super().focusInEvent(event)
 
 class DialogFiltroData(QDialog):
     def __init__(self, data_de, data_ate, parent=None):
@@ -148,6 +167,15 @@ class MovimentacaoTabUI(QWidget):
                     elif direcao == "saida":
                         saldo -= valor_op
         return saldo
+
+    def qdate_to_pydate(qdate):
+        if hasattr(qdate, 'toPython'):
+            return qdate.toPython()
+        elif hasattr(qdate, 'toPyDate'):
+            return qdate.toPyDate()
+        else:
+            # fallback: converter manualmente
+            return datetime(qdate.year(), qdate.month(), qdate.day()).date()
 
     def editar_movimentacao_finalizada(self):
         linha = self.tabela_movimentacoes.currentRow()
@@ -314,13 +342,8 @@ class MovimentacaoTabUI(QWidget):
                 nova_qtd = int(self.tabela_itens_adicionados.item(row, 1).text())
                 self.itens_movimentacao[row]['quantidade'] = nova_qtd
             elif column == 2:  # Preço unitário
-                novo_preco_str = self.tabela_itens_adicionados.item(row, 2).text().replace(',', '.')
-                from decimal import Decimal, InvalidOperation
-                try:
-                    novo_preco = Decimal(novo_preco_str)
-                except InvalidOperation:
-                    QMessageBox.warning(self, "Erro", "Valor de preço inválido.")
-                    return
+                novo_preco_str = self.tabela_itens_adicionados.item(row, 2).text()
+                novo_preco = str_brasil_para_decimal(novo_preco_str)
                 self.itens_movimentacao[row]['preco'] = novo_preco
 
             qtd = self.itens_movimentacao[row]['quantidade']
@@ -895,7 +918,7 @@ class MovimentacaoTabUI(QWidget):
         self.combo_produto.setEditable(True)  # Permitir escrever o nome
         self.combo_produto.lineEdit().setPlaceholderText("Selecione um produto")
         # Conecte o evento de focusIn
-        self.combo_produto.lineEdit().focusInEvent = self.combo_produto_focus_in_event
+        self.combo_produto.setLineEdit(FocusLineEdit())
         self.input_quantidade = QSpinBox()
         self.input_quantidade.setMinimum(1)
         self.input_quantidade.setMaximum(99999)
@@ -1052,6 +1075,9 @@ class MovimentacaoTabUI(QWidget):
             return
 
         categoria_id = self.combo_categoria.currentData()
+        if not categoria_id:
+            QMessageBox.warning(self, "Erro", "Selecione uma categoria.")
+            return
         with get_cursor() as cursor:
             cursor.execute(
                 """
@@ -1081,16 +1107,18 @@ class MovimentacaoTabUI(QWidget):
 
     def atualizar_tabela_itens_adicionados(self):
         self.tabela_itens_adicionados.blockSignals(True)
-        self.tabela_itens_adicionados.setRowCount(len(self.itens_movimentacao))
-        for i, item in enumerate(self.itens_movimentacao):
-            self.tabela_itens_adicionados.setItem(i, 0, QTableWidgetItem(item["nome"]))
-            self.tabela_itens_adicionados.setItem(i, 1, QTableWidgetItem(str(item["quantidade"])))
-            preco_formatado = self.locale.toString(float(item['preco']), 'f', 2)
-            total_formatado = self.locale.toString(float(item['total']), 'f', 2)
-            self.tabela_itens_adicionados.setItem(i, 2, QTableWidgetItem(preco_formatado))
-            self.tabela_itens_adicionados.setItem(i, 3, QTableWidgetItem(total_formatado))
-        self.tabela_itens_adicionados.blockSignals(False)
-        self.atualizar_total_movimentacao()
+        try:
+            self.tabela_itens_adicionados.setRowCount(len(self.itens_movimentacao))
+            for i, item in enumerate(self.itens_movimentacao):
+                self.tabela_itens_adicionados.setItem(i, 0, QTableWidgetItem(item["nome"]))
+                self.tabela_itens_adicionados.setItem(i, 1, QTableWidgetItem(str(item["quantidade"])))
+                preco_formatado = decimal_para_str_brasil(item['preco'], self.locale)
+                total_formatado = decimal_para_str_brasil(item['total'], self.locale)
+                self.tabela_itens_adicionados.setItem(i, 2, QTableWidgetItem(preco_formatado))
+                self.tabela_itens_adicionados.setItem(i, 3, QTableWidgetItem(total_formatado))
+        finally:
+            self.tabela_itens_adicionados.blockSignals(False)
+            self.atualizar_total_movimentacao()
 
     def remover_item(self):
         selected = self.tabela_itens_adicionados.currentRow()
@@ -1106,15 +1134,10 @@ class MovimentacaoTabUI(QWidget):
         if self.combo_tipo.currentText() == "Transação":
             self.label_total_movimentacao.setText("Total: R$ 0,00")
             return
-        valor_texto = self.input_valor_abatimento.text().replace(',', '.')
-        try:
-            valor_abatimento = Decimal(valor_texto) if valor_texto else Decimal('0.00')
-        except Exception:
-            valor_abatimento = Decimal('0.00')
+        valor_abatimento = str_brasil_para_decimal(self.input_valor_abatimento.text())
         total = sum(Decimal(str(item['total'])) for item in self.itens_movimentacao)
         total_final = total - valor_abatimento
-        total_formatado = self.locale.toString(float(total_final), 'f', 2)
-        self.label_total_movimentacao.setText(f"Total: R$ {total_formatado}")
+        self.label_total_movimentacao.setText(f"Total: R$ {decimal_para_str_brasil(total_final, self.locale)}")
 
     def finalizar_movimentacao(self):
         tipo = self.combo_tipo.currentText().lower()
@@ -1124,17 +1147,13 @@ class MovimentacaoTabUI(QWidget):
 
         valor_abatimento = None
         if tipo != "transação":
-            valor_texto = self.input_valor_abatimento.text().replace(',', '.')
-            try:
-                valor_abatimento = Decimal(valor_texto) if valor_texto else Decimal('0.00')
-            except Exception:
-                valor_abatimento = Decimal('0.00')
+            valor_abatimento = str_brasil_para_decimal(self.input_valor_abatimento.text())
 
         if tipo == "transação":
             try:
                 valor_operacao = Decimal(self.input_valor_operacao.text().replace(",", "."))
-            except Exception:
-                QMessageBox.warning(self, "Erro", "Digite um valor válido para a operação.")
+            except Exception as e:
+                QMessageBox.warning(self, "Erro", f"Valor inválido: {e}")
                 return
         else:
             if not self.itens_movimentacao:
@@ -1242,7 +1261,7 @@ class MovimentacaoTabUI(QWidget):
             self.tabela_movimentacoes.setItem(i, 4, QTableWidgetItem(m["descricao"] or ""))
             valor_op = m.get("valor_operacao")
             if valor_op is not None:
-                valor_op_str = self.locale.toString(float(valor_op), 'f', 2)
+                valor_op_str = decimal_para_str_brasil(valor_op, self.locale)
             else:
                 valor_op_str = ""
             self.tabela_movimentacoes.setItem(i, 5, QTableWidgetItem(valor_op_str))
