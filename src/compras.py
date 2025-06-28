@@ -6,7 +6,7 @@ from PySide6.QtWidgets import (
     QSpinBox, QTableWidget, QTableWidgetItem, QMessageBox, QTabWidget,
     QDialog, QDialogButtonBox
 )
-from PySide6.QtCore import Qt, QTimer, QDate, QLocale
+from PySide6.QtCore import Qt, QTimer, QDate, QLocale, QEvent
 from decimal import Decimal, ROUND_HALF_UP
 from db_context import get_cursor
 from status_delegate_combo import StatusComboDelegate
@@ -477,10 +477,14 @@ class ComprasUI(QWidget):
 
         layout_produto = QGridLayout()
         self.combo_produto = QComboBox()
+        self.combo_produto.setEditable(True)
         self.combo_produto.currentIndexChanged.connect(self.zerar_quantidade)
         self.input_quantidade = QSpinBox()
         self.input_quantidade.setMinimum(1)
         self.input_quantidade.setMaximum(9999)
+        # Atalhos de ENTER entre campos
+        self.combo_produto.lineEdit().returnPressed.connect(self.focus_quantidade)
+        self.input_quantidade.installEventFilter(self)
         layout_produto.addWidget(QLabel("Produto"), 0, 0)
         layout_produto.addWidget(self.combo_produto, 0, 1)
         layout_produto.addWidget(QLabel("Quantidade"), 1, 0)
@@ -650,6 +654,21 @@ class ComprasUI(QWidget):
         self.combo_produto.setCurrentIndex(-1)
         self.combo_produto.blockSignals(False)
         self.atualizar_tabelas()
+
+    def focus_quantidade(self):
+        self.input_quantidade.setFocus()
+
+    def atalho_enter_quantidade(self):
+        self.btn_adicionar_item.click()
+        self.combo_produto.setFocus()
+        self.combo_produto.lineEdit().selectAll()
+
+    def eventFilter(self, obj, event):
+        if obj is self.input_quantidade and event.type() == QEvent.KeyPress:
+            if event.key() in (Qt.Key_Return, Qt.Key_Enter):
+                self.atalho_enter_quantidade()
+                return True
+        return super().eventFilter(obj, event)
 
     def abrir_dialog_troca_conta_fornecedor(self):
         from PySide6.QtWidgets import QDialog, QVBoxLayout, QDialogButtonBox, QComboBox, QLabel, QMessageBox
@@ -1477,7 +1496,7 @@ class ComprasUI(QWidget):
         # Exibir saldo do fornecedor ao final
         y -= 10 * mm
         c.setFont("Helvetica-Bold", 11)
-        if saldo <= 0:
+        if saldo < 0:
             c.drawString(20 * mm, y, f"Saldo positivo do fornecedor: R$ {-saldo:.2f}")
         else:
             c.drawString(20 * mm, y, f"Saldo devedor do fornecedor: R$ {abs(saldo):.2f}")
@@ -1604,7 +1623,7 @@ class ComprasUI(QWidget):
         y += 25
 
         # Saldo do fornecedor ao final
-        if saldo <= 0:
+        if saldo < 0:
             draw.text((30, y), f"Saldo positivo do fornecedor: R$ {-saldo:.2f}", fill="black", font=fonte_bold)
         else:
             draw.text((30, y), f"Saldo devedor do fornecedor: R$ {abs(saldo):.2f}", fill="black", font=fonte_bold)
@@ -1688,6 +1707,7 @@ class ComprasUI(QWidget):
         if fornecedor_id is not None:
             self.carregar_categorias_para_fornecedor(fornecedor_id)
             self.atualizar_saldo_fornecedor()
+            self.carregar_produtos()
 
 if __name__ == "__main__":
     app = QApplication([])
