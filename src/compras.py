@@ -105,9 +105,13 @@ class ComprasUI(QWidget):
             ]
 
     def listar_produtos(self):
-        with get_cursor() as cursor:
-            cursor.execute("SELECT id, nome, preco_base FROM produtos ORDER BY nome")
-            return cursor.fetchall()
+        try:
+            with get_cursor() as cursor:
+                cursor.execute("SELECT id, nome, preco_base FROM produtos ORDER BY nome")
+                return cursor.fetchall()
+        except Exception as e:
+            QMessageBox.critical(self, "Erro de Banco", f"Erro ao listar produtos: {e}")
+            return []
 
     def obter_produto(self, produto_id):
         with get_cursor() as cursor:
@@ -753,17 +757,20 @@ class ComprasUI(QWidget):
 
     def preencher_tabela_compras(self, tabela, compras):
         tabela.blockSignals(True)
-        tabela.setRowCount(len(compras))
-        for i, c in enumerate(compras):
-            tabela.setItem(i, 0, QTableWidgetItem(str(c['id'])))
-            tabela.setItem(i, 1, QTableWidgetItem(c['fornecedor_nome']))
-            tabela.setItem(i, 2, QTableWidgetItem(str(c['data'])))
-            total_produtos = self.obter_total_produtos(c['id'])
-            tabela.setItem(i, 3, QTableWidgetItem(self.locale.toString(float(total_produtos), 'f', 2)))
-            valor_final = self.obter_valor_com_abatimento_adiantamento(c['id'], total_produtos)
-            tabela.setItem(i, 4, QTableWidgetItem(self.locale.toString(float(valor_final), 'f', 2)))
-            tabela.setItem(i, 5, QTableWidgetItem(c['status']))
-        tabela.blockSignals(False)
+        try:
+            tabela.setRowCount(len(compras))
+            for i, c in enumerate(compras):
+                tabela.setItem(i, 0, QTableWidgetItem(str(c['id'])))
+                tabela.setItem(i, 1, QTableWidgetItem(c['fornecedor_nome']))
+                tabela.setItem(i, 2, QTableWidgetItem(str(c['data'])))
+                total_produtos = self.obter_total_produtos(c['id'])
+                tabela.setItem(i, 3, QTableWidgetItem(self.locale.toString(float(total_produtos), 'f', 2)))
+                valor_final = self.obter_valor_com_abatimento_adiantamento(c['id'], total_produtos)
+                tabela.setItem(i, 4, QTableWidgetItem(self.locale.toString(float(valor_final), 'f', 2)))
+                tabela.setItem(i, 5, QTableWidgetItem(c['status']))
+                pass
+        finally:
+            tabela.blockSignals(False)
 
     def obter_total_produtos(self, compra_id):
         with get_cursor() as cursor:
@@ -945,6 +952,7 @@ class ComprasUI(QWidget):
 
         self.atualizar_tabela_itens_adicionados()
         self.combo_produto.setCurrentIndex(-1)
+        self.input_quantidade.setValue(1)
 
     def atualizar_tabela_itens_adicionados(self):
         self.tabela_itens_adicionados.blockSignals(True)
@@ -1332,8 +1340,8 @@ class ComprasUI(QWidget):
         self.combo_fornecedor.clear()
         self.filtro_combo_fornecedor.clear()
         self.filtro_combo_fornecedor.addItem("Todos os Fornecedores", None)
+        self.combo_fornecedor.addItem("", None)
         for f in self.listar_fornecedores():
-            self.combo_fornecedor.addItem("", None)
             self.combo_fornecedor.addItem(f["nome"], f["id"])
             self.filtro_combo_fornecedor.addItem(f["nome"], f["id"])
 
