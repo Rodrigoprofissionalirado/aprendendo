@@ -39,6 +39,7 @@ from dados_bancarios import DadosBancariosUI
 from fornecedores import FornecedoresUI
 from ajustes import AjustesUI
 from movimentacoes import MovimentacoesUI
+from usuarios import UsuariosUI  # --- USUÁRIOS ---
 
 class MainWindow(QMainWindow):
     def __init__(self, usuario_logado):
@@ -71,12 +72,19 @@ class MainWindow(QMainWindow):
         self.fornecedores_ui = FornecedoresUI()
         self.movimentacoes_ui = MovimentacoesUI()
         self.ajustes_ui = AjustesUI()
+        # --- USUÁRIOS ---
+        if self.usuario_logado['nivel'] == 'admin':
+            self.usuarios_ui = UsuariosUI(self.usuario_logado)
+        else:
+            self.usuarios_ui = None
 
         # Passa o usuário logado para as UIs que precisam de permissões (exemplo)
         for ui in [self.compras_ui, self.produtos_ui, self.debitos_ui,
                    self.dados_bancarios_ui, self.fornecedores_ui,
                    self.movimentacoes_ui, self.ajustes_ui]:
             ui.usuario_logado = self.usuario_logado
+        if self.usuarios_ui:
+            self.usuarios_ui.usuario_logado = self.usuario_logado
 
         self.compras_ui.set_janela_debitos(self.debitos_ui)
         self.compras_ui.set_main_window(self)
@@ -89,6 +97,8 @@ class MainWindow(QMainWindow):
         self.stack.addWidget(self.dados_bancarios_ui)   # 4
         self.stack.addWidget(self.fornecedores_ui)      # 5
         self.stack.addWidget(self.ajustes_ui)           # 6
+        if self.usuarios_ui:                            # --- USUÁRIOS ---
+            self.stack.addWidget(self.usuarios_ui)      # 7
 
         # Define permissões para cada módulo
         permissoes_modulos = [
@@ -100,6 +110,9 @@ class MainWindow(QMainWindow):
             (["admin", "gerente"]),                             # Fornecedores
             (["admin"]),                                        # Ajustes
         ]
+        # --- USUÁRIOS ---
+        if self.usuarios_ui:
+            permissoes_modulos.append(["admin"])                # Usuários
 
         botoes = [
             ("Compras", 0),
@@ -110,6 +123,9 @@ class MainWindow(QMainWindow):
             ("Fornecedores", 5),
             ("Ajustes", 6),
         ]
+        # --- USUÁRIOS ---
+        if self.usuarios_ui:
+            botoes.append(("Usuários", 7))
 
         for i, (nome, idx) in enumerate(botoes):
             btn = QPushButton(nome)
