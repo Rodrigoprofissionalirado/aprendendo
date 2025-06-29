@@ -2,15 +2,16 @@ import sys
 from PySide6.QtWidgets import (
     QApplication, QWidget, QLabel, QPushButton, QVBoxLayout,
     QHBoxLayout, QGridLayout, QComboBox, QDateEdit, QLineEdit,
-    QSpinBox, QTableWidget, QTableWidgetItem, QMessageBox, QTabWidget
+    QSpinBox, QTableWidget, QTableWidgetItem, QMessageBox, QTabWidget, QDialog
 )
+from PySide6.QtGui import QIntValidator
 from PySide6.QtCore import Qt, QTimer, QDate, QLocale, QEvent
 from decimal import Decimal
-from status_delegate_combo import StatusComboDelegate
-from utils_permissoes import requer_permissao
+from ..status_delegate_combo import StatusComboDelegate
+from ..utils_permissoes import requer_permissao
 
 # Importações dos submódulos
-from compras_db import (
+from .compras_db import (
     listar_fornecedores, listar_contas_do_fornecedor, listar_produtos,
     obter_produto, listar_compras, adicionar_compra, atualizar_compra,
     listar_itens_compra, obter_fornecedor_id_da_compra, obter_detalhes_compra,
@@ -19,15 +20,16 @@ from compras_db import (
     obter_ajuste_fixo, obter_id_categoria_padrao, inserir_adiantamento, remover_lancamentos_antigos,
     obter_dados_para_editar_compra, obter_itens_e_lancamentos_da_compra, excluir_compra,
     obter_fornecedor_id_por_numero_balanca, obter_primeira_categoria_do_fornecedor,
-    obter_dados_bancarios_para_campo_copiavel
+    obter_dados_bancarios_para_campo_copiavel, atualizar_conta_bancaria_da_compra,
+    atualizar_status_compra as atualizar_status_compra_db
 )
-from compras_logic import (
+from .compras_logic import (
     obter_total_produtos_lista, calcular_valor_com_abatimento_adiantamento, formatar_moeda
 )
-from compras_export import (
+from .compras_export import (
     exportar_compra_pdf, exportar_compra_jpg
 )
-from compras_dialogs import DiferencaCompraDialog
+from .compras_dialogs import DiferencaCompraDialog
 
 STATUS_LIST = [
     "Criada", "Emitindo nota", "Efetuando pagamento", "Finalizada", "Concluída"
@@ -206,9 +208,9 @@ class ComprasUI(QWidget):
         self.combo_produto = QComboBox()
         self.combo_produto.setEditable(True)
         self.combo_produto.currentIndexChanged.connect(self.zerar_quantidade)
-        self.input_quantidade = QSpinBox()
-        self.input_quantidade.setMinimum(1)
-        self.input_quantidade.setMaximum(9999)
+        self.input_quantidade = QLineEdit()
+        self.input_quantidade.setPlaceholderText("Quantidade")
+        self.input_quantidade.setValidator(QIntValidator(1, 9999))  # Aceita apenas inteiros de 1 a 9999
         # Atalhos de ENTER entre campos
         self.combo_produto.lineEdit().returnPressed.connect(self.focus_quantidade)
         self.input_quantidade.installEventFilter(self)
@@ -428,6 +430,15 @@ class ComprasUI(QWidget):
         self.combo_produto.setFocus()
         self.combo_produto.lineEdit().selectAll()
 
+    def obter_compra_id_selecionado(self, tabela=None):
+        if tabela is None:
+            tabela = self.tabela_compras_aberto
+        row = tabela.currentRow()
+        if row < 0:
+            return None
+        item = tabela.item(row, 0)
+        return int(item.text()) if item else None
+
     def eventFilter(self, obj, event):
         if obj is self.input_quantidade and event.type() == QEvent.KeyPress:
             if event.key() in (Qt.Key_Return, Qt.Key_Enter):
@@ -439,7 +450,7 @@ class ComprasUI(QWidget):
     def abrir_dialog_troca_conta_fornecedor(self):
         from PySide6.QtWidgets import QDialog, QVBoxLayout, QDialogButtonBox, QComboBox, QLabel, QMessageBox
 
-        compra_id = obter_compra_id_selecionado()
+        compra_id = self.obter_compra_id_selecionado()
         if not compra_id:
             QMessageBox.warning(self, "Atenção", "Selecione uma compra primeiro.")
             return
@@ -473,14 +484,9 @@ class ComprasUI(QWidget):
 
         def on_ok():
             conta_id = combo_contas.currentData()
-            compra_id_local = obter_compra_id_selecionado()
+            compra_id_local = self.obter_compra_id_selecionado()
             if conta_id and compra_id_local:
-                with get_cursor() as cursor:
-                    # Atualiza a conta da compra
-                    cursor.execute(
-                        "UPDATE compras SET dados_bancarios_id = %s WHERE id = %s",
-                        (conta_id, compra_id_local)
-                    )
+                atualizar_conta_bancaria_da_compra(compra_id_local, conta_id)
                 # Chama o méodo para atualizar o campo copiável
                 self.atualizar_campo_texto_copiavel()
             dialog.accept()
@@ -543,6 +549,9 @@ class ComprasUI(QWidget):
             self.atualizar_status_compra(compra_id, novo_status)
             self.atualizar_tabelas()
 
+    def atualizar_status_compra(self, compra_id, novo_status):
+        atualizar_status_compra_db(compra_id, novo_status)
+
     def aplicar_filtro_compras(self):
         self.atualizar_tabelas()
 
@@ -554,7 +563,7 @@ class ComprasUI(QWidget):
         self.atualizar_tabelas()
 
     def zerar_quantidade(self):
-        self.input_quantidade.setValue(1)
+        self.input_quantidade.clear()
 
     def atualizar_saldo_fornecedor(self):
         fornecedor_id = self.combo_fornecedor.currentData()
@@ -606,14 +615,18 @@ class ComprasUI(QWidget):
     def ao_mudar_fornecedor(self):
         fornecedor_id = self.combo_fornecedor.currentData()
         if fornecedor_id is not None:
-            carregar_categorias_para_fornecedor(fornecedor_id)
-            selecionar_categoria_do_fornecedor(fornecedor_id)
+            self.carregar_categorias_para_fornecedor(fornecedor_id)
+            self.selecionar_categoria_do_fornecedor(fornecedor_id)
             self.atualizar_saldo_fornecedor()
 
     @requer_permissao(['admin', 'gerente', 'operador'])
     def adicionar_item(self):
         produto_id = self.combo_produto.currentData()
-        quantidade = self.input_quantidade.value()
+        texto = self.input_quantidade.text()
+        if not texto or int(texto) <= 0:
+            QMessageBox.warning(self, "Erro", "Informe uma quantidade válida.")
+            return
+        quantidade = int(texto)
         if produto_id is None or quantidade <= 0:
             QMessageBox.warning(self, "Erro", "Selecione um produto e uma quantidade válida.")
             return
@@ -650,7 +663,7 @@ class ComprasUI(QWidget):
 
         self.atualizar_tabela_itens_adicionados()
         self.combo_produto.setCurrentIndex(-1)
-        self.input_quantidade.setValue(1)
+        self.input_quantidade.clear()
 
     def carregar_categorias_para_fornecedor(self, fornecedor_id):
         self.combo_categoria_temporaria.blockSignals(True)
@@ -805,7 +818,7 @@ class ComprasUI(QWidget):
     @requer_permissao(['admin', 'gerente', 'operador'])
     def alterar_status_compra(self):
         tabela = self.tabela_compras_aberto if self.tabs.currentIndex() == 0 else self.tabela_compras_concluidas
-        compra_id = obter_compra_id_selecionado(tabela=tabela)
+        compra_id = self.obter_compra_id_selecionado(tabela=tabela)
         if compra_id is None:
             QMessageBox.warning(self, "Alterar Status", "Selecione uma compra para alterar o status.")
             return
@@ -830,7 +843,8 @@ class ComprasUI(QWidget):
 
         compra_id = int(compra_id_item.text())
 
-        if abatimento:
+        _, valor_abatimento, _ = obter_itens_e_lancamentos_da_compra(compra_id)
+        if valor_abatimento and valor_abatimento > 0:
             confirm = QMessageBox.question(
                 self,
                 "Confirmar Exclusão",
@@ -884,7 +898,7 @@ class ComprasUI(QWidget):
         self.input_valor_lancamento.clear()
         self.combo_tipo_lancamento.setCurrentIndex(0)
         self.combo_produto.setCurrentIndex(-1)
-        self.input_quantidade.setValue(1)
+        self.input_quantidade.clear()
         self.item_edit_index = None
         self.compra_edit_id = None
         self.combo_status.setCurrentIndex(0)
@@ -987,7 +1001,7 @@ class ComprasUI(QWidget):
 
     @requer_permissao(['admin', 'gerente', 'operador', 'consulta'])
     def exportar_compra_pdf(self):
-        compra_id = obter_compra_id_selecionado()
+        compra_id = self.obter_compra_id_selecionado()
         if compra_id is None:
             QMessageBox.warning(self, "Exportar PDF", "Selecione uma compra para exportar.")
             return
@@ -999,7 +1013,7 @@ class ComprasUI(QWidget):
 
     @requer_permissao(['admin', 'gerente', 'operador', 'consulta'])
     def exportar_compra_jpg(self):
-        compra_id = obter_compra_id_selecionado()
+        compra_id = self.obter_compra_id_selecionado()
         if compra_id is None:
             QMessageBox.warning(self, "Exportar JPG", "Selecione uma compra para exportar.")
             return
@@ -1012,7 +1026,7 @@ class ComprasUI(QWidget):
         super().showEvent(event)
         fornecedor_id = self.combo_fornecedor.currentData()
         if fornecedor_id is not None:
-            carregar_categorias_para_fornecedor(fornecedor_id)
+            self.carregar_categorias_para_fornecedor(fornecedor_id)
             self.atualizar_saldo_fornecedor()
             self.carregar_produtos()
 

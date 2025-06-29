@@ -32,7 +32,7 @@ def instalar_dependencias():
 instalar_dependencias()
 
 # Importando os módulos
-from compras import ComprasUI
+from src.compras.compras import ComprasUI
 from produtos import ProdutosUI
 from debitos import DebitosUI
 from dados_bancarios import DadosBancariosUI

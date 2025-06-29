@@ -451,3 +451,17 @@ def obter_dados_bancarios_para_campo_copiavel(compra_id):
                 )
                 return texto
     return ""
+
+def atualizar_conta_bancaria_da_compra(compra_id, conta_id):
+    with get_cursor(commit=True) as cursor:
+        cursor.execute(
+            "UPDATE compras SET dados_bancarios_id = %s WHERE id = %s",
+            (conta_id, compra_id)
+        )
+
+def atualizar_status_compra(compra_id, novo_status):
+    with get_cursor(commit=True) as cursor:
+        cursor.execute(
+            "UPDATE compras SET status = %s WHERE id = %s",
+            (novo_status, compra_id)
+        )
