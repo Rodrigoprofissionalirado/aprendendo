@@ -8,6 +8,8 @@ from PySide6.QtWidgets import (
     QPushButton, QStackedWidget, QHBoxLayout, QMessageBox
 )
 from PySide6.QtCore import Qt, QLocale
+from login_dialog import LoginDialog
+from utils_permissoes import requer_permissao
 
 def instalar_pip():
     url = "https://bootstrap.pypa.io/get-pip.py"
@@ -39,10 +41,11 @@ from ajustes import AjustesUI
 from movimentacoes import MovimentacoesUI
 
 class MainWindow(QMainWindow):
-    def __init__(self):
+    def __init__(self, usuario_logado):
         super().__init__()
         self.setWindowTitle("Sistema de Gestão")
         self.resize(900, 600)
+        self.usuario_logado = usuario_logado  # Salva o usuário logado
 
         # Widget central
         central_widget = QWidget()
@@ -69,36 +72,60 @@ class MainWindow(QMainWindow):
         self.movimentacoes_ui = MovimentacoesUI()
         self.ajustes_ui = AjustesUI()
 
+        # Passa o usuário logado para as UIs que precisam de permissões (exemplo)
+        for ui in [self.compras_ui, self.produtos_ui, self.debitos_ui,
+                   self.dados_bancarios_ui, self.fornecedores_ui,
+                   self.movimentacoes_ui, self.ajustes_ui]:
+            ui.usuario_logado = self.usuario_logado
+
         self.compras_ui.set_janela_debitos(self.debitos_ui)
         self.compras_ui.set_main_window(self)
 
         # Adicionando os módulos ao stack
-        self.stack.addWidget(self.compras_ui)
-        self.stack.addWidget(self.movimentacoes_ui)
-        self.stack.addWidget(self.produtos_ui)
-        self.stack.addWidget(self.debitos_ui)
-        self.stack.addWidget(self.dados_bancarios_ui)
-        self.stack.addWidget(self.fornecedores_ui)
-        self.stack.addWidget(self.ajustes_ui)
+        self.stack.addWidget(self.compras_ui)           # 0
+        self.stack.addWidget(self.movimentacoes_ui)     # 1
+        self.stack.addWidget(self.produtos_ui)          # 2
+        self.stack.addWidget(self.debitos_ui)           # 3
+        self.stack.addWidget(self.dados_bancarios_ui)   # 4
+        self.stack.addWidget(self.fornecedores_ui)      # 5
+        self.stack.addWidget(self.ajustes_ui)           # 6
 
-        # Botões do menu
-        botoes = [
-            ("Compras", self.compras_ui),
-            ("Movimentações", self.movimentacoes_ui),
-            ("Produtos", self.produtos_ui),
-            ("Débitos", self.debitos_ui),
-            ("Dados Bancários", self.dados_bancarios_ui),
-            ("Fornecedores", self.fornecedores_ui),
-            ("Ajustes", self.ajustes_ui),
+        # Define permissões para cada módulo
+        permissoes_modulos = [
+            (["admin", "gerente", "operador", "consulta"]),     # Compras
+            (["admin", "gerente", "operador", "consulta"]),     # Movimentações
+            (["admin", "gerente", "operador"]),                 # Produtos
+            (["admin", "gerente", "operador"]),                 # Débitos
+            (["admin", "gerente"]),                             # Dados Bancários
+            (["admin", "gerente"]),                             # Fornecedores
+            (["admin"]),                                        # Ajustes
         ]
 
-        for i, (nome, widget) in enumerate(botoes):
+        botoes = [
+            ("Compras", 0),
+            ("Movimentações", 1),
+            ("Produtos", 2),
+            ("Débitos", 3),
+            ("Dados Bancários", 4),
+            ("Fornecedores", 5),
+            ("Ajustes", 6),
+        ]
+
+        for i, (nome, idx) in enumerate(botoes):
             btn = QPushButton(nome)
-            btn.clicked.connect(lambda _, index=i: self.stack.setCurrentIndex(index))
+
+            # Define uma função protegida com o decorador para cada botão
+            def make_abrir_modulo(index, niveis):
+                @requer_permissao(niveis)
+                def abrir_modulo(self):
+                    self.stack.setCurrentIndex(index)
+                return abrir_modulo
+
+            # Vincula a função ao clique do botão
+            btn.clicked.connect(lambda _, f=make_abrir_modulo(idx, permissoes_modulos[i]): f(self))
             menu_layout.addWidget(btn)
 
         menu_layout.addStretch()
-
 
 def main():
     app = QApplication(sys.argv)
@@ -121,11 +148,23 @@ def main():
             QMessageBox.critical(None, "Erro", "Nenhuma configuração ativa definida. O programa será encerrado.")
             sys.exit(1)
 
-    # Se tudo ok, abre a janela principal
-    janela = MainWindow()
+    # ==== TELA DE LOGIN ====
+    login = LoginDialog()
+    if not login.exec():
+        sys.exit(0)  # Usuário cancelou o login
+
+    usuario_logado = login.usuario_autenticado
+    if not usuario_logado:
+        QMessageBox.critical(None, "Erro", "Falha ao autenticar usuário. O programa será encerrado.")
+        sys.exit(1)
+
+    if not usuario_logado.get('ativo', 1):
+        QMessageBox.critical(None, "Acesso negado", "Usuário inativo. O programa será encerrado.")
+        sys.exit(1)
+
+    janela = MainWindow(usuario_logado)
     janela.showMaximized()
     sys.exit(app.exec())
-
 
 if __name__ == '__main__':
     main()

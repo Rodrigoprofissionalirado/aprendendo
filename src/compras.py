@@ -19,6 +19,7 @@ from reportlab.lib.colors import black, Color
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 import os, platform
+from utils_permissoes import requer_permissao
 
 class DiferencaCompraDialog(QDialog):
     def __init__(self, diferenca, parent=None):
@@ -147,6 +148,7 @@ class ComprasUI(QWidget):
             cursor.execute(query, params)
             return cursor.fetchall()
 
+    @requer_permissao(['admin', 'gerente', 'operador'])
     def adicionar_compra(self, fornecedor_id, data_compra, valor_abatimento, itens_compra, status):
         with get_cursor(commit=True) as cursor:
             cursor.execute(
@@ -181,6 +183,7 @@ class ComprasUI(QWidget):
 
         return compra_id
 
+    @requer_permissao(['admin', 'gerente', 'operador'])
     def atualizar_compra(self, compra_id, fornecedor_id, data_compra, valor_abatimento, itens_compra, status):
         with get_cursor(commit=True) as cursor:
             # Atualiza a compra e os itens
@@ -254,6 +257,7 @@ class ComprasUI(QWidget):
                 else:
                     self.campo_texto_copiavel.setText("")
 
+    @requer_permissao(['admin', 'gerente', 'operador'])
     def atualizar_status_compra(self, compra_id, novo_status):
         with get_cursor(commit=True) as cursor:
             cursor.execute("UPDATE compras SET status = %s WHERE id = %s", (novo_status, compra_id))
@@ -674,6 +678,7 @@ class ComprasUI(QWidget):
                 return True
         return super().eventFilter(obj, event)
 
+    @requer_permissao(['admin', 'gerente', 'operador'])
     def abrir_dialog_troca_conta_fornecedor(self):
         from PySide6.QtWidgets import QDialog, QVBoxLayout, QDialogButtonBox, QComboBox, QLabel, QMessageBox
 
@@ -868,6 +873,7 @@ class ComprasUI(QWidget):
             f"font-weight: bold; color: {cor}; font-size: 13px; text-decoration: underline; cursor: pointer;"
         )
 
+    @requer_permissao(['admin', 'gerente', 'operador'])
     def on_saldo_label_clicked(self, event):
         fornecedor_id = self.combo_fornecedor.currentData()
         if fornecedor_id and hasattr(self, 'janela_debitos'):
@@ -880,6 +886,7 @@ class ComprasUI(QWidget):
     def set_main_window(self, main_window):
         self.main_window = main_window
 
+    @requer_permissao(['admin', 'gerente', 'operador', 'consulta'])
     def copiar_campo_texto_copiavel(self, event):
         clipboard = QApplication.clipboard()
         clipboard.setText(self.campo_texto_copiavel.text())
@@ -904,6 +911,7 @@ class ComprasUI(QWidget):
             self.selecionar_categoria_do_fornecedor(fornecedor_id)
             self.atualizar_saldo_fornecedor()
 
+    @requer_permissao(['admin', 'gerente', 'operador'])
     def adicionar_item(self):
         produto_id = self.combo_produto.currentData()
         quantidade = self.input_quantidade.value()
@@ -960,12 +968,17 @@ class ComprasUI(QWidget):
         for i, item in enumerate(self.itens_compra):
             self.tabela_itens_adicionados.setItem(i, 0, QTableWidgetItem(item["nome"]))
             self.tabela_itens_adicionados.setItem(i, 1, QTableWidgetItem(str(item["quantidade"])))
-            preco_formatado = self.locale.toString(float(item['preco']), 'f', 2)
-            total_formatado = self.locale.toString(float(item['total']), 'f', 2)
+
+            # Use Decimal para garantir precisão
+            preco = Decimal(item['preco']) if not isinstance(item['preco'], Decimal) else item['preco']
+            total = Decimal(item['total']) if not isinstance(item['total'], Decimal) else item['total']
+
+            preco_formatado = self.locale.toString(float(preco), 'f', 2)
+            total_formatado = self.locale.toString(float(total), 'f', 2)
             self.tabela_itens_adicionados.setItem(i, 2, QTableWidgetItem(preco_formatado))
             self.tabela_itens_adicionados.setItem(i, 3, QTableWidgetItem(total_formatado))
         self.tabela_itens_adicionados.blockSignals(False)
-        total = sum(item['total'] for item in self.itens_compra)
+        total = sum(Decimal(item['total']) for item in self.itens_compra)
         total_formatado = self.locale.toString(float(total), 'f', 2)
         self.label_total_compra.setText(f"Total: R$ {total_formatado}")
 
@@ -994,6 +1007,7 @@ class ComprasUI(QWidget):
         total_formatado = self.locale.toString(float(total_final), 'f', 2)
         self.label_total_compra.setText(f"Total: R$ {total_formatado}")
 
+    @requer_permissao(['admin', 'gerente', 'operador'])
     def finalizar_compra(self):
         if not self.itens_compra:
             QMessageBox.warning(self, "Erro", "Adicione pelo menos um item antes de finalizar.")
@@ -1081,6 +1095,7 @@ class ComprasUI(QWidget):
         if hasattr(self, 'janela_debitos'):
             self.janela_debitos.atualizar()
 
+    @requer_permissao(['admin', 'gerente', 'operador'])
     def editar_compra_finalizada(self):
         linha = self.tabela_compras_aberto.currentRow()
         if linha < 0:
@@ -1147,6 +1162,7 @@ class ComprasUI(QWidget):
         self.compra_edit_id = compra_id
         self.atualizar_tabela_itens_adicionados()
 
+    @requer_permissao(['admin', 'gerente', 'operador'])
     def alterar_status_compra(self):
         tabela = self.tabela_compras_aberto if self.tabs.currentIndex() == 0 else self.tabela_compras_concluidas
         compra_id = self.obter_compra_id_selecionado(tabela=tabela)
@@ -1161,6 +1177,7 @@ class ComprasUI(QWidget):
             QMessageBox.information(self, "Sucesso", f"Status alterado para {novo_status}.")
         # Se status for "Concluída", a compra irá automaticamente para a aba de concluídas na próxima atualização.
 
+    @requer_permissao(['admin', 'gerente'])
     def excluir_compra_finalizada(self):
         linha = self.tabela_compras_aberto.currentRow()
         if linha < 0:
@@ -1356,6 +1373,7 @@ class ComprasUI(QWidget):
         self.combo_produto.setCurrentIndex(-1)
         self.combo_produto.blockSignals(False)
 
+    @requer_permissao(['admin', 'gerente', 'operador'])
     def atualizar_item_editado(self, row, column):
         if row < 0 or row >= len(self.itens_compra):
             return
@@ -1366,12 +1384,12 @@ class ComprasUI(QWidget):
                 self.itens_compra[row]['quantidade'] = nova_qtd
             elif column == 2:  # Preço unitário
                 novo_preco_str = self.tabela_itens_adicionados.item(row, 2).text().replace(',', '.')
-                novo_preco = float(novo_preco_str)
+                novo_preco = Decimal(novo_preco_str)
                 self.itens_compra[row]['preco'] = novo_preco
 
             qtd = self.itens_compra[row]['quantidade']
             preco = self.itens_compra[row]['preco']
-            self.itens_compra[row]['total'] = qtd * preco
+            self.itens_compra[row]['total'] = Decimal(qtd) * Decimal(preco)
 
             self.atualizar_tabela_itens_adicionados()
 
@@ -1381,6 +1399,7 @@ class ComprasUI(QWidget):
     def set_janela_debitos(self, janela_debitos):
         self.janela_debitos = janela_debitos
 
+    @requer_permissao(['admin', 'gerente', 'operador', 'consulta'])
     def exportar_compra_pdf(self):
         linha = self.tabela_compras_aberto.currentRow()
         if linha < 0:
@@ -1551,6 +1570,7 @@ class ComprasUI(QWidget):
             y -= step_y
         c.restoreState()
 
+    @requer_permissao(['admin', 'gerente', 'operador', 'consulta'])
     def exportar_compra_jpg(self):
         compra_id = self.obter_compra_id_selecionado()
         if compra_id is None:

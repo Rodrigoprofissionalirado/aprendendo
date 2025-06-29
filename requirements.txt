@@ -6,3 +6,4 @@ PySide6_Addons==6.9.1
 PySide6_Essentials==6.9.1
 reportlab==4.4.2
 shiboken6==6.9.1
+bcrypt

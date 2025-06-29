@@ -5,6 +5,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt, QLocale
 from db_context import get_cursor
+from utils_permissoes import requer_permissao
 
 class ProdutosUI(QWidget):
     def __init__(self):
@@ -68,6 +69,7 @@ class ProdutosUI(QWidget):
             preco_formatado = locale.toString(float(dado['preco_base']), 'f', 2)
             self.tabela.setItem(i, 2, QTableWidgetItem(preco_formatado))
 
+    @requer_permissao(['admin', 'gerente', 'operador'])
     def adicionar(self):
         nome = self.input_nome.text()
         preco = self.input_preco.text()
@@ -92,6 +94,7 @@ class ProdutosUI(QWidget):
         self.input_nome.setText(self.tabela.item(row, 1).text())
         self.input_preco.setText(self.tabela.item(row, 2).text())
 
+    @requer_permissao(['admin', 'gerente', 'operador'])
     def atualizar(self):
         if self.dado_selecionado:
             nome = self.input_nome.text()
@@ -108,6 +111,7 @@ class ProdutosUI(QWidget):
             except ValueError:
                 QMessageBox.warning(self, 'Erro', 'Preço inválido. Use ponto ou vírgula para os decimais.')
 
+    @requer_permissao(['admin', 'gerente', 'operador'])
     def excluir(self):
         if self.dado_selecionado:
             with get_cursor(commit=True) as cursor:
