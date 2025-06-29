@@ -1,55 +1,33 @@
 import sys
-import mysql.connector
 from PySide6.QtWidgets import (
     QApplication, QWidget, QLabel, QPushButton, QVBoxLayout,
     QHBoxLayout, QGridLayout, QComboBox, QDateEdit, QLineEdit,
-    QSpinBox, QTableWidget, QTableWidgetItem, QMessageBox, QTabWidget,
-    QDialog, QDialogButtonBox
+    QSpinBox, QTableWidget, QTableWidgetItem, QMessageBox, QTabWidget
 )
 from PySide6.QtCore import Qt, QTimer, QDate, QLocale, QEvent
-from decimal import Decimal, ROUND_HALF_UP
-from db_context import get_cursor
+from decimal import Decimal
 from status_delegate_combo import StatusComboDelegate
-from PIL import Image, ImageDraw, ImageFont
-from datetime import datetime
-from reportlab.lib.pagesizes import A4
-from reportlab.pdfgen import canvas
-from reportlab.lib.units import mm
-from reportlab.lib.colors import black, Color
-from reportlab.pdfbase import pdfmetrics
-from reportlab.pdfbase.ttfonts import TTFont
-import os, platform
 from utils_permissoes import requer_permissao
 
-class DiferencaCompraDialog(QDialog):
-    def __init__(self, diferenca, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("Diferença de valor detectada")
-        self.resultado = None
-
-        layout = QVBoxLayout(self)
-        sinal = "-" if diferenca < 0 else "+"
-        label = QLabel(f"Diferença detectada: {sinal}R$ {abs(diferenca):.2f}\n\n"
-                       "O que deseja fazer?")
-        layout.addWidget(label)
-
-        botoes = QHBoxLayout()
-        btn_somente_alterar = QPushButton("Apenas alterar valor")
-        btn_converter_abate = QPushButton("Converter diferença em abate/adiantamento")
-        botoes.addWidget(btn_somente_alterar)
-        botoes.addWidget(btn_converter_abate)
-        layout.addLayout(botoes)
-
-        btn_somente_alterar.clicked.connect(self.somente_alterar)
-        btn_converter_abate.clicked.connect(self.converter_abate)
-
-    def somente_alterar(self):
-        self.resultado = "somente_alterar"
-        self.accept()
-
-    def converter_abate(self):
-        self.resultado = "converter_abate"
-        self.accept()
+# Importações dos submódulos
+from compras_db import (
+    listar_fornecedores, listar_contas_do_fornecedor, listar_produtos,
+    obter_produto, listar_compras, adicionar_compra, atualizar_compra,
+    listar_itens_compra, obter_fornecedor_id_da_compra, obter_detalhes_compra,
+    obter_total_produtos, obter_valor_com_abatimento_adiantamento, obter_saldo_devedor_fornecedor,
+    buscar_nome_conta_padrao, obter_categorias_do_fornecedor, inserir_abatimento,
+    obter_ajuste_fixo, obter_id_categoria_padrao, inserir_adiantamento, remover_lancamentos_antigos,
+    obter_dados_para_editar_compra, obter_itens_e_lancamentos_da_compra, excluir_compra,
+    obter_fornecedor_id_por_numero_balanca, obter_primeira_categoria_do_fornecedor,
+    obter_dados_bancarios_para_campo_copiavel
+)
+from compras_logic import (
+    obter_total_produtos_lista, calcular_valor_com_abatimento_adiantamento, formatar_moeda
+)
+from compras_export import (
+    exportar_compra_pdf, exportar_compra_jpg
+)
+from compras_dialogs import DiferencaCompraDialog
 
 STATUS_LIST = [
     "Criada", "Emitindo nota", "Efetuando pagamento", "Finalizada", "Concluída"
@@ -74,272 +52,13 @@ class ComprasUI(QWidget):
         self.carregar_produtos()
 
     # ---- Métodos DB ----
+    # Todos os métodos de acesso ao banco foram movidos para compras_db.py
 
-    def listar_fornecedores(self):
-        with get_cursor() as cursor:
-            cursor.execute("""
-                SELECT id, nome FROM fornecedores ORDER BY nome
-            """)
-            return cursor.fetchall()
+    # ---- Métodos de lógica ----
+    # Todos os métodos de cálculo/ajuda foram movidos para compras_logic.py
 
-    def listar_contas_do_fornecedor(self, fornecedor_id):
-        if not fornecedor_id:
-            return []
-        with get_cursor() as cursor:
-            cursor.execute("""
-                           SELECT id, banco, agencia, conta, nome_conta, padrao
-                           FROM dados_bancarios_fornecedor
-                           WHERE fornecedor_id = %s
-                           ORDER BY padrao DESC, nome_conta, banco
-                           """, (fornecedor_id,))
-            rows = cursor.fetchall()
-            return [
-                {
-                    'id': row['id'],
-                    'apelido': row['nome_conta'] or row['banco'],
-                    'banco': row['banco'],
-                    'agencia': row['agencia'],
-                    'conta': row['conta'],
-                    'padrao': row['padrao'],
-                }
-                for row in rows
-            ]
-
-    def listar_produtos(self):
-        try:
-            with get_cursor() as cursor:
-                cursor.execute("SELECT id, nome, preco_base FROM produtos ORDER BY nome")
-                return cursor.fetchall()
-        except Exception as e:
-            QMessageBox.critical(self, "Erro de Banco", f"Erro ao listar produtos: {e}")
-            return []
-
-    def obter_produto(self, produto_id):
-        with get_cursor() as cursor:
-            cursor.execute("SELECT id, nome, preco_base FROM produtos WHERE id = %s", (produto_id,))
-            return cursor.fetchone()
-
-    def listar_compras(self, status=None, status_not=None, data_de=None, data_ate=None, fornecedor_id=None):
-        query = """
-            SELECT c.id, c.data_compra AS data, c.valor_abatimento, c.total, f.nome AS fornecedor_nome, c.status
-            FROM compras c
-            JOIN fornecedores f ON c.fornecedor_id = f.id
-            WHERE 1=1
-        """
-        params = []
-        if status:
-            query += " AND c.status = %s"
-            params.append(status)
-        if status_not:
-            query += " AND c.status != %s"
-            params.append(status_not)
-        if data_de:
-            query += " AND c.data_compra >= %s"
-            params.append(data_de)
-        if data_ate:
-            query += " AND c.data_compra <= %s"
-            params.append(data_ate)
-        if fornecedor_id:
-            query += " AND f.id = %s"
-            params.append(fornecedor_id)
-        query += " ORDER BY c.data_compra DESC"
-
-        with get_cursor() as cursor:
-            cursor.execute(query, params)
-            return cursor.fetchall()
-
-    @requer_permissao(['admin', 'gerente', 'operador'])
-    def adicionar_compra(self, fornecedor_id, data_compra, valor_abatimento, itens_compra, status):
-        with get_cursor(commit=True) as cursor:
-            cursor.execute(
-                "INSERT INTO compras (fornecedor_id, data_compra, valor_abatimento, status) VALUES (%s, %s, %s, %s)",
-                (fornecedor_id, data_compra, valor_abatimento, status)
-            )
-            compra_id = cursor.lastrowid
-
-            for item in itens_compra:
-                cursor.execute(
-                    "INSERT INTO itens_compra (compra_id, produto_id, quantidade, preco_unitario) VALUES (%s, %s, %s, %s)",
-                    (compra_id, item['produto_id'], item['quantidade'], item['preco'])
-                )
-
-            cursor.execute("""
-                           UPDATE compras
-                           SET total = (SELECT SUM(quantidade * preco_unitario)
-                                        FROM itens_compra
-                                        WHERE compra_id = %s)
-                           WHERE id = %s
-                           """, (compra_id, compra_id))
-
-            # ADICIONE ESTE BLOCO:
-            if valor_abatimento and valor_abatimento > 0:
-                cursor.execute(
-                    """
-                    INSERT INTO debitos_fornecedores (fornecedor_id, compra_id, data_lancamento, descricao, valor, tipo)
-                    VALUES (%s, %s, %s, %s, %s, 'abatimento')
-                    """,
-                    (fornecedor_id, compra_id, data_compra, 'Abatimento em compra', abs(valor_abatimento))
-                )
-
-        return compra_id
-
-    @requer_permissao(['admin', 'gerente', 'operador'])
-    def atualizar_compra(self, compra_id, fornecedor_id, data_compra, valor_abatimento, itens_compra, status):
-        with get_cursor(commit=True) as cursor:
-            # Atualiza a compra e os itens
-            cursor.execute("""
-                           UPDATE compras
-                           SET fornecedor_id=%s,
-                               data_compra=%s,
-                               valor_abatimento=%s,
-                               status=%s
-                           WHERE id = %s
-                           """, (fornecedor_id, data_compra, valor_abatimento, status, compra_id))
-
-            cursor.execute("DELETE FROM itens_compra WHERE compra_id = %s", (compra_id,))
-
-            for item in itens_compra:
-                cursor.execute(
-                    "INSERT INTO itens_compra (compra_id, produto_id, quantidade, preco_unitario) VALUES (%s, %s, %s, %s)",
-                    (compra_id, item['produto_id'], item['quantidade'], item['preco'])
-                )
-
-            cursor.execute("""
-                           UPDATE compras
-                           SET total = (SELECT SUM(quantidade * preco_unitario)
-                                        FROM itens_compra
-                                        WHERE compra_id = %s)
-                           WHERE id = %s
-                           """, (compra_id, compra_id))
-
-    def atualizar_campo_texto_copiavel(self):
-        compra_id = self.obter_compra_id_selecionado()
-        if not compra_id:
-            self.campo_texto_copiavel.setText("")
-            return
-        with get_cursor() as cursor:
-            # Primeiro tenta pegar a conta personalizada (da compra)
-            cursor.execute("""
-                           SELECT c.total, dbf.banco, dbf.agencia, dbf.conta, dbf.nome_conta, dbf.CPFouCNPJ
-                           FROM compras c
-                                    LEFT JOIN dados_bancarios_fornecedor dbf ON c.dados_bancarios_id = dbf.id
-                           WHERE c.id = %s
-                           """, (compra_id,))
-            row = cursor.fetchone()
-            if row and row['banco']:
-                valor = f"{row['total']:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-                tipo_doc = "CNPJ" if row['CPFouCNPJ'] and len(row['CPFouCNPJ']) > 14 else "CPF"
-                texto = (
-                    f"{row['nome_conta'] or row['banco']} - R$ {valor}\n"
-                    f"{row['banco']} (Ag: {row['agencia']}, Conta: {row['conta']})\n"
-                    f"{tipo_doc}: {row['CPFouCNPJ']}"
-                )
-                self.campo_texto_copiavel.setText(texto)
-            else:
-                # Se não houver conta personalizada, busca a padrão do fornecedor com o mesmo formato
-                cursor.execute("""
-                               SELECT dbf.banco, dbf.agencia, dbf.conta, dbf.nome_conta, dbf.CPFouCNPJ, c.total
-                               FROM compras c
-                                        JOIN dados_bancarios_fornecedor dbf
-                                             ON dbf.fornecedor_id = c.fornecedor_id AND dbf.padrao = 1
-                               WHERE c.id = %s LIMIT 1
-                               """, (compra_id,))
-                row = cursor.fetchone()
-                if row:
-                    valor = f"{row['total']:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-                    tipo_doc = "CNPJ" if row['CPFouCNPJ'] and len(row['CPFouCNPJ']) > 14 else "CPF"
-                    texto = (
-                        f"{row['nome_conta'] or row['banco']} - R$ {valor}\n"
-                        f"{row['banco']} (Ag: {row['agencia']}, Conta: {row['conta']})\n"
-                        f"{tipo_doc}: {row['CPFouCNPJ']}"
-                    )
-                    self.campo_texto_copiavel.setText(texto)
-                else:
-                    self.campo_texto_copiavel.setText("")
-
-    @requer_permissao(['admin', 'gerente', 'operador'])
-    def atualizar_status_compra(self, compra_id, novo_status):
-        with get_cursor(commit=True) as cursor:
-            cursor.execute("UPDATE compras SET status = %s WHERE id = %s", (novo_status, compra_id))
-
-    def listar_itens_compra(self, compra_id):
-        with get_cursor() as cursor:
-            cursor.execute("""
-                SELECT p.nome AS produto_nome, i.produto_id, i.quantidade, i.preco_unitario, (i.quantidade * i.preco_unitario) AS total
-                FROM itens_compra i
-                JOIN produtos p ON i.produto_id = p.id
-                WHERE i.compra_id = %s
-            """, (compra_id,))
-            return cursor.fetchall()
-
-    def obter_compra_id_selecionado(self, tabela=None):
-        if tabela is None:
-            tabela = self.tabela_compras_aberto
-        linha = tabela.currentRow()
-        if linha < 0:
-            return None
-        item = tabela.item(linha, 0)
-        return int(item.text()) if item else None
-
-    def obter_fornecedor_id_da_compra(self, compra_id):
-        if not compra_id:
-            return None
-        with get_cursor() as cursor:
-            cursor.execute("SELECT fornecedor_id FROM compras WHERE id = %s", (compra_id,))
-            row = cursor.fetchone()
-            if row:
-                # Se row for dict: row['fornecedor_id'], se for tupla: row[0]
-                return row['fornecedor_id']
-        return None
-
-    def obter_detalhes_compra(self, compra_id):
-        with get_cursor() as cursor:
-            cursor.execute("""
-                           SELECT f.id   AS fornecedor_id,
-                                  f.nome AS fornecedor,
-                                  f.fornecedores_numerobalanca,
-                                  c.data_compra,
-                                  c.valor_abatimento
-                           FROM compras c
-                                    JOIN fornecedores f ON c.fornecedor_id = f.id
-                           WHERE c.id = %s
-                           """, (compra_id,))
-            compra = cursor.fetchone()
-
-            cursor.execute("""
-                           SELECT p.nome                            AS produto_nome,
-                                  i.quantidade,
-                                  i.preco_unitario,
-                                  (i.quantidade * i.preco_unitario) AS total
-                           FROM itens_compra i
-                                    JOIN produtos p ON i.produto_id = p.id
-                           WHERE i.compra_id = %s
-                           """, (compra_id,))
-            itens = cursor.fetchall()
-        return compra, itens
-
-    # ---- Categoria Fallback ("Padrão") ----
-
-    def obter_id_categoria_padrao(self):
-        with get_cursor() as cursor:
-            cursor.execute("SELECT id FROM categorias_fornecedor_por_fornecedor WHERE nome = %s LIMIT 1", ('Padrão',))
-            cat = cursor.fetchone()
-            return cat['id'] if cat else None
-
-    def obter_categorias_do_fornecedor(self, fornecedor_id):
-        with get_cursor() as cursor:
-            cursor.execute(
-                "SELECT id, nome FROM categorias_fornecedor_por_fornecedor WHERE fornecedor_id = %s ORDER BY nome",
-                (fornecedor_id,))
-            cats = cursor.fetchall()
-            if not cats:
-                cursor.execute("SELECT id, nome FROM categorias_fornecedor_por_fornecedor WHERE nome = %s LIMIT 1", ('Padrão',))
-                cat_padrao = cursor.fetchone()
-                if cat_padrao:
-                    cats = [cat_padrao]
-            return cats
-
-    # ---- UI e lógica ----
+    # ---- Métodos de exportação ----
+    # Todos os métodos de exportação foram movidos para compras_export.py
 
     def init_ui(self):
         layout_principal = QVBoxLayout()
@@ -354,7 +73,7 @@ class ComprasUI(QWidget):
 
         self.filtro_combo_fornecedor = QComboBox()
         self.filtro_combo_fornecedor.addItem("Todos os Fornecedores", None)
-        for f in self.listar_fornecedores():
+        for f in listar_fornecedores():
             self.filtro_combo_fornecedor.addItem(f"{f['nome']} (ID {f['id']})", f['id'])
         layout_filtros.addWidget(QLabel("Fornecedor:"))
         layout_filtros.addWidget(self.filtro_combo_fornecedor)
@@ -560,7 +279,7 @@ class ComprasUI(QWidget):
         layout_compras_com_filtros.addWidget(QLabel("Fornecedor:"))
         self.filtro_combo_fornecedor = QComboBox()
         self.filtro_combo_fornecedor.addItem("Todos os Fornecedores", None)
-        for f in self.listar_fornecedores():
+        for f in listar_fornecedores():
             self.filtro_combo_fornecedor.addItem(f"{f['nome']} (ID {f['id']})", f['id'])
         layout_compras_com_filtros.addWidget(self.filtro_combo_fornecedor)
 
@@ -657,11 +376,49 @@ class ComprasUI(QWidget):
         self.atualizar_tabelas()
         self.combo_produto.blockSignals(True)
         self.combo_produto.clear()
-        for p in self.listar_produtos():
+        for p in listar_produtos():
             self.combo_produto.addItem(p['nome'], p['id'])
         self.combo_produto.setCurrentIndex(-1)
         self.combo_produto.blockSignals(False)
         self.atualizar_tabelas()
+
+    def mostrar_dialog_diferenca(self, diferenca):
+        dialog = DiferencaCompraDialog(diferenca, self)
+        if dialog.exec() == QDialog.Accepted:
+            return dialog.resultado
+        return None
+
+    def selecionar_categoria_do_fornecedor(self, fornecedor_id):
+        categoria_id = obter_primeira_categoria_do_fornecedor(fornecedor_id)
+        if categoria_id is not None:
+            index = self.combo_categoria_temporaria.findData(categoria_id)
+            if index != -1:
+                self.combo_categoria_temporaria.setCurrentIndex(index)
+        else:
+            # Tenta pegar categoria padrão
+            cat_padrao_id = obter_id_categoria_padrao()
+            if cat_padrao_id:
+                index = self.combo_categoria_temporaria.findData(cat_padrao_id)
+                if index != -1:
+                    self.combo_categoria_temporaria.setCurrentIndex(index)
+
+    def carregar_categorias_para_fornecedor(self, fornecedor_id):
+        self.combo_categoria_temporaria.blockSignals(True)
+        self.combo_categoria_temporaria.clear()
+        self.combo_categoria_temporaria.addItem("Selecione uma categoria", 0)
+        categorias = obter_categorias_do_fornecedor(fornecedor_id)
+        for c in categorias:
+            self.combo_categoria_temporaria.addItem(c['nome'], c['id'])
+        self.combo_categoria_temporaria.setCurrentIndex(1 if self.combo_categoria_temporaria.count() > 1 else 0)
+        self.combo_categoria_temporaria.blockSignals(False)
+
+    def atualizar_campo_texto_copiavel(self):
+        compra_id = self.obter_compra_id_selecionado()
+        if not compra_id:
+            self.campo_texto_copiavel.setText("")
+            return
+        texto = obter_dados_bancarios_para_campo_copiavel(compra_id)
+        self.campo_texto_copiavel.setText(texto or "")
 
     def focus_quantidade(self):
         self.input_quantidade.setFocus()
@@ -682,17 +439,17 @@ class ComprasUI(QWidget):
     def abrir_dialog_troca_conta_fornecedor(self):
         from PySide6.QtWidgets import QDialog, QVBoxLayout, QDialogButtonBox, QComboBox, QLabel, QMessageBox
 
-        compra_id = self.obter_compra_id_selecionado()
+        compra_id = obter_compra_id_selecionado()
         if not compra_id:
             QMessageBox.warning(self, "Atenção", "Selecione uma compra primeiro.")
             return
 
-        fornecedor_id = self.obter_fornecedor_id_da_compra(compra_id)
+        fornecedor_id = obter_fornecedor_id_da_compra(compra_id)
         if not fornecedor_id:
             QMessageBox.warning(self, "Erro", "Não foi possível identificar o fornecedor da compra selecionada.")
             return
 
-        contas_do_fornecedor = self.listar_contas_do_fornecedor(fornecedor_id)
+        contas_do_fornecedor = listar_contas_do_fornecedor(fornecedor_id)
         if not contas_do_fornecedor:
             QMessageBox.information(self, "Sem contas", "Este fornecedor não possui contas bancárias cadastradas.")
             return
@@ -716,7 +473,7 @@ class ComprasUI(QWidget):
 
         def on_ok():
             conta_id = combo_contas.currentData()
-            compra_id_local = self.obter_compra_id_selecionado()
+            compra_id_local = obter_compra_id_selecionado()
             if conta_id and compra_id_local:
                 with get_cursor() as cursor:
                     # Atualiza a conta da compra
@@ -743,7 +500,7 @@ class ComprasUI(QWidget):
         data_ate = self.filtro_data_ate.date().toPython()
 
         # Em aberto: todas exceto concluída
-        compras_aberto = self.listar_compras(
+        compras_aberto = listar_compras(
             status=None if status_filtro == "Concluída" else status_filtro,
             status_not="Concluída",
             data_de=data_de,
@@ -751,7 +508,7 @@ class ComprasUI(QWidget):
             fornecedor_id=fornecedor_id
         )
         # Concluídas: só concluída
-        compras_concluidas = self.listar_compras(
+        compras_concluidas = listar_compras(
             status="Concluída",
             data_de=data_de,
             data_ate=data_ate,
@@ -768,47 +525,14 @@ class ComprasUI(QWidget):
                 tabela.setItem(i, 0, QTableWidgetItem(str(c['id'])))
                 tabela.setItem(i, 1, QTableWidgetItem(c['fornecedor_nome']))
                 tabela.setItem(i, 2, QTableWidgetItem(str(c['data'])))
-                total_produtos = self.obter_total_produtos(c['id'])
+                total_produtos = obter_total_produtos(c['id'])
                 tabela.setItem(i, 3, QTableWidgetItem(self.locale.toString(float(total_produtos), 'f', 2)))
-                valor_final = self.obter_valor_com_abatimento_adiantamento(c['id'], total_produtos)
+                valor_final = obter_valor_com_abatimento_adiantamento(c['id'], total_produtos)
                 tabela.setItem(i, 4, QTableWidgetItem(self.locale.toString(float(valor_final), 'f', 2)))
                 tabela.setItem(i, 5, QTableWidgetItem(c['status']))
                 pass
         finally:
             tabela.blockSignals(False)
-
-    def obter_total_produtos(self, compra_id):
-        with get_cursor() as cursor:
-            cursor.execute("""
-                           SELECT SUM(quantidade * preco_unitario) as total_produtos
-                           FROM itens_compra
-                           WHERE compra_id = %s
-                           """, (compra_id,))
-            row = cursor.fetchone()
-            return row["total_produtos"] if row and row["total_produtos"] is not None else 0
-
-    def obter_valor_com_abatimento_adiantamento(self, compra_id, total_produtos=None):
-        if total_produtos is None:
-            total_produtos = self.obter_total_produtos(compra_id)
-        with get_cursor() as cursor:
-            # Pega abatimento
-            cursor.execute("SELECT valor_abatimento FROM compras WHERE id = %s", (compra_id,))
-            row = cursor.fetchone()
-            abatimento = Decimal(str(row["valor_abatimento"])) if row and row["valor_abatimento"] else Decimal('0.0')
-            # Pega adiantamento/inclusao
-            cursor.execute("""
-                           SELECT COALESCE(SUM(valor), 0) as adiantamento
-                           FROM debitos_fornecedores
-                           WHERE compra_id = %s
-                             AND tipo = 'inclusao'
-                           """, (compra_id,))
-            row = cursor.fetchone()
-            adiantamento = Decimal(str(row["adiantamento"])) if row and row["adiantamento"] else Decimal('0.0')
-        total_produtos = Decimal(str(total_produtos))
-        if adiantamento > 0:
-            return total_produtos + adiantamento
-        else:
-            return total_produtos - abatimento
 
     def on_status_item_changed(self, item):
         if item.column() == 5:
@@ -832,21 +556,6 @@ class ComprasUI(QWidget):
     def zerar_quantidade(self):
         self.input_quantidade.setValue(1)
 
-    def obter_saldo_devedor_fornecedor(self, fornecedor_id):
-        with get_cursor() as cursor:
-            cursor.execute("""
-                           SELECT valor, tipo
-                           FROM debitos_fornecedores
-                           WHERE fornecedor_id = %s
-                           """, (fornecedor_id,))
-            saldo = Decimal('0.00')
-            for row in cursor.fetchall():
-                if row["tipo"] in ("inclusao", "adiantamento"):
-                    saldo += Decimal(str(row["valor"]))
-                else:
-                    saldo -= Decimal(str(row["valor"]))
-            return saldo
-
     def atualizar_saldo_fornecedor(self):
         fornecedor_id = self.combo_fornecedor.currentData()
         if not fornecedor_id:
@@ -855,7 +564,7 @@ class ComprasUI(QWidget):
                 "font-weight: bold; color: #808080; font-size: 13px; text-decoration: underline; cursor: pointer;")
             return
 
-        saldo = float(self.obter_saldo_devedor_fornecedor(fornecedor_id))
+        saldo = float(obter_saldo_devedor_fornecedor(fornecedor_id))
 
         # Define texto e cor de acordo com o saldo
         if saldo > 0:
@@ -894,21 +603,11 @@ class ComprasUI(QWidget):
         QTimer.singleShot(350, lambda: self.campo_texto_copiavel.setStyleSheet("font-weight: bold; font-size: 13px;"))
         QLineEdit.mousePressEvent(self.campo_texto_copiavel, event)
 
-    def carregar_categorias_para_fornecedor(self, fornecedor_id):
-        self.combo_categoria_temporaria.blockSignals(True)
-        self.combo_categoria_temporaria.clear()
-        self.combo_categoria_temporaria.addItem("Selecione uma categoria", 0)
-        categorias = self.obter_categorias_do_fornecedor(fornecedor_id)
-        for c in categorias:
-            self.combo_categoria_temporaria.addItem(c['nome'], c['id'])
-        self.combo_categoria_temporaria.setCurrentIndex(1 if self.combo_categoria_temporaria.count() > 1 else 0)
-        self.combo_categoria_temporaria.blockSignals(False)
-
     def ao_mudar_fornecedor(self):
         fornecedor_id = self.combo_fornecedor.currentData()
         if fornecedor_id is not None:
-            self.carregar_categorias_para_fornecedor(fornecedor_id)
-            self.selecionar_categoria_do_fornecedor(fornecedor_id)
+            carregar_categorias_para_fornecedor(fornecedor_id)
+            selecionar_categoria_do_fornecedor(fornecedor_id)
             self.atualizar_saldo_fornecedor()
 
     @requer_permissao(['admin', 'gerente', 'operador'])
@@ -919,7 +618,7 @@ class ComprasUI(QWidget):
             QMessageBox.warning(self, "Erro", "Selecione um produto e uma quantidade válida.")
             return
 
-        produto = self.obter_produto(produto_id)
+        produto = obter_produto(produto_id)
         if produto is None:
             QMessageBox.critical(self, "Erro", "Produto não encontrado.")
             return
@@ -931,21 +630,12 @@ class ComprasUI(QWidget):
 
         categoria_id = self.combo_categoria_temporaria.currentData()
         if categoria_id is None or categoria_id == 0:
-            categoria_id = self.obter_id_categoria_padrao()
+            categoria_id = obter_id_categoria_padrao()
             if categoria_id is None:
                 QMessageBox.warning(self, "Erro", "Selecione uma categoria válida para esta compra.")
                 return
 
-        with get_cursor() as cursor:
-            cursor.execute("""
-                           SELECT ajuste_fixo
-                           FROM ajustes_fixos_produto_fornecedor_categoria
-                           WHERE produto_id = %s
-                             AND categoria_id = %s
-                           """, (produto_id, categoria_id))
-            ajuste = cursor.fetchone()
-
-        ajuste_fixo = Decimal(str(ajuste["ajuste_fixo"])) if ajuste else Decimal('0.00')
+        ajuste_fixo = obter_ajuste_fixo(produto_id, categoria_id)
 
         preco = Decimal(str(produto["preco_base"])) + ajuste_fixo
         total = Decimal(str(quantidade)) * preco
@@ -962,24 +652,30 @@ class ComprasUI(QWidget):
         self.combo_produto.setCurrentIndex(-1)
         self.input_quantidade.setValue(1)
 
+    def carregar_categorias_para_fornecedor(self, fornecedor_id):
+        self.combo_categoria_temporaria.blockSignals(True)
+        self.combo_categoria_temporaria.clear()
+        self.combo_categoria_temporaria.addItem("Selecione uma categoria", 0)
+        categorias = obter_categorias_do_fornecedor(fornecedor_id)
+        for c in categorias:
+            self.combo_categoria_temporaria.addItem(c['nome'], c['id'])
+        self.combo_categoria_temporaria.setCurrentIndex(1 if self.combo_categoria_temporaria.count() > 1 else 0)
+
     def atualizar_tabela_itens_adicionados(self):
         self.tabela_itens_adicionados.blockSignals(True)
         self.tabela_itens_adicionados.setRowCount(len(self.itens_compra))
         for i, item in enumerate(self.itens_compra):
             self.tabela_itens_adicionados.setItem(i, 0, QTableWidgetItem(item["nome"]))
             self.tabela_itens_adicionados.setItem(i, 1, QTableWidgetItem(str(item["quantidade"])))
-
-            # Use Decimal para garantir precisão
-            preco = Decimal(item['preco']) if not isinstance(item['preco'], Decimal) else item['preco']
-            total = Decimal(item['total']) if not isinstance(item['total'], Decimal) else item['total']
-
-            preco_formatado = self.locale.toString(float(preco), 'f', 2)
-            total_formatado = self.locale.toString(float(total), 'f', 2)
+            preco = Decimal(item['preco'])
+            total = Decimal(item['total'])
+            preco_formatado = formatar_moeda(preco, self.locale)
+            total_formatado = formatar_moeda(total, self.locale)
             self.tabela_itens_adicionados.setItem(i, 2, QTableWidgetItem(preco_formatado))
             self.tabela_itens_adicionados.setItem(i, 3, QTableWidgetItem(total_formatado))
         self.tabela_itens_adicionados.blockSignals(False)
-        total = sum(Decimal(item['total']) for item in self.itens_compra)
-        total_formatado = self.locale.toString(float(total), 'f', 2)
+        total = obter_total_produtos_lista(self.itens_compra)
+        total_formatado = formatar_moeda(total, self.locale)
         self.label_total_compra.setText(f"Total: R$ {total_formatado}")
 
     def remover_item(self):
@@ -999,11 +695,10 @@ class ComprasUI(QWidget):
         except Exception:
             valor = Decimal('0.00')
         tipo = self.combo_tipo_lancamento.currentData()
-        total = sum(Decimal(str(item['total'])) for item in self.itens_compra)
-        if tipo == "abatimento":
-            total_final = total - valor
-        else:  # adiantamento
-            total_final = total + valor
+        total = obter_total_produtos_lista(self.itens_compra)
+        valor_abatimento = valor if tipo == "abatimento" else Decimal('0.00')
+        valor_adiantamento = valor if tipo == "adiantamento" else Decimal('0.00')
+        total_final = calcular_valor_com_abatimento_adiantamento(total, valor_abatimento, valor_adiantamento)
         total_formatado = self.locale.toString(float(total_final), 'f', 2)
         self.label_total_compra.setText(f"Total: R$ {total_formatado}")
 
@@ -1030,53 +725,20 @@ class ComprasUI(QWidget):
         valor_inclusao = valor_lancamento if tipo_lancamento == "adiantamento" else Decimal('0.00')
 
         if self.compra_edit_id is None:
-            compra_id = self.adicionar_compra(
+            compra_id = adicionar_compra(
                 fornecedor_id, data_compra, valor_abatimento, self.itens_compra, status
             )
             if tipo_lancamento == "adiantamento" and valor_inclusao > 0:
-                with get_cursor(commit=True) as cursor:
-                    cursor.execute(
-                        """
-                        INSERT INTO debitos_fornecedores
-                            (fornecedor_id, compra_id, data_lancamento, descricao, valor, tipo)
-                        VALUES (%s, %s, %s, %s, %s, 'inclusao')
-                        """,
-                        (fornecedor_id, compra_id, data_compra, 'Inclusão em compra', abs(valor_inclusao))
-                    )
+                inserir_adiantamento(fornecedor_id, compra_id, data_compra, valor_inclusao)
             QMessageBox.information(self, "Sucesso", "Compra cadastrada com sucesso.")
         else:
-            # Remover lançamentos antigos de abatimento/adiantamento
-            with get_cursor(commit=True) as cursor:
-                cursor.execute(
-                    "DELETE FROM debitos_fornecedores WHERE compra_id = %s AND (tipo = 'abatimento' OR tipo = 'inclusao')",
-                    (self.compra_edit_id,)
-                )
-                # Atualiza valor_abatimento na compra
-                cursor.execute("UPDATE compras SET valor_abatimento = %s WHERE id = %s",
-                               (valor_abatimento, self.compra_edit_id))
-
-                # Insere o lançamento correto, se houver valor
-                if tipo_lancamento == "adiantamento" and valor_inclusao > 0:
-                    cursor.execute(
-                        """
-                        INSERT INTO debitos_fornecedores
-                            (fornecedor_id, compra_id, data_lancamento, descricao, valor, tipo)
-                        VALUES (%s, %s, %s, %s, %s, 'inclusao')
-                        """,
-                        (fornecedor_id, self.compra_edit_id, data_compra, 'Inclusão em compra', abs(valor_inclusao))
-                    )
-                elif tipo_lancamento == "abatimento" and valor_abatimento > 0:
-                    cursor.execute(
-                        """
-                        INSERT INTO debitos_fornecedores
-                            (fornecedor_id, compra_id, data_lancamento, descricao, valor, tipo)
-                        VALUES (%s, %s, %s, %s, %s, 'abatimento')
-                        """,
-                        (fornecedor_id, self.compra_edit_id, data_compra, 'Abatimento em compra', abs(valor_abatimento))
-                    )
-
-            # Atualiza os dados da compra e itens normalmente
-            self.atualizar_compra(
+            remover_lancamentos_antigos(self.compra_edit_id)
+            # ... atualização de valor_abatimento pode ser função de DB...
+            if tipo_lancamento == "adiantamento" and valor_inclusao > 0:
+                inserir_adiantamento(fornecedor_id, self.compra_edit_id, data_compra, valor_inclusao)
+            elif tipo_lancamento == "abatimento" and valor_abatimento > 0:
+                inserir_abatimento(fornecedor_id, self.compra_edit_id, data_compra, valor_abatimento)
+            atualizar_compra(
                 self.compra_edit_id,
                 fornecedor_id,
                 data_compra,
@@ -1106,29 +768,7 @@ class ComprasUI(QWidget):
             return
         compra_id = int(compra_id_item.text())
 
-        with get_cursor() as cursor:
-            cursor.execute("""
-                SELECT fornecedor_id, data_compra, valor_abatimento, status
-                FROM compras WHERE id = %s
-            """, (compra_id,))
-            compra = cursor.fetchone()
-
-            cursor.execute("""
-                SELECT p.nome AS produto_nome, i.produto_id, i.quantidade, i.preco_unitario, (i.quantidade * i.preco_unitario) AS total
-                FROM itens_compra i
-                JOIN produtos p ON i.produto_id = p.id
-                WHERE i.compra_id = %s
-            """, (compra_id,))
-            itens = cursor.fetchall()
-
-            # Busca adiantamento (inclusao)
-            cursor.execute("""
-                SELECT COALESCE(SUM(valor),0) as valor_adiantamento
-                FROM debitos_fornecedores
-                WHERE compra_id = %s AND tipo = 'inclusao'
-            """, (compra_id,))
-            adiantamento_row = cursor.fetchone()
-            valor_adiantamento = float(adiantamento_row["valor_adiantamento"]) if adiantamento_row else 0.0
+        compra, itens, valor_adiantamento = obter_dados_para_editar_compra(compra_id)
 
         if compra is None:
             QMessageBox.warning(self, "Erro", "Compra não encontrada.")
@@ -1165,7 +805,7 @@ class ComprasUI(QWidget):
     @requer_permissao(['admin', 'gerente', 'operador'])
     def alterar_status_compra(self):
         tabela = self.tabela_compras_aberto if self.tabs.currentIndex() == 0 else self.tabela_compras_concluidas
-        compra_id = self.obter_compra_id_selecionado(tabela=tabela)
+        compra_id = obter_compra_id_selecionado(tabela=tabela)
         if compra_id is None:
             QMessageBox.warning(self, "Alterar Status", "Selecione uma compra para alterar o status.")
             return
@@ -1189,14 +829,6 @@ class ComprasUI(QWidget):
             return
 
         compra_id = int(compra_id_item.text())
-        with get_cursor() as cursor:
-            cursor.execute("""
-                           SELECT id
-                           FROM debitos_fornecedores
-                           WHERE compra_id = %s
-                             AND tipo = 'abatimento'
-                           """, (compra_id,))
-            abatimento = cursor.fetchone()
 
         if abatimento:
             confirm = QMessageBox.question(
@@ -1219,11 +851,7 @@ class ComprasUI(QWidget):
             return
 
         try:
-            with get_cursor(commit=True) as cursor:
-                # Exclua TODOS os débitos relacionados à compra (não só abatimento)
-                cursor.execute("DELETE FROM debitos_fornecedores WHERE compra_id = %s", (compra_id,))
-                cursor.execute("DELETE FROM itens_compra WHERE compra_id = %s", (compra_id,))
-                cursor.execute("DELETE FROM compras WHERE id = %s", (compra_id,))
+            excluir_compra(compra_id)
             QMessageBox.information(self, "Sucesso", "Compra excluída com sucesso.")
             self.atualizar_tabelas()
             self.tabela_itens_compra.setRowCount(0)
@@ -1238,15 +866,13 @@ class ComprasUI(QWidget):
         if not numero:
             return
 
-        with get_cursor() as cursor:
-            cursor.execute("SELECT id FROM fornecedores WHERE fornecedores_numerobalanca = %s", (numero,))
-            resultado = cursor.fetchone()
-
-        if resultado:
-            idx = combo_fornecedor.findData(resultado['id'])
+        fornecedor_id = obter_fornecedor_id_por_numero_balanca(numero)
+        if fornecedor_id:
+            idx = combo_fornecedor.findData(fornecedor_id)
             if idx >= 0:
                 combo_fornecedor.setCurrentIndex(idx)
-                if hasattr(self, 'selecionar_categoria_do_fornecedor'): self.selecionar_categoria_do_fornecedor(idx)
+                if hasattr(self, 'selecionar_categoria_do_fornecedor'):
+                    self.selecionar_categoria_do_fornecedor(fornecedor_id)
         else:
             QMessageBox.warning(self, "Fornecedor não encontrado", f"Nenhum fornecedor com número de balança {numero}.")
             self.input_numero_balanca.clear()
@@ -1277,32 +903,7 @@ class ComprasUI(QWidget):
             return
 
         compra_id = int(compra_id_item.text())
-        with get_cursor() as cursor:
-            cursor.execute("""
-                SELECT p.nome AS produto_nome,
-                       i.produto_id,
-                       i.quantidade,
-                       i.preco_unitario,
-                       (i.quantidade * i.preco_unitario) AS total
-                FROM itens_compra i
-                JOIN produtos p ON i.produto_id = p.id
-                WHERE i.compra_id = %s
-            """, (compra_id,))
-            itens = cursor.fetchall()
-
-            # Busca valores de abatimento e adiantamento (inclusao)
-            cursor.execute("SELECT valor_abatimento FROM compras WHERE id = %s", (compra_id,))
-            compra = cursor.fetchone()
-
-            cursor.execute("""
-                SELECT COALESCE(SUM(valor),0) AS valor_adiantamento
-                FROM debitos_fornecedores
-                WHERE compra_id = %s AND tipo = 'inclusao'
-            """, (compra_id,))
-            adiantamento_row = cursor.fetchone()
-
-        valor_abatimento = float(compra["valor_abatimento"]) if compra else 0.0
-        valor_adiantamento = float(adiantamento_row["valor_adiantamento"]) if adiantamento_row else 0.0
+        itens, valor_abatimento, valor_adiantamento = obter_itens_e_lancamentos_da_compra(compra_id)
 
         subtotal = float(sum(item["total"] for item in itens))
 
@@ -1338,27 +939,12 @@ class ComprasUI(QWidget):
             )
         self.atualizar_campo_texto_copiavel()
 
-    def buscar_nome_conta_padrao(self, fornecedor_id):
-        try:
-            with get_cursor() as cursor:
-                cursor.execute("""
-                               SELECT nome_conta
-                               FROM dados_bancarios_fornecedor
-                               WHERE fornecedor_id = %s
-                                 AND padrao = 1 LIMIT 1
-                               """, (fornecedor_id,))
-                row = cursor.fetchone()
-                return row["nome_conta"] if row else "Conta não cadastrada"
-        except mysql.connector.Error as e:
-            print(f"Erro ao buscar conta padrão: {e}")
-            return "Erro ao buscar conta"
-
     def carregar_fornecedores(self):
         self.combo_fornecedor.clear()
         self.filtro_combo_fornecedor.clear()
         self.filtro_combo_fornecedor.addItem("Todos os Fornecedores", None)
         self.combo_fornecedor.addItem("", None)
-        for f in self.listar_fornecedores():
+        for f in listar_fornecedores():
             self.combo_fornecedor.addItem(f["nome"], f["id"])
             self.filtro_combo_fornecedor.addItem(f["nome"], f["id"])
 
@@ -1366,7 +952,7 @@ class ComprasUI(QWidget):
         self.combo_produto.blockSignals(True)
         self.combo_produto.clear()
         self.combo_produto.setEditable(True)
-        produtos = self.listar_produtos()
+        produtos = listar_produtos()
         produtos.sort(key=lambda p: p["nome"])
         for p in produtos:
             self.combo_produto.addItem(p['nome'], p['id'])
@@ -1401,339 +987,32 @@ class ComprasUI(QWidget):
 
     @requer_permissao(['admin', 'gerente', 'operador', 'consulta'])
     def exportar_compra_pdf(self):
-        linha = self.tabela_compras_aberto.currentRow()
-        if linha < 0:
-            QMessageBox.warning(self, "Exportar PDF", "Selecione uma compra na tabela para exportar.")
+        compra_id = obter_compra_id_selecionado()
+        if compra_id is None:
+            QMessageBox.warning(self, "Exportar PDF", "Selecione uma compra para exportar.")
             return
-
-        compra_id_item = self.tabela_compras_aberto.item(linha, 0)
-        if not compra_id_item:
-            return
-
-        compra_id = int(compra_id_item.text())
-
-        with get_cursor() as cursor:
-            cursor.execute("""
-                           SELECT f.id   as fornecedor_id,
-                                  f.nome AS fornecedor,
-                                  f.fornecedores_numerobalanca,
-                                  c.data_compra,
-                                  c.valor_abatimento
-                           FROM compras c
-                                    JOIN fornecedores f ON c.fornecedor_id = f.id
-                           WHERE c.id = %s
-                           """, (compra_id,))
-            compra = cursor.fetchone()
-
-            cursor.execute("""
-                           SELECT p.nome                            AS produto_nome,
-                                  i.quantidade,
-                                  i.preco_unitario,
-                                  (i.quantidade * i.preco_unitario) AS total
-                           FROM itens_compra i
-                                    JOIN produtos p ON i.produto_id = p.id
-                           WHERE i.compra_id = %s
-                           """, (compra_id,))
-            itens = cursor.fetchall()
-
-        if not compra:
-            QMessageBox.warning(self, "Exportar PDF", "Compra não encontrada.")
-            return
-
-        # Saldo do fornecedor
-        saldo = self.obter_saldo_devedor_fornecedor(compra['fornecedor_id'])
-
+        compra, itens = obter_detalhes_compra(compra_id)
+        saldo = obter_saldo_devedor_fornecedor(compra['fornecedor_id'])
         filename = f"compra_{compra_id}.pdf"
-        c = canvas.Canvas(filename, pagesize=A4)
-        width, height = A4
-
-        y = height - 30 * mm
-        c.setFont("Helvetica-Bold", 14)
-        c.drawString(20 * mm, y, f"Compra ID: {compra_id}")
-        y -= 8 * mm
-        c.setFont("Helvetica", 12)
-        c.drawString(20 * mm, y, f"Fornecedor: {compra['fornecedor']}")
-        y -= 6 * mm
-        c.drawString(20 * mm, y, f"Data da Compra: {compra['data_compra'].strftime('%d/%m/%Y')}")
-        y -= 10 * mm
-
-        c.setFont("Helvetica-Bold", 12)
-        c.drawString(20 * mm, y, "Produtos")
-
-        y -= 6 * mm
-        c.setFont("Helvetica-Bold", 11)
-        c.drawString(20 * mm, y, "Produto")
-        c.drawString(90 * mm, y, "Qtd")
-        c.drawString(110 * mm, y, "Unitário")
-        c.drawString(140 * mm, y, "Total")
-
-        altura_cabecalho = 6 * mm
-        y_linha_cabecalho = y - 2 * mm
-        c.line(20 * mm, y_linha_cabecalho, 190 * mm, y_linha_cabecalho)
-
-        y -= 8 * mm
-        altura_linha = 6 * mm
-
-        altura_tabela = altura_linha * (len(itens) + (1 if float(compra['valor_abatimento']) != 0 else 0))
-        x_inicio = 20 * mm
-        x_fim = 190 * mm
-        y_topo = y
-        self.adicionar_marca_dagua_pdf_area(
-            c,
-            texto=str(compra['fornecedores_numerobalanca']),
-            x_inicio=x_inicio,
-            x_fim=x_fim,
-            y_topo=y_topo,
-            altura=altura_tabela,
-            tamanho_fonte=30,
-            cor=(0.8, 0.8, 0.8),
-            angulo=25
-        )
-
-        total = 0
-        for item in itens:
-            if y < 30 * mm:
-                c.showPage()
-                y = height - 30 * mm
-            c.setFont("Helvetica", 11)
-            c.drawString(20 * mm, y, item['produto_nome'])
-            c.drawString(90 * mm, y, str(item['quantidade']))
-            c.drawString(110 * mm, y, f"R$ {item['preco_unitario']:.2f}")
-            c.drawString(140 * mm, y, f"R$ {item['total']:.2f}")
-            total += float(item['total'])
-            y -= altura_linha
-
-        # Mostrar abatimento/adiantamento na tabela
-        if float(compra['valor_abatimento']) != 0:
-            c.setFont("Helvetica-Oblique", 11)
-            c.drawString(20 * mm, y, "Abatimento/Adiantamento")
-            c.drawString(140 * mm, y, f"- R$ {compra['valor_abatimento']:.2f}")
-            y -= altura_linha
-
-        y_linha_final = y + altura_linha / 2
-        c.line(20 * mm, y_linha_final, 190 * mm, y_linha_final)
-
-        y -= 10 * mm
-        c.setFont("Helvetica-Bold", 12)
-        c.drawString(20 * mm, y, f"Subtotal: R$ {total:.2f}")
-        y -= 6 * mm
-        total_com_abatimento = total - float(compra['valor_abatimento'])
-        c.drawString(20 * mm, y, f"Total Final: R$ {total_com_abatimento:.2f}")
-
-        # Exibir saldo do fornecedor ao final
-        y -= 10 * mm
-        c.setFont("Helvetica-Bold", 11)
-        if saldo < 0:
-            c.drawString(20 * mm, y, f"Saldo positivo do fornecedor: R$ {-saldo:.2f}")
-        else:
-            c.drawString(20 * mm, y, f"Saldo devedor do fornecedor: R$ {abs(saldo):.2f}")
-
-        y -= 20 * mm
-        c.setFont("Helvetica-Oblique", 9)
-        c.drawString(20 * mm, y, f"Gerado em: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}")
-
-        c.save()
-
-        QMessageBox.information(self, "Exportar PDF", f"PDF gerado com sucesso:\n{filename}")
-
-        if platform.system() == "Windows":
-            os.startfile(filename)
-        elif platform.system() == "Darwin":
-            os.system(f"open '{filename}'")
-        else:
-            os.system(f"xdg-open '{filename}'")
-
-    def adicionar_marca_dagua_pdf_area(self, c, texto, x_inicio, x_fim, y_topo, altura, tamanho_fonte=30, cor=(0.8, 0.8, 0.8), angulo=25):
-        try:
-            pdfmetrics.registerFont(TTFont('Arial', 'arial.ttf'))
-            fonte_nome = 'Arial'
-        except:
-            fonte_nome = 'Helvetica'
-        c.saveState()
-        c.setFont(fonte_nome, tamanho_fonte)
-        c.setFillColor(Color(*cor))
-
-        largura_texto = pdfmetrics.stringWidth(texto, fonte_nome, tamanho_fonte)
-        step_x = largura_texto + 40
-        step_y = tamanho_fonte * 2
-
-        y = y_topo
-        while y > y_topo - altura:
-            x = x_inicio
-            while x < x_fim:
-                c.saveState()
-                c.translate(x, y)
-                c.rotate(angulo)
-                c.drawString(0, 0, texto)
-                c.restoreState()
-                x += step_x
-            y -= step_y
-        c.restoreState()
+        exportar_compra_pdf(compra, itens, saldo, filename,
+                            marca_dagua_texto=str(compra.get('fornecedores_numerobalanca', '')))
 
     @requer_permissao(['admin', 'gerente', 'operador', 'consulta'])
     def exportar_compra_jpg(self):
-        compra_id = self.obter_compra_id_selecionado()
+        compra_id = obter_compra_id_selecionado()
         if compra_id is None:
             QMessageBox.warning(self, "Exportar JPG", "Selecione uma compra para exportar.")
             return
-
-        compra, itens = self.obter_detalhes_compra(compra_id)
-        if not compra:
-            QMessageBox.warning(self, "Exportar JPG", "Compra não encontrada.")
-            return
-
-        # Obter saldo do fornecedor
-        saldo = self.obter_saldo_devedor_fornecedor(compra['fornecedor_id'])
-
-        largura, altura = 800, 600 + (len(itens) + 1) * 25  # +1 para abatimento se houver
-        imagem = Image.new("RGB", (largura, altura), "white")
-        draw = ImageDraw.Draw(imagem)
-
-        try:
-            fonte = ImageFont.truetype("arial.ttf", 16)
-            fonte_bold = ImageFont.truetype("arialbd.ttf", 18)
-            fonte_mono = ImageFont.truetype("arial.ttf", 14)
-        except IOError:
-            fonte = fonte_bold = fonte_mono = ImageFont.load_default()
-
-        y = 20
-        draw.text((30, y), f"Compra ID: {compra_id}", fill="black", font=fonte_bold)
-        y += 30
-        draw.text((30, y), f"Fornecedor: {compra['fornecedor']}", fill="black", font=fonte)
-        y += 25
-        draw.text((30, y), f"Data: {compra['data_compra'].strftime('%d/%m/%Y')}", fill="black", font=fonte)
-        y += 40
-
-        y_cabecalho = y
-        draw.text((30, y_cabecalho), "Produto", fill="black", font=fonte_bold)
-        draw.text((400, y_cabecalho), "Qtd", fill="black", font=fonte_bold)
-        draw.text((470, y_cabecalho), "Unit.", fill="black", font=fonte_bold)
-        draw.text((570, y_cabecalho), "Total", fill="black", font=fonte_bold)
-
-        altura_cabecalho = 20
-        y_linha_cabecalho = y_cabecalho + altura_cabecalho
-        draw.line((30, y_linha_cabecalho, 750, y_linha_cabecalho), fill="black", width=1)
-
-        y = y_linha_cabecalho + 10
-        altura_linha = 25
-        colunas_x = [30, 400, 470, 570, 750]
-
-        total = 0
-        for item in itens:
-            draw.text((30, y), item['produto_nome'], fill="black", font=fonte_mono)
-            draw.text((400, y), str(item['quantidade']), fill="black", font=fonte_mono)
-            draw.text((470, y), f"{item['preco_unitario']:.2f}", fill="black", font=fonte_mono)
-            draw.text((570, y), f"{item['total']:.2f}", fill="black", font=fonte_mono)
-            total += float(item['total'])
-            y += altura_linha
-
-        # Adiciona linha de abatimento/adiantamento na tabela, se houver
-        if float(compra['valor_abatimento']) != 0:
-            draw.text((30, y), "Abatimento/Adiantamento", fill="black", font=fonte_mono)
-            draw.text((570, y), f"-{float(compra['valor_abatimento']):.2f}", fill="black", font=fonte_mono)
-            y += altura_linha
-
-        y_tabela_fim = y + 30
-        linhas_y = [y_linha_cabecalho]
-        linhas_y += [y_linha_cabecalho + 25 + i * altura_linha for i in
-                     range(len(itens) + (1 if float(compra['valor_abatimento']) != 0 else 0) + 1)]
-
-        for linha_y in linhas_y:
-            draw.line((colunas_x[0], linha_y, colunas_x[-1], linha_y), fill="black", width=1)
-        for x in colunas_x:
-            draw.line((x, linhas_y[0], x, linhas_y[-1]), fill="black", width=1)
-
-        y = y_tabela_fim
-        draw.text((30, y), f"Subtotal: R$ {total:.2f}", fill="black", font=fonte_bold)
-        y += 25
-        total_com_abatimento = total - float(compra['valor_abatimento'])
-        draw.text((30, y), f"Total Final: R$ {total_com_abatimento:.2f}", fill="black", font=fonte_bold)
-        y += 25
-
-        # Saldo do fornecedor ao final
-        if saldo < 0:
-            draw.text((30, y), f"Saldo positivo do fornecedor: R$ {-saldo:.2f}", fill="black", font=fonte_bold)
-        else:
-            draw.text((30, y), f"Saldo devedor do fornecedor: R$ {abs(saldo):.2f}", fill="black", font=fonte_bold)
-        y += 40
-
-        draw.text((30, y), f"Gerado em: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}", fill="gray", font=fonte)
-
-        # Marca d'água na área da tabela
-        imagem = self.adicionar_marca_dagua_area(
-            imagem,
-            texto=str(compra['fornecedores_numerobalanca']),
-            x_inicio=30,
-            x_fim=750,
-            y_inicio=y_linha_cabecalho,
-            altura=altura_linha * (len(itens) + (1 if float(compra['valor_abatimento']) != 0 else 0)),
-            fonte_path="arial.ttf",
-            tamanho_fonte=30,
-            opacidade=80,
-            angulo=25
-        )
-
-        nome_arquivo = f"compra_{compra_id}.jpg"
-        imagem.save(nome_arquivo)
-
-        QMessageBox.information(self, "Exportar JPG", f"Relatório gerado com sucesso:\n{nome_arquivo}")
-
-        if platform.system() == "Windows":
-            os.startfile(nome_arquivo)
-        elif platform.system() == "Darwin":
-            os.system(f"open '{nome_arquivo}'")
-        else:
-            os.system(f"xdg-open '{nome_arquivo}'")
-
-    def adicionar_marca_dagua_area(self, imagem, texto, x_inicio, x_fim, y_inicio, altura, fonte_path="arial.ttf", tamanho_fonte=30, opacidade=80, angulo=25):
-        try:
-            fonte = ImageFont.truetype(fonte_path, tamanho_fonte)
-        except IOError:
-            fonte = ImageFont.load_default()
-        marca = Image.new("RGBA", imagem.size, (255, 255, 255, 0))
-        draw = ImageDraw.Draw(marca)
-
-        bbox = draw.textbbox((0, 0), texto, font=fonte)
-        texto_largura = bbox[2] - bbox[0]
-        texto_altura = bbox[3] - bbox[1]
-
-        step_x = texto_largura + 40
-        step_y = tamanho_fonte * 2
-
-        for y in range(int(y_inicio), int(y_inicio + altura), int(step_y)):
-            for x in range(int(x_inicio), int(x_fim), int(step_x)):
-                txt_img = Image.new("RGBA", (texto_largura + 20, texto_altura + 20), (255, 255, 255, 0))
-                txt_draw = ImageDraw.Draw(txt_img)
-                txt_draw.text((10, 10), texto, font=fonte, fill=(200, 200, 200, opacidade))
-                txt_img = txt_img.rotate(angulo, expand=1, resample=Image.BICUBIC)
-                px = int(x)
-                py = int(y)
-                marca.alpha_composite(txt_img, (px, py))
-        resultado = Image.alpha_composite(imagem.convert("RGBA"), marca)
-        return resultado.convert("RGB")
-
-    def selecionar_categoria_do_fornecedor(self, fornecedor_id):
-        with get_cursor() as cursor:
-            cursor.execute("SELECT id FROM categorias_fornecedor_por_fornecedor WHERE fornecedor_id = %s ORDER BY nome", (fornecedor_id,))
-            result = cursor.fetchone()
-            if result:
-                categoria_id = result["id"]
-                index = self.combo_categoria_temporaria.findData(categoria_id)
-                if index != -1:
-                    self.combo_categoria_temporaria.setCurrentIndex(index)
-            else:
-                cursor.execute("SELECT id FROM categorias_fornecedor_por_fornecedor WHERE nome = %s LIMIT 1", ('Padrão',))
-                cat_padrao = cursor.fetchone()
-                if cat_padrao:
-                    index = self.combo_categoria_temporaria.findData(cat_padrao["id"])
-                    if index != -1:
-                        self.combo_categoria_temporaria.setCurrentIndex(index)
+        compra, itens = obter_detalhes_compra(compra_id)
+        saldo = obter_saldo_devedor_fornecedor(compra['fornecedor_id'])
+        filename = f"compra_{compra_id}.jpg"
+        exportar_compra_jpg(compra, itens, saldo, filename, marca_dagua_texto=str(compra.get('fornecedores_numerobalanca', '')))
 
     def showEvent(self, event):
         super().showEvent(event)
         fornecedor_id = self.combo_fornecedor.currentData()
         if fornecedor_id is not None:
-            self.carregar_categorias_para_fornecedor(fornecedor_id)
+            carregar_categorias_para_fornecedor(fornecedor_id)
             self.atualizar_saldo_fornecedor()
             self.carregar_produtos()
 
