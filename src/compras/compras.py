@@ -2,7 +2,7 @@ import sys
 from PySide6.QtWidgets import (
     QApplication, QWidget, QLabel, QPushButton, QVBoxLayout,
     QHBoxLayout, QGridLayout, QComboBox, QDateEdit, QLineEdit,
-    QSpinBox, QTableWidget, QTableWidgetItem, QMessageBox, QTabWidget, QDialog
+    QTableWidget, QTableWidgetItem, QMessageBox, QTabWidget, QDialog
 )
 from PySide6.QtGui import QIntValidator
 from PySide6.QtCore import Qt, QTimer, QDate, QLocale, QEvent
