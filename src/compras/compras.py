@@ -7,8 +7,8 @@ from PySide6.QtWidgets import (
 from PySide6.QtGui import QIntValidator
 from PySide6.QtCore import Qt, QTimer, QDate, QLocale, QEvent
 from decimal import Decimal, InvalidOperation
-from ..status_delegate_combo import StatusComboDelegate
-from ..utils_permissoes import requer_permissao
+from status_delegate_combo import StatusComboDelegate
+from utils_permissoes import requer_permissao
 
 # Importações dos submódulos
 from .compras_db import (
