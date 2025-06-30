@@ -15,13 +15,13 @@ def exportar_compra_pdf(compra, itens, saldo, filename, marca_dagua_texto=""):
     y = height - 30 * mm
 
     try:
-        pdfmetrics.registerFont(TTFont('Arial', 'arial.ttf'))
-        fonte_padrao = 'Arial'
+        pdfmetrics.registerFont(TTFont('Helvetica', 'Helvetica.ttf'))
+        fonte_padrao = 'Helvetica'
     except:
         fonte_padrao = 'Helvetica'
 
-    c.setFont(fonte_padrao + "-Bold", 14)
-    c.drawString(20 * mm, y, f"Compra ID: {compra['id']}")
+    c.setFont("Helvetica-Bold", 14)
+    c.drawString(20 * mm, y, f"Compra ID: {compra.get('id', 'N/A')}")
     y -= 8 * mm
     c.setFont(fonte_padrao, 12)
     c.drawString(20 * mm, y, f"Fornecedor: {compra['fornecedor']}")
@@ -144,7 +144,8 @@ def exportar_compra_jpg(compra, itens, saldo, filename, marca_dagua_texto=""):
         fonte = fonte_bold = fonte_mono = ImageFont.load_default()
 
     y = 20
-    draw.text((30, y), f"Compra ID: {compra['id']}", fill="black", font=fonte_bold)
+    compra_id = compra.get('id', 'N/A')
+    draw.text((30, y), f"Compra ID: {compra_id}", fill="black", font=fonte_bold)
     y += 30
     draw.text((30, y), f"Fornecedor: {compra['fornecedor']}", fill="black", font=fonte)
     y += 25

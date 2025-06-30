@@ -6,7 +6,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtGui import QIntValidator
 from PySide6.QtCore import Qt, QTimer, QDate, QLocale, QEvent
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from ..status_delegate_combo import StatusComboDelegate
 from ..utils_permissoes import requer_permissao
 
@@ -727,7 +727,7 @@ class ComprasUI(QWidget):
             valor_lancamento = Decimal(self.input_valor_lancamento.text().replace(',',
                                                                                   '.')) if self.input_valor_lancamento.text() else Decimal(
                 '0.00')
-        except ValueError:
+        except (ValueError, InvalidOperation):
             QMessageBox.warning(self, "Erro", "Valor de abatimento/adiantamento inválido.")
             return
 
