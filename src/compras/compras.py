@@ -65,7 +65,7 @@ class ComprasUI(QWidget):
     def init_ui(self):
         layout_principal = QVBoxLayout()
 
-        # --------------------- Filtros (compartilhados entre abas) ---------------------
+        # --------------------- Filtros (único grupo centralizado) ---------------------
         layout_filtros = QHBoxLayout()
 
         self.filtro_numero_balanca = QLineEdit()
@@ -100,12 +100,19 @@ class ComprasUI(QWidget):
         layout_filtros.addWidget(self.filtro_data_ate)
 
         btn_aplicar_filtro = QPushButton("Aplicar Filtro")
-        btn_aplicar_filtro.clicked.connect(self.atualizar_tabelas)
+        btn_aplicar_filtro.clicked.connect(self.aplicar_filtro_compras)
         layout_filtros.addWidget(btn_aplicar_filtro)
 
         btn_limpar_filtro = QPushButton("Limpar Filtro")
         btn_limpar_filtro.clicked.connect(self.limpar_filtro_compras)
         layout_filtros.addWidget(btn_limpar_filtro)
+
+        # Sincronizar número da balança com fornecedor
+        self.filtro_numero_balanca.editingFinished.connect(
+            lambda: self.selecionar_fornecedor_por_numero_balanca(
+                self.filtro_numero_balanca, self.filtro_combo_fornecedor
+            )
+        )
 
         layout_principal.addLayout(layout_filtros)
         # ---------------------- Fim dos filtros -----------------
@@ -122,7 +129,6 @@ class ComprasUI(QWidget):
         # Layout Em Aberto
         layout_em_aberto = QHBoxLayout()
         self.tab_em_aberto.setLayout(layout_em_aberto)
-        # ... aqui continua normalmente o layout da esquerda, meio e direita da aba em aberto ...
 
         # ===================== TAB CONCLUÍDAS =====================
         layout_concluidas = QVBoxLayout()
@@ -176,7 +182,7 @@ class ComprasUI(QWidget):
         layout_dados.addWidget(QLabel("Categoria (para esta compra)"), 4, 0)
         layout_dados.addWidget(self.combo_categoria_temporaria, 4, 1)
 
-        # ========== ABAIXO: ComboBox + QLineEdit para Abatimento/Adiantamento ==========
+        # ========== ComboBox + QLineEdit para Abatimento/Adiantamento ==========
         self.combo_tipo_lancamento = QComboBox()
         self.combo_tipo_lancamento.addItem("Abatimento", "abatimento")
         self.combo_tipo_lancamento.addItem("Adiantamento", "adiantamento")
@@ -273,65 +279,19 @@ class ComprasUI(QWidget):
         layout_compras_com_filtros = QVBoxLayout()
         layout_em_aberto.addLayout(layout_compras_com_filtros, 5)
 
-        layout_compras_com_filtros.addWidget(QLabel("Número da Balança:"))
-        self.filtro_numero_balanca = QLineEdit()
-        self.filtro_numero_balanca.setPlaceholderText("Digite o número da balança")
-        layout_compras_com_filtros.addWidget(self.filtro_numero_balanca)
-
-        layout_compras_com_filtros.addWidget(QLabel("Fornecedor:"))
-        self.filtro_combo_fornecedor = QComboBox()
-        self.filtro_combo_fornecedor.addItem("Todos os Fornecedores", None)
-        for f in listar_fornecedores():
-            self.filtro_combo_fornecedor.addItem(f"{f['nome']} (ID {f['id']})", f['id'])
-        layout_compras_com_filtros.addWidget(self.filtro_combo_fornecedor)
-
-        layout_compras_com_filtros.addWidget(QLabel("Status:"))
-        self.filtro_combo_status = QComboBox()
-        self.filtro_combo_status.addItem("Todos", None)
-        for s in STATUS_LIST:
-            self.filtro_combo_status.addItem(s, s)
-        layout_compras_com_filtros.addWidget(self.filtro_combo_status)
-
-        self.filtro_numero_balanca.editingFinished.connect(
-            lambda: self.selecionar_fornecedor_por_numero_balanca(
-                self.filtro_numero_balanca, self.filtro_combo_fornecedor
-            )
-        )
-
-        linha_datas_e_botoes = QHBoxLayout()
-        linha_datas_e_botoes.addWidget(QLabel("De:"))
-        self.filtro_data_de = QDateEdit()
-        self.filtro_data_de.setCalendarPopup(True)
-        self.filtro_data_de.setDate(QDate.currentDate().addMonths(-1))
-        linha_datas_e_botoes.addWidget(self.filtro_data_de)
-
-        linha_datas_e_botoes.addWidget(QLabel("Até:"))
-        self.filtro_data_ate = QDateEdit()
-        self.filtro_data_ate.setCalendarPopup(True)
-        self.filtro_data_ate.setDate(QDate.currentDate())
-        linha_datas_e_botoes.addWidget(self.filtro_data_ate)
-
-        btn_aplicar_filtro = QPushButton("Aplicar Filtro")
-        btn_aplicar_filtro.clicked.connect(self.aplicar_filtro_compras)
-        linha_datas_e_botoes.addWidget(btn_aplicar_filtro)
-
-        btn_limpar_filtro = QPushButton("Limpar Filtro")
-        btn_limpar_filtro.clicked.connect(self.limpar_filtro_compras)
-        linha_datas_e_botoes.addWidget(btn_limpar_filtro)
-
-        layout_compras_com_filtros.addLayout(linha_datas_e_botoes)
-
+        # Tabela principal de compras em aberto
         self.tabela_compras_aberto = QTableWidget()
         self.tabela_compras_aberto.setColumnCount(6)
         self.tabela_compras_aberto.setHorizontalHeaderLabels([
             "ID", "Fornecedor", "Data", "Total dos produtos (R$)", "Valor com abatimento/adiantamento", "Status"
         ])
         self.tabela_compras_aberto.setEditTriggers(QTableWidget.DoubleClicked)
-        self.tabela_compras_aberto.cellClicked.connect(lambda row, col: self.mostrar_itens_da_compra(row, col, tabela=self.tabela_compras_aberto))
+        self.tabela_compras_aberto.cellClicked.connect(
+            lambda row, col: self.mostrar_itens_da_compra(row, col, tabela=self.tabela_compras_aberto))
         self.tabela_compras_aberto.itemSelectionChanged.connect(self.atualizar_campo_texto_copiavel)
         layout_compras_com_filtros.addWidget(self.tabela_compras_aberto)
 
-        # Área direita, igual antes
+        # Área direita
         layout_direita = QVBoxLayout()
         layout_em_aberto.addLayout(layout_direita, 3)
         self.tabela_itens_compra = QTableWidget()
@@ -350,7 +310,7 @@ class ComprasUI(QWidget):
         layout_direita.addWidget(self.campo_texto_copiavel)
         self.campo_texto_copiavel.mousePressEvent = self.copiar_campo_texto_copiavel
 
-        # --- NOVO BOTÃO PARA TROCAR CONTA DO FORNECEDOR ---
+        # Botão para trocar conta do fornecedor
         self.btn_trocar_conta_fornecedor = QPushButton("Trocar conta do fornecedor (só para esta compra)")
         self.btn_trocar_conta_fornecedor.clicked.connect(self.abrir_dialog_troca_conta_fornecedor)
         layout_direita.addWidget(self.btn_trocar_conta_fornecedor)
