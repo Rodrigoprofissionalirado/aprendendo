@@ -3,10 +3,11 @@ import os, platform
 import unicodedata
 from PySide6.QtWidgets import (
     QApplication, QWidget, QLabel, QPushButton, QVBoxLayout, QHBoxLayout,
-    QGridLayout, QComboBox, QDateEdit, QLineEdit, QSpinBox, QTableWidget,
+    QGridLayout, QComboBox, QDateEdit, QLineEdit, QTableWidget,
     QTableWidgetItem, QMessageBox, QSizePolicy, QTabWidget, QDialog
 )
-from PySide6.QtCore import Qt, QDate, QLocale
+from PySide6.QtGui import QIntValidator
+from PySide6.QtCore import Qt, QDate, QLocale, QEvent
 from decimal import Decimal, InvalidOperation
 from db_context import get_cursor
 from reportlab.lib.pagesizes import A4
@@ -346,7 +347,7 @@ class MovimentacaoTabUI(QWidget):
         self.input_descricao.clear()
         self.input_valor_operacao.clear()
         self.combo_produto.setCurrentIndex(0)
-        self.input_quantidade.setValue(1)
+        self.input_quantidade.setText("")
         # Se houver outros campos a limpar, adicione aqui.
 
     def combo_produto_focus_in_event(self, event):
@@ -476,7 +477,7 @@ class MovimentacaoTabUI(QWidget):
                                    """, (mov['id'],))
                     itens = cursor.fetchall()
             bloco['itens'] = itens
-            bloco['altura'] = 110 + 15 * (len(itens) if itens else 1) + 60
+            bloco['altura'] = 250 + 28 * (len(itens) if itens else 1)
             altura_total += bloco['altura'] + espacamento_blocos
             blocos.append(bloco)
 
@@ -691,7 +692,7 @@ class MovimentacaoTabUI(QWidget):
 
         saldo_por_id = obter_saldos_acumulados(fornecedor_id, data_de, data_ate)
 
-        largura, _ = A4
+        largura_img = 1200
         margem = 20 * mm
         espacamento_blocos = 10 * mm
 
@@ -714,11 +715,11 @@ class MovimentacaoTabUI(QWidget):
                                    """, (mov['id'],))
                     itens = cursor.fetchall()
             bloco['itens'] = itens
-            bloco['altura'] = 110 + 15 * (len(itens) if itens else 1) + 60
+            bloco['altura'] = 250 + 28 * (len(itens) if itens else 1)
             altura_total += bloco['altura'] + espacamento_blocos
             blocos.append(bloco)
 
-        imagem = Image.new("RGB", (int(largura), int(altura_total)), "white")
+        imagem = Image.new("RGB", (int(largura_img), int(altura_total)), "white")
         draw = ImageDraw.Draw(imagem)
         y_base = margem
         marca_dagua_blocos = []
@@ -762,23 +763,23 @@ class MovimentacaoTabUI(QWidget):
                 draw.text((margem, y), "Produtos", fill="black", font=fonte_bold)
                 y += 26
                 draw.text((margem, y), "Produto", fill="black", font=fonte_menor)
-                draw.text((margem + 390, y), "Qtd", fill="black", font=fonte_menor)
-                draw.text((margem + 500, y), "Unitário", fill="black", font=fonte_menor)
-                draw.text((margem + 650, y), "Total", fill="black", font=fonte_menor)
+                draw.text((margem + 500, y), "Qtd", fill="black", font=fonte_menor)
+                draw.text((margem + 650, y), "Unitário", fill="black", font=fonte_menor)
+                draw.text((margem + 8000, y), "Total", fill="black", font=fonte_menor)
                 y += 5
-                draw.line((margem, y + 20, largura - margem, y + 20), fill="black", width=1)
+                draw.line((margem, y + 20, largura_img - margem, y + 20), fill="black", width=1)
                 y += 22
 
                 total = 0
                 for item in itens:
                     draw.text((margem, y), item['produto_nome'], fill="black", font=fonte_mono)
-                    draw.text((margem + 390, y), str(item['quantidade']), fill="black", font=fonte_mono)
-                    draw.text((margem + 500, y), f"R$ {item['preco_unitario']:.2f}", fill="black", font=fonte_mono)
-                    draw.text((margem + 650, y), f"R$ {item['total']:.2f}", fill="black", font=fonte_mono)
+                    draw.text((margem + 500, y), str(item['quantidade']), fill="black", font=fonte_mono)
+                    draw.text((margem + 650, y), f"R$ {item['preco_unitario']:.2f}", fill="black", font=fonte_mono)
+                    draw.text((margem + 800, y), f"R$ {item['total']:.2f}", fill="black", font=fonte_mono)
                     total += float(item['total'])
                     y += 28
                 y += 5
-                draw.line((margem, y, largura - margem, y), fill="black", width=1)
+                draw.line((margem, y, largura_img - margem, y), fill="black", width=1)
                 y += 7
                 draw.text((margem, y), f"Subtotal: R$ {total:.2f}", fill="black", font=fonte_menor)
                 y += 19
@@ -805,7 +806,7 @@ class MovimentacaoTabUI(QWidget):
             marca_dagua_blocos.append({
                 "texto": str(mov['fornecedores_numerobalanca']),
                 "x_inicio": margem,
-                "x_fim": largura - margem,
+                "x_fim": largura_img - margem,
                 "y_inicio": y_base + 70,
                 "altura": bloco['altura'] - 70
             })
@@ -934,11 +935,11 @@ class MovimentacaoTabUI(QWidget):
         self.combo_produto = QComboBox()
         self.combo_produto.setEditable(True)  # Permitir escrever o nome
         self.combo_produto.lineEdit().setPlaceholderText("Selecione um produto")
-        # Conecte o evento de focusIn
-        self.combo_produto.setLineEdit(FocusLineEdit())
-        self.input_quantidade = QSpinBox()
-        self.input_quantidade.setMinimum(1)
-        self.input_quantidade.setMaximum(99999)
+        self.combo_produto.lineEdit().returnPressed.connect(self.focus_quantidade)
+        self.input_quantidade = QLineEdit()
+        self.input_quantidade.setPlaceholderText("Quantidade")
+        self.input_quantidade.setValidator(QIntValidator(1, 99999))
+        self.input_quantidade.installEventFilter(self)
         self.layout_produto.addWidget(QLabel("Produto"), 0, 0)
         self.layout_produto.addWidget(self.combo_produto, 0, 1)
         self.layout_produto.addWidget(QLabel("Quantidade"), 1, 0)
@@ -1064,6 +1065,21 @@ class MovimentacaoTabUI(QWidget):
         self.label_total_movimentacao.setVisible(not is_transacao)
         self.atualizar_total_movimentacao()
 
+    def focus_quantidade(self):
+        self.input_quantidade.setFocus()
+
+    def eventFilter(self, obj, event):
+        if obj is self.input_quantidade and event.type() == QEvent.KeyPress:
+            if event.key() in (Qt.Key_Return, Qt.Key_Enter):
+                self.atalho_enter_quantidade()
+                return True
+        return super().eventFilter(obj, event)
+
+    def atalho_enter_quantidade(self):
+        self.adicionar_item()
+        self.combo_produto.setFocus()
+        self.combo_produto.lineEdit().selectAll()
+
     def carregar_produtos(self):
         self.combo_produto.clear()
         self.combo_produto.setEditable(True)
@@ -1075,7 +1091,11 @@ class MovimentacaoTabUI(QWidget):
 
     def adicionar_item(self):
         produto_id = self.combo_produto.currentData()
-        quantidade = self.input_quantidade.value()
+        quantidade_texto = self.input_quantidade.text()
+        try:
+            quantidade = int(quantidade_texto)
+        except Exception:
+            quantidade = 0
         if produto_id is None or quantidade <= 0:
             QMessageBox.warning(self, "Erro", "Selecione um produto e uma quantidade válida.")
             return
@@ -1100,7 +1120,7 @@ class MovimentacaoTabUI(QWidget):
         })
         self.atualizar_tabela_itens_adicionados()
         self.combo_produto.setCurrentIndex(-1)
-        self.input_quantidade.clear()
+        self.input_quantidade.setText("")
 
     def atualizar_tabela_itens_adicionados(self):
         self.tabela_itens_adicionados.blockSignals(True)

@@ -210,7 +210,7 @@ class ComprasUI(QWidget):
 
         # Checkbox para dizer se considera ou não essa compra no saldo
         self.checkbox_considerar_no_saldo = QCheckBox("Considerar esta compra no saldo geral de movimentações")
-        self.checkbox_considerar_no_saldo.setChecked(True)
+        self.checkbox_considerar_no_saldo.setChecked(False)
         layout_dados.addWidget(self.checkbox_considerar_no_saldo, 7, 0, 1, 2)
 
         layout_entrada.addLayout(layout_dados)
@@ -731,6 +731,7 @@ class ComprasUI(QWidget):
         self.limpar_itens()
         self.carregar_fornecedores()
         self.carregar_produtos()
+        self.checkbox_considerar_no_saldo.setChecked(False)
         if hasattr(self, 'janela_debitos'):
             self.janela_debitos.atualizar()
 
