@@ -724,6 +724,15 @@ class MovimentacaoTabUI(QWidget):
         y_base = margem
         marca_dagua_blocos = []
 
+        try:
+            fonte = ImageFont.truetype("arial.ttf", 18)
+            fonte_bold = ImageFont.truetype("arialbd.ttf", 24)
+            fonte_mono = ImageFont.truetype("arial.ttf", 16)
+            fonte_menor = ImageFont.truetype("arial.ttf", 15)
+            fonte_saldo = ImageFont.truetype("arialbd.ttf", 17)
+        except IOError:
+            fonte = fonte_bold = fonte_mono = fonte_menor = fonte_saldo = ImageFont.load_default()
+
         for bloco in blocos:
             mov = bloco['mov']
             itens = bloco['itens']
