@@ -215,8 +215,8 @@ class FornecedoresUI(QWidget):
         # Tabela principal
         self.tabela = QTableWidget()
         self.tabela.setEditTriggers(QTableWidget.NoEditTriggers)
-        self.tabela.setColumnCount(4)
-        self.tabela.setHorizontalHeaderLabels(['ID', 'Nome', 'Endereço', 'Nº Balança'])
+        self.tabela.setColumnCount(3)
+        self.tabela.setHorizontalHeaderLabels(['Nº Balança', 'Nome', 'Endereço'])
 
         # Tabela de preços
         self.tabela_precos = QTableWidget()
@@ -339,11 +339,10 @@ class FornecedoresUI(QWidget):
 
         self.tabela.setRowCount(len(dados))
         for i, row in enumerate(dados):
-            self.tabela.setItem(i, 0, QTableWidgetItem(str(row['id'])))
+            self.tabela.setItem(i, 0, QTableWidgetItem(
+                str(row.get('fornecedores_numerobalanca', '') or row.get('numerobalanca', ''))))
             self.tabela.setItem(i, 1, QTableWidgetItem(row['nome']))
             self.tabela.setItem(i, 2, QTableWidgetItem(row.get('fornecedores_endereco', '') or row.get('endereco', '')))
-            self.tabela.setItem(i, 3, QTableWidgetItem(
-                str(row.get('fornecedores_numerobalanca', '') or row.get('numerobalanca', ''))))
 
     def carregar_combo_fornecedores(self):
         self.combo_fornecedores.clear()
@@ -518,7 +517,7 @@ class FornecedoresUI(QWidget):
         endereco = self.input_endereco.text().strip()
         numero_balanca = self.input_numero_balanca.text().strip()
 
-        if nome and endereco and numero_balanca:
+        if nome and numero_balanca:
             try:
                 self.db.adicionar_fornecedor(nome, endereco, numero_balanca)
                 self.cancelar_edicao()
@@ -528,7 +527,7 @@ class FornecedoresUI(QWidget):
             except Exception as e:
                 QMessageBox.critical(self, 'Erro', str(e))
         else:
-            QMessageBox.warning(self, 'Campos obrigatórios', 'Preencha todos os campos.')
+            QMessageBox.warning(self, 'Campos obrigatórios', 'Preencha o nome e o número da balança.')
 
     def atualizar_fornecedor_combo(self):
         index = self.combo_fornecedores.currentIndex()
@@ -538,7 +537,7 @@ class FornecedoresUI(QWidget):
             endereco = self.input_endereco.text().strip()
             numero_balanca = self.input_numero_balanca.text().strip()
 
-            if nome and endereco and numero_balanca:
+            if nome and numero_balanca:
                 try:
                     self.db.atualizar_fornecedor(fornecedor_id, nome, endereco, numero_balanca)
                     self.cancelar_edicao()
@@ -548,7 +547,8 @@ class FornecedoresUI(QWidget):
                 except Exception as e:
                     QMessageBox.critical(self, 'Erro', str(e))
             else:
-                QMessageBox.warning(self, 'Campos obrigatórios', 'Preencha todos os campos para atualizar.')
+                QMessageBox.warning(self, 'Campos obrigatórios',
+                                    'Preencha o nome e o número da balança para atualizar.')
 
     def excluir_fornecedor_combo(self):
         index = self.combo_fornecedores.currentIndex()
