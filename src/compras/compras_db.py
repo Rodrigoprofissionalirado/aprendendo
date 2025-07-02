@@ -111,25 +111,28 @@ def adicionar_compra(
 
     return compra_id
 
-def atualizar_compra(compra_id, fornecedor_id, data_compra, valor_abatimento, itens_compra, status):
+def atualizar_compra(
+    compra_id, fornecedor_id, data_compra, valor_abatimento, itens_compra, status, considerar_no_saldo_movimentacao=True
+):
     with get_cursor(commit=True) as cursor:
-        cursor.execute("""
+        cursor.execute(
+            """
             UPDATE compras
             SET fornecedor_id=%s,
                 data_compra=%s,
                 valor_abatimento=%s,
-                status=%s
-            WHERE id = %s
-        """, (fornecedor_id, data_compra, valor_abatimento, status, compra_id))
-
+                status=%s,
+                considerar_no_saldo_movimentacao=%s
+            WHERE id=%s
+            """,
+            (fornecedor_id, data_compra, valor_abatimento, status, considerar_no_saldo_movimentacao, compra_id)
+        )
         cursor.execute("DELETE FROM itens_compra WHERE compra_id = %s", (compra_id,))
-
         for item in itens_compra:
             cursor.execute(
                 "INSERT INTO itens_compra (compra_id, produto_id, quantidade, preco_unitario) VALUES (%s, %s, %s, %s)",
                 (compra_id, item['produto_id'], item['quantidade'], item['preco'])
             )
-
         cursor.execute("""
             UPDATE compras
             SET total = (SELECT SUM(quantidade * preco_unitario)
