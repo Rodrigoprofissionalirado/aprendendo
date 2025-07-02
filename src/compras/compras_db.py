@@ -3,7 +3,7 @@ from decimal import Decimal
 
 def listar_fornecedores():
     with get_cursor() as cursor:
-        cursor.execute("SELECT id, nome FROM fornecedores ORDER BY nome")
+        cursor.execute("SELECT id, nome, fornecedores_numerobalanca FROM fornecedores ORDER BY nome")
         return cursor.fetchall()
 
 def listar_contas_do_fornecedor(fornecedor_id):
@@ -39,18 +39,18 @@ def obter_produto(produto_id):
         cursor.execute("SELECT id, nome, preco_base FROM produtos WHERE id = %s", (produto_id,))
         return cursor.fetchone()
 
-def listar_compras(status=None, status_not=None, data_de=None, data_ate=None, fornecedor_id=None):
+def listar_compras(status=None, status_not=None, data_de=None, data_ate=None, fornecedor_id=None, origem=None):
     query = """
-        SELECT c.id, c.data_compra AS data, c.valor_abatimento, c.total, f.nome AS fornecedor_nome, c.status
+        SELECT c.id, c.data_compra AS data, c.valor_abatimento, c.total, f.nome AS fornecedor_nome, c.status, c.origem
         FROM compras c
         JOIN fornecedores f ON c.fornecedor_id = f.id
         WHERE 1=1
     """
     params = []
-    if status:
+    if status is not None:
         query += " AND c.status = %s"
         params.append(status)
-    if status_not:
+    if status_not is not None:
         query += " AND c.status != %s"
         params.append(status_not)
     if data_de:
@@ -60,19 +60,29 @@ def listar_compras(status=None, status_not=None, data_de=None, data_ate=None, fo
         query += " AND c.data_compra <= %s"
         params.append(data_ate)
     if fornecedor_id:
-        query += " AND f.id = %s"
+        query += " AND c.fornecedor_id = %s"
         params.append(fornecedor_id)
-    query += " ORDER BY c.data_compra DESC"
+    if origem is not None:
+        query += " AND c.origem = %s"
+        params.append(origem)
+    query += " ORDER BY c.data_compra DESC, c.id DESC"
 
     with get_cursor() as cursor:
         cursor.execute(query, params)
         return cursor.fetchall()
 
-def adicionar_compra(fornecedor_id, data_compra, valor_abatimento, itens_compra, status):
+def adicionar_compra(
+    fornecedor_id, data_compra, valor_abatimento, itens_compra, status,
+    origem='compras', considerar_no_saldo_movimentacao=True
+):
     with get_cursor(commit=True) as cursor:
         cursor.execute(
-            "INSERT INTO compras (fornecedor_id, data_compra, valor_abatimento, status) VALUES (%s, %s, %s, %s)",
-            (fornecedor_id, data_compra, valor_abatimento, status)
+            """
+            INSERT INTO compras 
+                (fornecedor_id, data_compra, valor_abatimento, status, origem, considerar_no_saldo_movimentacao)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            """,
+            (fornecedor_id, data_compra, valor_abatimento, status, origem, considerar_no_saldo_movimentacao)
         )
         compra_id = cursor.lastrowid
 
@@ -390,7 +400,7 @@ def obter_itens_e_lancamentos_da_compra(compra_id):
         """, (compra_id,))
         adiantamento_row = cursor.fetchone()
 
-    valor_abatimento = float(compra["valor_abatimento"]) if compra else 0.0
+    valor_abatimento = float(compra.get("valor_abatimento") or 0.0) if compra else 0.0
     valor_adiantamento = float(adiantamento_row["valor_adiantamento"]) if adiantamento_row else 0.0
     return itens, valor_abatimento, valor_adiantamento
 

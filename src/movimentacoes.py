@@ -17,6 +17,14 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from PIL import Image, ImageDraw, ImageFont
 from datetime import datetime
+from compras.compras_db import (
+    listar_produtos,
+    listar_itens_compra,
+    obter_primeira_categoria_do_fornecedor,
+    listar_fornecedores,
+    listar_compras,
+    obter_ajuste_fixo
+)
 
 def decimal_para_str_brasil(valor, locale=None):
     # Converte Decimal para string formatada no padrão brasileiro
@@ -110,16 +118,12 @@ class MovimentacaoTabUI(QWidget):
                 cat = cursor.fetchone()
             return cat
 
-    def listar_produtos(self):
-        with get_cursor() as cursor:
-            cursor.execute("SELECT id, nome, preco_base FROM produtos ORDER BY nome")
-            return cursor.fetchall()
-
     def listar_movimentacoes(self, data_de=None, data_ate=None):
         query = """
             SELECT c.id, c.data_compra AS data, c.tipo, c.direcao, c.descricao, c.total AS valor_operacao
             FROM compras c
             WHERE c.fornecedor_id = %s
+              AND c.considerar_no_saldo_movimentacao=True
         """
         params = [self.fornecedor['id']]
         if data_de:
@@ -134,14 +138,7 @@ class MovimentacaoTabUI(QWidget):
             return cursor.fetchall()
 
     def listar_itens_movimentacao(self, compra_id):
-        with get_cursor() as cursor:
-            cursor.execute("""
-                SELECT i.id, p.nome AS produto_nome, i.produto_id, i.quantidade, i.preco_unitario
-                FROM itens_compra i
-                JOIN produtos p ON i.produto_id = p.id
-                WHERE i.compra_id = %s
-            """, (compra_id,))
-            return cursor.fetchall()
+        return listar_itens_compra(compra_id)
 
     def obter_saldo_total(self):
         saldo = Decimal("0.00")
@@ -150,6 +147,7 @@ class MovimentacaoTabUI(QWidget):
                 SELECT tipo, direcao, total
                 FROM compras
                 WHERE fornecedor_id = %s
+                  AND considerar_no_saldo_movimentacao = TRUE
             """, (self.fornecedor['id'],))
             compras = cursor.fetchall()
             for mov in compras:
@@ -166,6 +164,7 @@ class MovimentacaoTabUI(QWidget):
                     elif direcao == "saida":
                         saldo -= valor_op
         return saldo
+
 
     def qdate_to_pydate(qdate):
         if hasattr(qdate, 'toPython'):
@@ -1068,13 +1067,7 @@ class MovimentacaoTabUI(QWidget):
     def carregar_produtos(self):
         self.combo_produto.clear()
         self.combo_produto.setEditable(True)
-        with get_cursor() as cursor:
-            cursor.execute("""
-                SELECT p.id, p.nome, p.preco_base
-                FROM produtos p
-                ORDER BY p.nome
-            """)
-            produtos = cursor.fetchall()
+        produtos = listar_produtos()
         self.produtos = produtos
         self.combo_produto.addItem("", None)  # Insere um item vazio no topo, opcional
         for p in produtos:
@@ -1094,17 +1087,7 @@ class MovimentacaoTabUI(QWidget):
         if not categoria_id:
             QMessageBox.warning(self, "Erro", "Selecione uma categoria.")
             return
-        with get_cursor() as cursor:
-            cursor.execute(
-                """
-                SELECT ajuste_fixo
-                FROM ajustes_fixos_produto_fornecedor_categoria
-                WHERE produto_id = %s AND categoria_id = %s
-                """,
-                (produto_id, categoria_id)
-            )
-            ajuste_row = cursor.fetchone()
-        ajuste_fixo = Decimal(str(ajuste_row["ajuste_fixo"])) if ajuste_row and "ajuste_fixo" in ajuste_row else Decimal("0.00")
+        ajuste_fixo = obter_ajuste_fixo(produto_id, categoria_id)
         preco_base = produto["preco_base"]
         preco_unitario = Decimal(str(preco_base)) + ajuste_fixo
         total = quantidade * preco_unitario
@@ -1116,8 +1099,8 @@ class MovimentacaoTabUI(QWidget):
             "total": total
         })
         self.atualizar_tabela_itens_adicionados()
-        self.combo_produto.setCurrentIndex(0)
-        self.input_quantidade.setValue(1)
+        self.combo_produto.setCurrentIndex(-1)
+        self.input_quantidade.clear()
 
     def atualizar_tabela_itens_adicionados(self):
         self.tabela_itens_adicionados.blockSignals(True)
@@ -1180,8 +1163,8 @@ class MovimentacaoTabUI(QWidget):
             try:
                 with get_cursor(commit=True) as cursor:
                     cursor.execute(
-                        "UPDATE compras SET data_compra=%s, tipo=%s, direcao=%s, descricao=%s, valor_abatimento=%s, total=%s WHERE id=%s",
-                        (data, tipo, direcao, descricao, valor_abatimento, valor_operacao, compra_id)
+                        "UPDATE compras SET data_compra=%s, tipo=%s, direcao=%s, descricao=%s, valor_abatimento=%s, total=%s, origem=%s, considerar_no_saldo_movimentacao=%s WHERE id=%s",
+                        (data, tipo, direcao, descricao, valor_abatimento, valor_operacao, 'movimentacao', True, compra_id)
                     )
                     cursor.execute("DELETE FROM itens_compra WHERE compra_id = %s", (compra_id,))
                     if tipo != "transação":
@@ -1197,8 +1180,8 @@ class MovimentacaoTabUI(QWidget):
         else:
             with get_cursor(commit=True) as cursor:
                 cursor.execute(
-                    "INSERT INTO compras (fornecedor_id, data_compra, tipo, direcao, descricao, valor_abatimento, total, status) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
-                    (self.fornecedor['id'], data, tipo, direcao, descricao, valor_abatimento, valor_operacao, 'Criada')
+                    "INSERT INTO compras (fornecedor_id, data_compra, tipo, direcao, descricao, valor_abatimento, total, status, origem, considerar_no_saldo_movimentacao) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                    (self.fornecedor['id'], data, tipo, direcao, descricao, valor_abatimento, valor_operacao, 'Criada', 'movimentacao', True)
                 )
                 compra_id = cursor.lastrowid
                 if tipo != "transação":
@@ -1264,9 +1247,7 @@ class MovimentacoesUI(QWidget):
         self.init_ui()
 
     def listar_fornecedores(self):
-        with get_cursor() as cursor:
-            cursor.execute("SELECT id, nome, fornecedores_numerobalanca FROM fornecedores ORDER BY nome")
-            return cursor.fetchall()
+        return listar_fornecedores()
 
     def selecionar_fornecedor_por_numero_balanca(self, campo_input: QLineEdit, combo_fornecedor: QComboBox):
         numero = campo_input.text().strip()

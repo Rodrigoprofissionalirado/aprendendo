@@ -2,7 +2,7 @@ import sys
 from PySide6.QtWidgets import (
     QApplication, QWidget, QLabel, QPushButton, QVBoxLayout,
     QHBoxLayout, QGridLayout, QComboBox, QDateEdit, QLineEdit,
-    QTableWidget, QTableWidgetItem, QMessageBox, QTabWidget, QDialog
+    QTableWidget, QTableWidgetItem, QMessageBox, QTabWidget, QDialog, QCheckBox
 )
 from PySide6.QtGui import QIntValidator
 from PySide6.QtCore import Qt, QTimer, QDate, QLocale, QEvent
@@ -207,6 +207,11 @@ class ComprasUI(QWidget):
             self.combo_status.addItem(s)
         layout_dados.addWidget(QLabel("Status"), 6, 0)
         layout_dados.addWidget(self.combo_status, 6, 1)
+
+        # Checkbox para dizer se considera ou não essa compra no saldo
+        self.checkbox_considerar_no_saldo = QCheckBox("Considerar esta compra no saldo geral de movimentações")
+        self.checkbox_considerar_no_saldo.setChecked(True)
+        layout_dados.addWidget(self.checkbox_considerar_no_saldo, 7, 0, 1, 2)
 
         layout_entrada.addLayout(layout_dados)
 
@@ -471,14 +476,16 @@ class ComprasUI(QWidget):
             status_not="Concluída",
             data_de=data_de,
             data_ate=data_ate,
-            fornecedor_id=fornecedor_id
+            fornecedor_id=fornecedor_id,
+            origem='compras'
         )
         # Concluídas: só concluída
         compras_concluidas = listar_compras(
             status="Concluída",
             data_de=data_de,
             data_ate=data_ate,
-            fornecedor_id=fornecedor_id
+            fornecedor_id=fornecedor_id,
+            origem = 'compras'
         )
         self.preencher_tabela_compras(self.tabela_compras_aberto, compras_aberto)
         self.preencher_tabela_compras(self.tabela_compras_concluidas, compras_concluidas)
@@ -680,33 +687,29 @@ class ComprasUI(QWidget):
         if not self.itens_compra:
             QMessageBox.warning(self, "Erro", "Adicione pelo menos um item antes de finalizar.")
             return
-
         fornecedor_id = self.combo_fornecedor.currentData()
         data_compra = self.input_data.date().toPython()
         try:
-            valor_lancamento = Decimal(self.input_valor_lancamento.text().replace(',',
-                                                                                  '.')) if self.input_valor_lancamento.text() else Decimal(
-                '0.00')
+            valor_lancamento = Decimal(self.input_valor_lancamento.text().replace(',', '.')) if self.input_valor_lancamento.text() else Decimal('0.00')
         except (ValueError, InvalidOperation):
             QMessageBox.warning(self, "Erro", "Valor de abatimento/adiantamento inválido.")
             return
-
         tipo_lancamento = self.combo_tipo_lancamento.currentData()
         status = self.combo_status.currentText()
-
         valor_abatimento = valor_lancamento if tipo_lancamento == "abatimento" else Decimal('0.00')
         valor_inclusao = valor_lancamento if tipo_lancamento == "adiantamento" else Decimal('0.00')
+        considerar_no_saldo = self.checkbox_considerar_no_saldo.isChecked()  # <--- NOVO
 
         if self.compra_edit_id is None:
             compra_id = adicionar_compra(
-                fornecedor_id, data_compra, valor_abatimento, self.itens_compra, status
+                fornecedor_id, data_compra, valor_abatimento, self.itens_compra, status,
+                origem='compras', considerar_no_saldo_movimentacao=considerar_no_saldo  # <--- NOVO
             )
             if tipo_lancamento == "adiantamento" and valor_inclusao > 0:
                 inserir_adiantamento(fornecedor_id, compra_id, data_compra, valor_inclusao)
             QMessageBox.information(self, "Sucesso", "Compra cadastrada com sucesso.")
         else:
             remover_lancamentos_antigos(self.compra_edit_id)
-            # ... atualização de valor_abatimento pode ser função de DB...
             if tipo_lancamento == "adiantamento" and valor_inclusao > 0:
                 inserir_adiantamento(fornecedor_id, self.compra_edit_id, data_compra, valor_inclusao)
             elif tipo_lancamento == "abatimento" and valor_abatimento > 0:
@@ -717,7 +720,8 @@ class ComprasUI(QWidget):
                 data_compra,
                 valor_abatimento,
                 self.itens_compra,
-                status
+                status,
+                considerar_no_saldo_movimentacao=considerar_no_saldo  # <--- NOVO
             )
             QMessageBox.information(self, "Sucesso", "Compra editada com sucesso.")
 
