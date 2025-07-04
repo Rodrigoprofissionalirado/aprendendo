@@ -653,7 +653,7 @@ class MovimentacaoTabUI(QWidget):
         saldo_por_id = self.obter_saldos_acumulados(fornecedor_id, data_de, data_ate)
 
         # --- OTIMIZAÇÃO: Busque todos os itens de uma vez só ---
-        mov_ids = [mov['id'] for mov in movimentacoes]
+        mov_ids = [mov['id'] for mov in compras]
         itens_por_mov = {mid: [] for mid in mov_ids}
         if mov_ids:
             with get_cursor() as cursor:
