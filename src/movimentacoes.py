@@ -167,16 +167,6 @@ class MovimentacaoTabUI(QWidget):
                         saldo -= valor_op
         return saldo
 
-
-    def qdate_to_pydate(qdate):
-        if hasattr(qdate, 'toPython'):
-            return qdate.toPython()
-        elif hasattr(qdate, 'toPyDate'):
-            return qdate.toPyDate()
-        else:
-            # fallback: converter manualmente
-            return datetime(qdate.year(), qdate.month(), qdate.day()).date()
-
     def editar_movimentacao_finalizada(self):
         linha = self.tabela_movimentacoes.currentRow()
         if linha < 0:
@@ -211,9 +201,12 @@ class MovimentacaoTabUI(QWidget):
             QMessageBox.warning(self, "Erro", "Movimentação não encontrada.")
             return
 
+        # Corrigido: limpar apenas os campos de edição, não a compra selecionada!
         self.limpar_campos()
-        self.limpar_itens()
+        # Corrigido: zera apenas a lista de itens de movimentação
+        self.itens_movimentacao = []
 
+        # Preenche campos
         self.input_data.setDate(QDate(compra['data_compra']))
 
         tipo_mov = remove_acento(compra['tipo'])
@@ -229,6 +222,7 @@ class MovimentacaoTabUI(QWidget):
             idx_direcao = self.combo_direcao.findText((compra['direcao'] or "").capitalize())
             self.combo_direcao.setCurrentIndex(idx_direcao if idx_direcao >= 0 else 0)
             self.input_valor_operacao.setText(str(compra['total']))
+            # Corrigido: não popula itens para transação
             self.itens_movimentacao = []
             self.atualizar_tabela_itens_adicionados()
             self.input_valor_abatimento.clear()
@@ -244,61 +238,27 @@ class MovimentacaoTabUI(QWidget):
                     "total": item['total']
                 })
             self.atualizar_tabela_itens_adicionados()
-            self.input_valor_abatimento.setText(str(compra['valor_abatimento'] or ""))
-        self.input_descricao.setText(str(compra['descricao']) if compra['descricao'] else "")
-        self.movimentacao_edit_id = compra_id
-
-        tipo_mov = remove_acento(compra['tipo'])
-        idx_tipo = -1
-        for i in range(self.combo_tipo.count()):
-            if remove_acento(self.combo_tipo.itemText(i)) == tipo_mov:
-                idx_tipo = i
-                break
-        self.combo_tipo.setCurrentIndex(idx_tipo if idx_tipo >= 0 else 0)
-        self.tipo_changed()
-
-        # Agora, só então, preencha os campos específicos:
-        if compra['tipo'].lower() == "transação":
-            # Direção
-            idx_direcao = self.combo_direcao.findText(compra['direcao'].capitalize())
-            self.combo_direcao.setCurrentIndex(idx_direcao if idx_direcao >= 0 else 0)
-            # Valor da operação
-            self.input_valor_operacao.setText(str(compra['valor_operacao']))
-            # Limpa itens (não há itens em transação)
-            self.itens_compra = []
-            self.atualizar_tabela_itens_adicionados()
-            self.input_valor_abatimento.clear()
-        else:
-            self.input_valor_operacao.setText("")
-            # Descrição e itens
-            self.itens_compra = []
-            for item in itens:
-                self.itens_movimentacao.append({
-                    "produto_id": item['produto_id'],
-                    "nome": item['produto_nome'],
-                    "quantidade": item['quantidade'],
-                    "preco": item['preco_unitario'],
-                    "total": item['total']
-                })
-            self.atualizar_tabela_itens_adicionados()
-            # Abatimento: tente encontrar se há uma transação de entrada de abatimento para esta movimentação
-            with get_cursor() as cursor:
-                cursor.execute("""
-                               SELECT valor_operacao
-                               FROM compras
-                               WHERE tipo = 'transação'
-                                 AND direcao = 'entrada'
-                                 AND descricao LIKE %s
-                               """, (f"Abatimento automático referente à movimentação {compra_id}",))
-                abat = cursor.fetchone()
-            if abat:
-                self.input_valor_abatimento.setText(str(abat['valor_operacao']))
+            # Primeiro tenta puxar o valor do campo valor_abatimento da compra
+            valor_abatimento = compra.get('valor_abatimento')
+            if valor_abatimento is not None and float(valor_abatimento) > 0:
+                self.input_valor_abatimento.setText(str(valor_abatimento))
             else:
-                self.input_valor_abatimento.setText("")
+                # Se não houver, tenta procurar por transação automática associada
+                with get_cursor() as cursor:
+                    cursor.execute("""
+                                   SELECT total
+                                   FROM compras
+                                   WHERE tipo = 'transação'
+                                     AND direcao = 'entrada'
+                                     AND descricao LIKE %s
+                                   """, (f"Abatimento automático referente à movimentação {compra_id}",))
+                    abat = cursor.fetchone()
+                if abat:
+                    self.input_valor_abatimento.setText(str(abat['total']))
+                else:
+                    self.input_valor_abatimento.setText("")
 
-        # Descrição (sempre)
         self.input_descricao.setText(str(compra['descricao']) if compra['descricao'] else "")
-
         self.movimentacao_edit_id = compra_id
 
     def excluir_movimentacao_finalizada(self):
@@ -333,6 +293,8 @@ class MovimentacaoTabUI(QWidget):
             QMessageBox.critical(self, "Erro", f"Erro ao excluir movimentação: {e}")
 
     def acao_cancelar(self):
+        # Sempre sai do modo edição e limpa tudo, pronto para incluir nova movimentação
+        self.movimentacao_edit_id = None
         self.limpar_campos()
         self.limpar_itens()
         self.carregar_produtos()
@@ -362,20 +324,38 @@ class MovimentacaoTabUI(QWidget):
         try:
             if column == 1:  # Quantidade
                 nova_qtd = int(self.tabela_itens_adicionados.item(row, 1).text())
-                self.itens_compra[row]['quantidade'] = nova_qtd
+                if nova_qtd <= 0:
+                    raise ValueError("Quantidade deve ser maior que zero.")
+                self.itens_movimentacao[row]['quantidade'] = nova_qtd
             elif column == 2:  # Preço unitário
                 novo_preco_str = self.tabela_itens_adicionados.item(row, 2).text()
                 novo_preco = str_brasil_para_decimal(novo_preco_str)
-                self.itens_compra[row]['preco'] = novo_preco
+                if novo_preco < 0:
+                    raise ValueError("Preço não pode ser negativo.")
+                self.itens_movimentacao[row]['preco'] = novo_preco
+            else:
+                return  # Não faz nada para outras colunas
 
-            qtd = self.itens_compra[row]['quantidade']
-            preco = self.itens_compra[row]['preco']
-            self.itens_compra[row]['total'] = Decimal(str(qtd)) * preco
+            qtd = self.itens_movimentacao[row]['quantidade']
+            preco = self.itens_movimentacao[row]['preco']
+            self.itens_movimentacao[row]['total'] = Decimal(str(qtd)) * preco
 
-            self.atualizar_tabela_itens_adicionados()
+            # Atualiza o campo "Total" na tabela
+            total_formatado = decimal_para_str_brasil(self.itens_movimentacao[row]['total'], self.locale)
+            self.tabela_itens_adicionados.blockSignals(True)
+            self.tabela_itens_adicionados.setItem(row, 3, QTableWidgetItem(total_formatado))
+            self.tabela_itens_adicionados.blockSignals(False)
 
+            self.atualizar_total_movimentacao()
         except Exception as e:
             QMessageBox.warning(self, "Erro", f"Valor inválido: {e}")
+            # Restaurar valor anterior
+            self.tabela_itens_adicionados.blockSignals(True)
+            self.tabela_itens_adicionados.setItem(row, 1,
+                                                  QTableWidgetItem(str(self.itens_movimentacao[row]['quantidade'])))
+            preco_formatado = decimal_para_str_brasil(self.itens_movimentacao[row]['preco'], self.locale)
+            self.tabela_itens_adicionados.setItem(row, 2, QTableWidgetItem(preco_formatado))
+            self.tabela_itens_adicionados.blockSignals(False)
 
     def obter_saldos_acumulados(self, fornecedor_id, data_de, data_ate):
         with get_cursor() as cursor:
@@ -728,7 +708,7 @@ class MovimentacaoTabUI(QWidget):
                 draw.text((margem, y), "Produto", fill="black", font=fonte_menor)
                 draw.text((margem + 500, y), "Qtd", fill="black", font=fonte_menor)
                 draw.text((margem + 650, y), "Unitário", fill="black", font=fonte_menor)
-                draw.text((margem + 8000, y), "Total", fill="black", font=fonte_menor)
+                draw.text((margem + 800, y), "Total", fill="black", font=fonte_menor)
                 y += 5
                 draw.line((margem, y + 20, largura_img - margem, y + 20), fill="black", width=1)
                 y += 22
@@ -893,7 +873,6 @@ class MovimentacaoTabUI(QWidget):
         self.input_valor_operacao.setVisible(False)
         self.label_valor_operacao.setVisible(False)
 
-        # Produtos (só para compra/venda) - sem campo de preço unitário editável!
         self.layout_produto = QGridLayout()
         self.combo_produto = QComboBox()
         self.combo_produto.setEditable(True)  # Permitir escrever o nome
@@ -958,7 +937,7 @@ class MovimentacaoTabUI(QWidget):
 
         layout_esq.addLayout(form_grid)
         layout_esq.addStretch()
-        layout_root.addLayout(layout_esq, 1)
+        layout_root.addLayout(layout_esq, 3)
 
         # ----------- MEIO: Tabela movimentações (sem coluna de fornecedor) -----------
         layout_meio = QVBoxLayout()
@@ -987,7 +966,7 @@ class MovimentacaoTabUI(QWidget):
         self.tabela_movimentacoes.cellClicked.connect(self.mostrar_itens_movimentacao)
         self.tabela_movimentacoes.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         layout_meio.addWidget(self.tabela_movimentacoes)
-        layout_root.addLayout(layout_meio, 1)
+        layout_root.addLayout(layout_meio, 5)
 
         # ----------- DIREITA: Tabela itens da movimentação selecionada -----------
         layout_dir = QVBoxLayout()
@@ -998,7 +977,7 @@ class MovimentacaoTabUI(QWidget):
         self.tabela_itens.setEditTriggers(QTableWidget.NoEditTriggers)
         self.tabela_itens.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         layout_dir.addWidget(self.tabela_itens)
-        layout_root.addLayout(layout_dir, 1)
+        layout_root.addLayout(layout_dir, 3)
         # Botões de exportação abaixo do layout da direita
         btn_exportar_pdf = QPushButton("Exportar Movimentações em PDF")
         btn_exportar_pdf.clicked.connect(self.exportar_movimentacoes_pdf)
@@ -1095,12 +1074,25 @@ class MovimentacaoTabUI(QWidget):
         try:
             self.tabela_itens_adicionados.setRowCount(len(self.itens_movimentacao))
             for i, item in enumerate(self.itens_movimentacao):
-                self.tabela_itens_adicionados.setItem(i, 0, QTableWidgetItem(item["nome"]))
-                self.tabela_itens_adicionados.setItem(i, 1, QTableWidgetItem(str(item["quantidade"])))
-                preco_formatado = decimal_para_str_brasil(item['preco'], self.locale)
-                total_formatado = decimal_para_str_brasil(item['total'], self.locale)
-                self.tabela_itens_adicionados.setItem(i, 2, QTableWidgetItem(preco_formatado))
-                self.tabela_itens_adicionados.setItem(i, 3, QTableWidgetItem(total_formatado))
+                # Produto (não editável)
+                nome_item = QTableWidgetItem(item["nome"])
+                nome_item.setFlags(nome_item.flags() & ~Qt.ItemIsEditable)
+                self.tabela_itens_adicionados.setItem(i, 0, nome_item)
+
+                # Quantidade (editável)
+                qtd_item = QTableWidgetItem(str(item["quantidade"]))
+                qtd_item.setFlags(qtd_item.flags() | Qt.ItemIsEditable)
+                self.tabela_itens_adicionados.setItem(i, 1, qtd_item)
+
+                # Preço unitário (editável)
+                preco_item = QTableWidgetItem(decimal_para_str_brasil(item['preco'], self.locale))
+                preco_item.setFlags(preco_item.flags() | Qt.ItemIsEditable)
+                self.tabela_itens_adicionados.setItem(i, 2, preco_item)
+
+                # Total (não editável)
+                total_item = QTableWidgetItem(decimal_para_str_brasil(item['total'], self.locale))
+                total_item.setFlags(total_item.flags() & ~Qt.ItemIsEditable)
+                self.tabela_itens_adicionados.setItem(i, 3, total_item)
         finally:
             self.tabela_itens_adicionados.blockSignals(False)
             self.atualizar_total_movimentacao()
@@ -1126,11 +1118,11 @@ class MovimentacaoTabUI(QWidget):
 
     def finalizar_movimentacao(self):
         tipo = self.combo_tipo.currentText().lower()
-        data = self.input_data.date().toPython()
-        if not data.isValid():
+        if not self.input_data.date().isValid():
             QMessageBox.warning(self, "Data inválida", "A data selecionada não é válida.")
             self.input_data.setFocus()
             return
+        data = self.input_data.date().toPython()
         direcao = self.combo_direcao.currentText().lower() if tipo == "transação" else None
         descricao = self.input_descricao.text().strip()
         valor_abatimento = None
@@ -1322,8 +1314,7 @@ class MovimentacoesUI(QWidget):
         super().showEvent(event)
         fornecedor_id = self.combo_fornecedor.currentData()
         if fornecedor_id is not None:
-            self.carregar_categorias_para_fornecedor(fornecedor_id)
-            self.atualizar_saldo_fornecedor()
+            self.atualiza_saldo_total()
             self.atualizar_lista_produtos()
 
 if __name__ == "__main__":
