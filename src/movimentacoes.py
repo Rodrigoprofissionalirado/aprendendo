@@ -512,7 +512,7 @@ class MovimentacaoTabUI(QWidget):
             tipo = mov['tipo'].capitalize()
             direcao = (mov.get('direcao') or "").capitalize()
             descricao = mov['descricao'] or ""
-            valor_operacao = float(mov['total'] or 0)
+            valor_operacao = float(mov['valor_operacao'] or 0)
             saldo_atual = saldo_por_id.get(mov['id'], 0)
             y = y_base
 

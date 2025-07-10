@@ -15,8 +15,10 @@ def obter_categoria_principal(fornecedor_id):
 
 def listar_movimentacoes(fornecedor_id, data_de=None, data_ate=None):
     query = """
-        SELECT c.id, c.data_compra AS data, c.tipo, c.direcao, c.descricao, c.total AS valor_operacao
+        SELECT c.id, c.data_compra AS data, c.tipo, c.direcao, c.descricao, c.total AS valor_operacao,
+               f.nome as fornecedor, f.fornecedores_numerobalanca
         FROM compras c
+        JOIN fornecedores f ON c.fornecedor_id = f.id
         WHERE c.fornecedor_id = %s
           AND c.considerar_no_saldo_movimentacao=True
     """
