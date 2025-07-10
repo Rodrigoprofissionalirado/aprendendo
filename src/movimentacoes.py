@@ -7,7 +7,7 @@ from PySide6.QtWidgets import (
     QTableWidgetItem, QMessageBox, QSizePolicy, QTabWidget, QDialog
 )
 from PySide6.QtGui import QIntValidator
-from PySide6.QtCore import Qt, QDate, QLocale, QEvent
+from PySide6.QtCore import Qt, QDate, QLocale, QEvent, QTimer
 from decimal import Decimal, InvalidOperation
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
@@ -140,24 +140,33 @@ class MovimentacaoTabUI(QWidget):
         self.limpar_campos()
         self.itens_movimentacao = []
 
+        # Preenche a data
         self.input_data.setDate(QDate(compra['data_compra']))
 
+        # Preenche o tipo e garante visibilidade dos campos
         tipo_mov = remove_acento(compra['tipo'])
         idx_tipo = -1
         for i in range(self.combo_tipo.count()):
             if remove_acento(self.combo_tipo.itemText(i)) == tipo_mov:
                 idx_tipo = i
                 break
+        # Defina o tipo (bloqueando sinais)
+        self.combo_tipo.blockSignals(True)
         self.combo_tipo.setCurrentIndex(idx_tipo if idx_tipo >= 0 else 0)
-        self.tipo_changed()
+        self.combo_tipo.blockSignals(False)
+        self.tipo_changed()  # agora os widgets corretos estão visíveis
 
-        if compra['tipo'].lower() == "transação":
-            idx_direcao = self.combo_direcao.findText((compra['direcao'] or "").capitalize())
+        if remove_acento(compra['tipo']).lower() == "transacao":
+            direcao_db = remove_acento(compra['direcao'] or "").capitalize()
+            idx_direcao = -1
+            for i in range(self.combo_direcao.count()):
+                item = self.combo_direcao.itemText(i)
+                if remove_acento(item).capitalize() == direcao_db:
+                    idx_direcao = i
+                    break
             self.combo_direcao.setCurrentIndex(idx_direcao if idx_direcao >= 0 else 0)
-            self.input_valor_operacao.setText(str(compra['total']))
-            self.itens_movimentacao = []
-            self.atualizar_tabela_itens_adicionados()
-            self.input_valor_abatimento.clear()
+            valor_str = decimal_para_str_brasil(compra['total'], self.locale)
+            self.input_valor_operacao.setText(valor_str)
         else:
             self.input_valor_operacao.setText("")
             self.itens_movimentacao = []
@@ -1004,7 +1013,7 @@ class MovimentacaoTabUI(QWidget):
             except Exception as e:
                 QMessageBox.critical(self, "Erro", f"Erro ao cadastrar movimentação: {e}")
         self.limpar_itens()
-        self.input_valor_abatimento.clear()
+        self.limpar_campos()
         self.atualizar_tabela()
         self.atualiza_saldo_total()
 

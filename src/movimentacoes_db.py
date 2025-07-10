@@ -116,7 +116,7 @@ def obter_abatimento_automatico(compra_id):
 def obter_compra_por_id(compra_id):
     with get_cursor() as cursor:
         cursor.execute("""
-            SELECT fornecedor_id, data_compra, tipo, direcao, descricao, total, valor_abatimento
+            SELECT id, fornecedor_id, data_compra, tipo, direcao, descricao, total, valor_abatimento
             FROM compras
             WHERE id = %s
         """, (compra_id,))
