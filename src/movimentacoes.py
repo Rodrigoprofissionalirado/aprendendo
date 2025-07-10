@@ -193,10 +193,11 @@ class MovimentacaoTabUI(QWidget):
         self.movimentacao_edit_id = compra_id
 
     def excluir_movimentacao_finalizada(self):
-        linha = self.tabela_movimentacoes.currentRow()
-        if linha < 0:
+        selected_ranges = self.tabela_movimentacoes.selectedRanges()
+        if not selected_ranges:
             QMessageBox.information(self, "Excluir Movimentação", "Selecione uma movimentação para excluir.")
             return
+        linha = selected_ranges[0].topRow()
 
         compra_id_item = self.tabela_movimentacoes.item(linha, 0)
         if compra_id_item is None:
