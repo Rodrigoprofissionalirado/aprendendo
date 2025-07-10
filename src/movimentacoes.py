@@ -7,9 +7,8 @@ from PySide6.QtWidgets import (
     QTableWidgetItem, QMessageBox, QSizePolicy, QTabWidget, QDialog
 )
 from PySide6.QtGui import QIntValidator
-from PySide6.QtCore import Qt, QDate, QLocale, QEvent
+from PySide6.QtCore import Qt, QDate, QLocale, QEvent, QTimer
 from decimal import Decimal, InvalidOperation
-from db_context import get_cursor
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
 from reportlab.lib.units import mm
@@ -21,10 +20,23 @@ from datetime import datetime
 from compras.compras_db import (
     listar_produtos,
     listar_itens_compra,
-    obter_primeira_categoria_do_fornecedor,
     listar_fornecedores,
     listar_compras,
     obter_ajuste_fixo
+)
+from movimentacoes_db import (
+    listar_movimentacoes,
+    obter_categoria_principal,
+    obter_saldo_total,
+    obter_saldos_acumulados,
+    listar_itens_movimentacao,
+    obter_abatimento_automatico,
+    obter_compra_por_id,
+    excluir_movimentacao,
+    atualizar_movimentacao,
+    inserir_movimentacao,
+    inserir_item_compra,
+    buscar_fornecedor_id_por_numero_balanca
 )
 
 def decimal_para_str_brasil(valor, locale=None):
@@ -108,65 +120,6 @@ class MovimentacaoTabUI(QWidget):
         self.carregar_produtos()
         self.atualizar_tabela()
 
-    def obter_categoria_principal(self):
-        with get_cursor() as cursor:
-            cursor.execute(
-                "SELECT id, nome FROM categorias_fornecedor_por_fornecedor WHERE fornecedor_id = %s ORDER BY id ASC LIMIT 1",
-                (self.fornecedor['id'],)
-            )
-            cat = cursor.fetchone()
-            if not cat:
-                cursor.execute("SELECT id, nome FROM categorias_fornecedor_por_fornecedor WHERE nome = %s LIMIT 1", ('Padrão',))
-                cat = cursor.fetchone()
-            return cat
-
-    def listar_movimentacoes(self, data_de=None, data_ate=None):
-        query = """
-            SELECT c.id, c.data_compra AS data, c.tipo, c.direcao, c.descricao, c.total AS valor_operacao
-            FROM compras c
-            WHERE c.fornecedor_id = %s
-              AND c.considerar_no_saldo_movimentacao=True
-        """
-        params = [self.fornecedor['id']]
-        if data_de:
-            query += " AND c.data_compra >= %s"
-            params.append(data_de)
-        if data_ate:
-            query += " AND c.data_compra <= %s"
-            params.append(data_ate)
-        query += " ORDER BY c.data_compra DESC, c.id DESC"
-        with get_cursor() as cursor:
-            cursor.execute(query, params)
-            return cursor.fetchall()
-
-    def listar_itens_movimentacao(self, compra_id):
-        return listar_itens_compra(compra_id)
-
-    def obter_saldo_total(self):
-        saldo = Decimal("0.00")
-        with get_cursor() as cursor:
-            cursor.execute("""
-                SELECT tipo, direcao, total
-                FROM compras
-                WHERE fornecedor_id = %s
-                  AND considerar_no_saldo_movimentacao = TRUE
-            """, (self.fornecedor['id'],))
-            compras = cursor.fetchall()
-            for mov in compras:
-                tipo = remove_acento(mov['tipo'] or '')
-                direcao = remove_acento(mov['direcao'] or '')
-                valor_op = Decimal(mov['total']) if mov['total'] is not None else Decimal('0.00')
-                if tipo == "compra":
-                    saldo += valor_op
-                elif tipo == "venda":
-                    saldo -= valor_op
-                elif tipo == "transacao":
-                    if direcao == "entrada":
-                        saldo += valor_op
-                    elif direcao == "saida":
-                        saldo -= valor_op
-        return saldo
-
     def editar_movimentacao_finalizada(self):
         linha = self.tabela_movimentacoes.currentRow()
         if linha < 0:
@@ -177,55 +130,43 @@ class MovimentacaoTabUI(QWidget):
             return
         compra_id = int(compra_id_item.text())
 
-        with get_cursor() as cursor:
-            cursor.execute("""
-                           SELECT fornecedor_id, data_compra, tipo, direcao, descricao, total, valor_abatimento
-                           FROM compras
-                           WHERE id = %s
-                           """, (compra_id,))
-            compra = cursor.fetchone()
-
-            cursor.execute("""
-                           SELECT p.nome                            AS produto_nome,
-                                  i.produto_id,
-                                  i.quantidade,
-                                  i.preco_unitario,
-                                  (i.quantidade * i.preco_unitario) AS total
-                           FROM itens_compra i
-                                    JOIN produtos p ON i.produto_id = p.id
-                           WHERE i.compra_id = %s
-                           """, (compra_id,))
-            itens = cursor.fetchall()
+        compra = obter_compra_por_id(compra_id)
+        itens = listar_itens_movimentacao(compra_id)
 
         if compra is None:
             QMessageBox.warning(self, "Erro", "Movimentação não encontrada.")
             return
 
-        # Corrigido: limpar apenas os campos de edição, não a compra selecionada!
         self.limpar_campos()
-        # Corrigido: zera apenas a lista de itens de movimentação
         self.itens_movimentacao = []
 
-        # Preenche campos
+        # Preenche a data
         self.input_data.setDate(QDate(compra['data_compra']))
 
+        # Preenche o tipo e garante visibilidade dos campos
         tipo_mov = remove_acento(compra['tipo'])
         idx_tipo = -1
         for i in range(self.combo_tipo.count()):
             if remove_acento(self.combo_tipo.itemText(i)) == tipo_mov:
                 idx_tipo = i
                 break
+        # Defina o tipo (bloqueando sinais)
+        self.combo_tipo.blockSignals(True)
         self.combo_tipo.setCurrentIndex(idx_tipo if idx_tipo >= 0 else 0)
-        self.tipo_changed()
+        self.combo_tipo.blockSignals(False)
+        self.tipo_changed()  # agora os widgets corretos estão visíveis
 
-        if compra['tipo'].lower() == "transação":
-            idx_direcao = self.combo_direcao.findText((compra['direcao'] or "").capitalize())
+        if remove_acento(compra['tipo']).lower() == "transacao":
+            direcao_db = remove_acento(compra['direcao'] or "").capitalize()
+            idx_direcao = -1
+            for i in range(self.combo_direcao.count()):
+                item = self.combo_direcao.itemText(i)
+                if remove_acento(item).capitalize() == direcao_db:
+                    idx_direcao = i
+                    break
             self.combo_direcao.setCurrentIndex(idx_direcao if idx_direcao >= 0 else 0)
-            self.input_valor_operacao.setText(str(compra['total']))
-            # Corrigido: não popula itens para transação
-            self.itens_movimentacao = []
-            self.atualizar_tabela_itens_adicionados()
-            self.input_valor_abatimento.clear()
+            valor_str = decimal_para_str_brasil(compra['total'], self.locale)
+            self.input_valor_operacao.setText(valor_str)
         else:
             self.input_valor_operacao.setText("")
             self.itens_movimentacao = []
@@ -238,21 +179,11 @@ class MovimentacaoTabUI(QWidget):
                     "total": item['total']
                 })
             self.atualizar_tabela_itens_adicionados()
-            # Primeiro tenta puxar o valor do campo valor_abatimento da compra
             valor_abatimento = compra.get('valor_abatimento')
             if valor_abatimento is not None and float(valor_abatimento) > 0:
                 self.input_valor_abatimento.setText(str(valor_abatimento))
             else:
-                # Se não houver, tenta procurar por transação automática associada
-                with get_cursor() as cursor:
-                    cursor.execute("""
-                                   SELECT total
-                                   FROM compras
-                                   WHERE tipo = 'transação'
-                                     AND direcao = 'entrada'
-                                     AND descricao LIKE %s
-                                   """, (f"Abatimento automático referente à movimentação {compra_id}",))
-                    abat = cursor.fetchone()
+                abat = obter_abatimento_automatico(compra_id)
                 if abat:
                     self.input_valor_abatimento.setText(str(abat['total']))
                 else:
@@ -262,10 +193,11 @@ class MovimentacaoTabUI(QWidget):
         self.movimentacao_edit_id = compra_id
 
     def excluir_movimentacao_finalizada(self):
-        linha = self.tabela_movimentacoes.currentRow()
-        if linha < 0:
+        selected_ranges = self.tabela_movimentacoes.selectedRanges()
+        if not selected_ranges:
             QMessageBox.information(self, "Excluir Movimentação", "Selecione uma movimentação para excluir.")
             return
+        linha = selected_ranges[0].topRow()
 
         compra_id_item = self.tabela_movimentacoes.item(linha, 0)
         if compra_id_item is None:
@@ -283,9 +215,7 @@ class MovimentacaoTabUI(QWidget):
             return
 
         try:
-            with get_cursor(commit=True) as cursor:
-                cursor.execute("DELETE FROM itens_compra WHERE compra_id = %s", (compra_id,))
-                cursor.execute("DELETE FROM compras WHERE id = %s", (compra_id,))
+            excluir_movimentacao(compra_id)
             QMessageBox.information(self, "Sucesso", "Movimentação excluída com sucesso.")
             self.atualizar_tabela()
             self.tabela_itens.setRowCount(0)
@@ -357,45 +287,6 @@ class MovimentacaoTabUI(QWidget):
             self.tabela_itens_adicionados.setItem(row, 2, QTableWidgetItem(preco_formatado))
             self.tabela_itens_adicionados.blockSignals(False)
 
-    def obter_saldos_acumulados(self, fornecedor_id, data_de, data_ate):
-        with get_cursor() as cursor:
-            cursor.execute("""
-                           SELECT c.id, c.data_compra, c.tipo, c.direcao, c.total
-                           FROM compras c
-                           WHERE c.fornecedor_id = %s
-                           ORDER BY c.data_compra, c.id
-                           """, (fornecedor_id,))
-            todas_movs = cursor.fetchall()
-
-        saldo = Decimal("0.00")
-        saldo_por_id = {}
-        for mov in todas_movs:
-            tipo = remove_acento(mov['tipo'] or '')
-            direcao = remove_acento(mov['direcao'] or '')
-            valor_op = Decimal(mov['total']) if mov['total'] is not None else Decimal('0.00')
-            if tipo == "compra":
-                saldo += valor_op
-            elif tipo == "venda":
-                saldo -= valor_op
-            elif tipo == "transacao":
-                if direcao == "entrada":
-                    saldo += valor_op
-                elif direcao == "saida":
-                    saldo -= valor_op
-            saldo_por_id[mov['id']] = saldo
-
-        with get_cursor() as cursor:
-            cursor.execute("""
-                           SELECT c.id
-                           FROM compras c
-                           WHERE c.fornecedor_id = %s
-                             AND c.data_compra >= %s
-                             AND c.data_compra <= %s
-                           ORDER BY c.data_compra, c.id
-                           """, (fornecedor_id, data_de, data_ate))
-            exportadas = [row['id'] for row in cursor.fetchall()]
-        return {mid: saldo_por_id[mid] for mid in exportadas}
-
     def exportar_movimentacoes_pdf(self):
         dialog = DialogFiltroData(self.filtro_data_de.date(), self.filtro_data_ate.date(), self)
         if not dialog.exec():
@@ -406,45 +297,20 @@ class MovimentacaoTabUI(QWidget):
 
         fornecedor_id = self.fornecedor['id']
 
-        with get_cursor() as cursor:
-            cursor.execute("""
-                           SELECT c.id,
-                                  c.data_compra AS data,
-                                  f.nome as fornecedor,
-                                  f.fornecedores_numerobalanca,
-                                  c.tipo,
-                                  c.direcao,
-                                  c.descricao,
-                                  c.total AS valor_operacao
-                           FROM compras c
-                                    JOIN fornecedores f ON c.fornecedor_id = f.id
-                           WHERE c.fornecedor_id = %s
-                             AND c.data_compra >= %s
-                             AND c.data_compra <= %s
-                           ORDER BY c.data_compra, c.id
-                           """, (fornecedor_id, data_de, data_ate))
-            movimentacoes = cursor.fetchall()
-
+        movimentacoes = listar_movimentacoes(fornecedor_id, data_de, data_ate)
         if not movimentacoes:
             QMessageBox.warning(self, "Exportar PDF", "Nenhuma movimentação encontrada no período selecionado.")
             return
 
-        saldo_por_id = self.obter_saldos_acumulados(fornecedor_id, data_de, data_ate)
+        saldo_por_id = obter_saldos_acumulados(fornecedor_id, data_de, data_ate, remove_acento)
 
         # --- OTIMIZAÇÃO: Busque todos os itens de uma vez só ---
         mov_ids = [mov['id'] for mov in movimentacoes]
         itens_por_mov = {mid: [] for mid in mov_ids}
         if mov_ids:
-            with get_cursor() as cursor:
-                format_strings = ','.join(['%s'] * len(mov_ids))
-                cursor.execute(f"""
-                            SELECT i.compra_id, p.nome AS produto_nome, i.quantidade, i.preco_unitario, (i.quantidade * i.preco_unitario) AS total
-                            FROM itens_compra i
-                            JOIN produtos p ON i.produto_id = p.id
-                            WHERE i.compra_id IN ({format_strings})
-                        """, tuple(mov_ids))
-                for item in cursor.fetchall():
-                    itens_por_mov[item['compra_id']].append(item)
+            # Supondo que listar_itens_movimentacao aceite lista de ids, senão faça um for para cada
+            for mov_id in mov_ids:
+                itens_por_mov[mov_id] = listar_itens_movimentacao(mov_id)
         # --------------------------------------------------------
 
         largura, _ = A4
@@ -607,45 +473,19 @@ class MovimentacaoTabUI(QWidget):
 
         fornecedor_id = self.fornecedor['id']
 
-        with get_cursor() as cursor:
-            cursor.execute("""
-                           SELECT c.id,
-                                  c.data_compra AS data,
-                                  f.nome as fornecedor,
-                                  f.fornecedores_numerobalanca,
-                                  c.tipo,
-                                  c.direcao,
-                                  c.descricao,
-                                  c.total
-                           FROM compras c
-                                    JOIN fornecedores f ON c.fornecedor_id = f.id
-                           WHERE c.fornecedor_id = %s
-                             AND c.data_compra >= %s
-                             AND c.data_compra <= %s
-                           ORDER BY c.data_compra, c.id
-                           """, (fornecedor_id, data_de, data_ate))
-            compras = cursor.fetchall()
-
+        compras = listar_movimentacoes(fornecedor_id, data_de, data_ate)
         if not compras:
             QMessageBox.warning(self, "Exportar JPG", "Nenhuma movimentação encontrada no período selecionado.")
             return
 
-        saldo_por_id = self.obter_saldos_acumulados(fornecedor_id, data_de, data_ate)
+        saldo_por_id = obter_saldos_acumulados(fornecedor_id, data_de, data_ate, remove_acento)
 
         # --- OTIMIZAÇÃO: Busque todos os itens de uma vez só ---
         mov_ids = [mov['id'] for mov in compras]
         itens_por_mov = {mid: [] for mid in mov_ids}
         if mov_ids:
-            with get_cursor() as cursor:
-                format_strings = ','.join(['%s'] * len(mov_ids))
-                cursor.execute(f"""
-                            SELECT i.compra_id, p.nome AS produto_nome, i.quantidade, i.preco_unitario, (i.quantidade * i.preco_unitario) AS total
-                            FROM itens_compra i
-                            JOIN produtos p ON i.produto_id = p.id
-                            WHERE i.compra_id IN ({format_strings})
-                        """, tuple(mov_ids))
-                for item in cursor.fetchall():
-                    itens_por_mov[item['compra_id']].append(item)
+            for mov_id in mov_ids:
+                itens_por_mov[mov_id] = listar_itens_movimentacao(mov_id)
         # --------------------------------------------------------
 
         largura_img = 1200
@@ -682,7 +522,7 @@ class MovimentacaoTabUI(QWidget):
             tipo = mov['tipo'].capitalize()
             direcao = (mov.get('direcao') or "").capitalize()
             descricao = mov['descricao'] or ""
-            valor_operacao = float(mov['total'] or 0)
+            valor_operacao = float(mov['valor_operacao'] or 0)
             saldo_atual = saldo_por_id.get(mov['id'], 0)
             y = y_base
 
@@ -829,7 +669,7 @@ class MovimentacaoTabUI(QWidget):
         # Categoria
         self.combo_categoria = QComboBox()
         self.combo_categoria.addItem("Categoria principal", 0)
-        categoria_principal = self.obter_categoria_principal()
+        categoria_principal = obter_categoria_principal(self.fornecedor['id'])
         if categoria_principal:
             self.combo_categoria.addItem(categoria_principal['nome'], categoria_principal['id'])
             self.combo_categoria.setCurrentIndex(1)
@@ -1139,51 +979,49 @@ class MovimentacaoTabUI(QWidget):
                 QMessageBox.warning(self, "Erro", "Adicione pelo menos um item antes de salvar.")
                 return
             total = sum(Decimal(str(item['total'])) for item in self.itens_movimentacao)
-            valor_abatimento = Decimal(self.input_valor_abatimento.text().replace(',', '.')) if self.input_valor_abatimento.text() else Decimal('0.00')
+            valor_abatimento = Decimal(self.input_valor_abatimento.text().replace(',',
+                                                                                  '.')) if self.input_valor_abatimento.text() else Decimal(
+                '0.00')
             valor_operacao = total - valor_abatimento
 
         if self.movimentacao_edit_id is not None:
             compra_id = self.movimentacao_edit_id
             try:
-                with get_cursor(commit=True) as cursor:
-                    cursor.execute(
-                        "UPDATE compras SET data_compra=%s, tipo=%s, direcao=%s, descricao=%s, valor_abatimento=%s, total=%s, origem=%s, considerar_no_saldo_movimentacao=%s WHERE id=%s",
-                        (data, tipo, direcao, descricao, valor_abatimento, valor_operacao, 'movimentacao', True, compra_id)
-                    )
-                    cursor.execute("DELETE FROM itens_compra WHERE compra_id = %s", (compra_id,))
-                    if tipo != "transação":
-                        for item in self.itens_movimentacao:
-                            cursor.execute(
-                                "INSERT INTO itens_compra (compra_id, produto_id, quantidade, preco_unitario) VALUES (%s, %s, %s, %s)",
-                                (compra_id, item["produto_id"], item["quantidade"], item["preco"])
-                            )
+                atualizar_movimentacao(
+                    compra_id, data, tipo, direcao, descricao, valor_abatimento, valor_operacao
+                )
+                if tipo != "transação":
+                    # Remove itens antigos e adiciona os novos
+                    for item in self.itens_movimentacao:
+                        inserir_item_compra(
+                            compra_id, item["produto_id"], item["quantidade"], item["preco"]
+                        )
                 QMessageBox.information(self, "Sucesso", "Movimentação editada com sucesso.")
             except Exception as e:
                 QMessageBox.critical(self, "Erro", f"Erro ao editar movimentação: {e}")
             self.movimentacao_edit_id = None
         else:
-            with get_cursor(commit=True) as cursor:
-                cursor.execute(
-                    "INSERT INTO compras (fornecedor_id, data_compra, tipo, direcao, descricao, valor_abatimento, total, status, origem, considerar_no_saldo_movimentacao) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
-                    (self.fornecedor['id'], data, tipo, direcao, descricao, valor_abatimento, valor_operacao, 'Criada', 'movimentacao', True)
+            try:
+                compra_id = inserir_movimentacao(
+                    self.fornecedor['id'], data, tipo, direcao, descricao, valor_abatimento, valor_operacao
                 )
-                compra_id = cursor.lastrowid
                 if tipo != "transação":
                     for item in self.itens_movimentacao:
-                        cursor.execute(
-                            "INSERT INTO itens_compra (compra_id, produto_id, quantidade, preco_unitario) VALUES (%s, %s, %s, %s)",
-                            (compra_id, item["produto_id"], item["quantidade"], item["preco"])
+                        inserir_item_compra(
+                            compra_id, item["produto_id"], item["quantidade"], item["preco"]
                         )
-            QMessageBox.information(self, "Sucesso", "Movimentação cadastrada com sucesso.")
+                QMessageBox.information(self, "Sucesso", "Movimentação cadastrada com sucesso.")
+            except Exception as e:
+                QMessageBox.critical(self, "Erro", f"Erro ao cadastrar movimentação: {e}")
         self.limpar_itens()
-        self.input_valor_abatimento.clear()
+        self.limpar_campos()
         self.atualizar_tabela()
         self.atualiza_saldo_total()
 
     def atualizar_tabela(self):
         data_de = self.filtro_data_de.date().toPython()
         data_ate = self.filtro_data_ate.date().toPython()
-        movimentacoes = self.listar_movimentacoes(data_de, data_ate)
+        movimentacoes = listar_movimentacoes(self.fornecedor['id'], data_de, data_ate)
         self.tabela_movimentacoes.setRowCount(len(movimentacoes))
         for i, m in enumerate(movimentacoes):
             self.tabela_movimentacoes.setItem(i, 0, QTableWidgetItem(str(m["id"])))
@@ -1200,7 +1038,7 @@ class MovimentacaoTabUI(QWidget):
         self.atualiza_saldo_total()
 
     def atualiza_saldo_total(self):
-        saldo = self.obter_saldo_total()
+        saldo = obter_saldo_total(self.fornecedor['id'], remove_acento)
         self.label_saldo_total.setText(f"Saldo total: R$ {self.locale.toString(float(saldo), 'f', 2)}")
 
     def mostrar_itens_movimentacao(self, row, col):
@@ -1212,7 +1050,7 @@ class MovimentacaoTabUI(QWidget):
         if tipo == "transação":
             self.tabela_itens.setRowCount(0)
             return
-        itens = self.listar_itens_movimentacao(compra_id)
+        itens = listar_itens_movimentacao(compra_id)
         self.tabela_itens.setRowCount(len(itens))
         for i, item in enumerate(itens):
             self.tabela_itens.setItem(i, 0, QTableWidgetItem(item["produto_nome"]))
@@ -1237,9 +1075,7 @@ class MovimentacoesUI(QWidget):
         numero = campo_input.text().strip()
         if not numero:
             return
-        with get_cursor() as cursor:
-            cursor.execute("SELECT id FROM fornecedores WHERE fornecedores_numerobalanca = %s", (numero,))
-            resultado = cursor.fetchone()
+        resultado = buscar_fornecedor_id_por_numero_balanca(numero)
         if resultado:
             idx = -1
             for i in range(combo_fornecedor.count()):
@@ -1249,7 +1085,8 @@ class MovimentacoesUI(QWidget):
             if idx >= 0:
                 combo_fornecedor.setCurrentIndex(idx)
             else:
-                QMessageBox.warning(self, "Fornecedor não encontrado", f"Nenhum fornecedor com número de balança {numero}.")
+                QMessageBox.warning(self, "Fornecedor não encontrado",
+                                    f"Nenhum fornecedor com número de balança {numero}.")
                 campo_input.clear()
         else:
             QMessageBox.warning(self, "Fornecedor não encontrado", f"Nenhum fornecedor com número de balança {numero}.")
