@@ -1308,14 +1308,23 @@ class MovimentacoesUI(QWidget):
     def atualizar_lista_produtos(self):
         """Atualiza a lista de produtos do banco e recarrega o combo de produtos."""
         self.produtos = listar_produtos()
-        self.carregar_produtos()
+        # Atualize a lista de produtos em cada aba aberta
+        for i in range(self.tabs.count()):
+            tab_widget = self.tabs.widget(i)
+            if hasattr(tab_widget, "produtos"):
+                tab_widget.produtos = self.produtos
+                if hasattr(tab_widget, "carregar_produtos"):
+                    tab_widget.carregar_produtos()
 
     def showEvent(self, event):
         super().showEvent(event)
         fornecedor_id = self.combo_fornecedor.currentData()
         if fornecedor_id is not None:
-            self.atualiza_saldo_total()
             self.atualizar_lista_produtos()
+            # Atualiza saldo da aba ativa, se houver
+            tab = self.tabs.currentWidget()
+            if tab and hasattr(tab, "atualiza_saldo_total"):
+                tab.atualiza_saldo_total()
 
 if __name__ == "__main__":
     app = QApplication([])
