@@ -45,13 +45,11 @@ def get_produtos_cache():
     return listar_produtos()
 
 def decimal_para_str_brasil(valor, locale=None):
-    # Converte Decimal para string formatada no padrão brasileiro
     if locale is None:
         locale = QLocale(QLocale.Portuguese, QLocale.Brazil)
     return locale.toString(float(valor), 'f', 2)
 
 def str_brasil_para_decimal(texto):
-    # Converte string monetária brasileira para Decimal
     texto = texto.replace('.', '').replace(',', '.')
     try:
         return Decimal(texto)
@@ -121,6 +119,12 @@ class MovimentacaoTabUI(QWidget):
         self.produtos = listar_produtos()
         self.itens_movimentacao = []
         self.movimentacao_edit_id = None
+
+        # Paginação
+        self.pagina_atual = 1
+        self.qtd_por_pagina = 50
+        self.total_paginas = 1
+
         self.init_ui()
         self.carregar_produtos()
         self.atualizar_tabela()
@@ -791,7 +795,7 @@ class MovimentacaoTabUI(QWidget):
         layout_filtros.addWidget(QLabel("Até:"))
         layout_filtros.addWidget(self.filtro_data_ate)
         btn_filtrar = QPushButton("Filtrar")
-        btn_filtrar.clicked.connect(self.atualizar_tabela)
+        btn_filtrar.clicked.connect(self.resetar_e_filtrar)
         layout_filtros.addWidget(btn_filtrar)
         layout_meio.addLayout(layout_filtros)
 
@@ -804,6 +808,20 @@ class MovimentacaoTabUI(QWidget):
         self.tabela_movimentacoes.cellClicked.connect(self.mostrar_itens_movimentacao)
         self.tabela_movimentacoes.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         layout_meio.addWidget(self.tabela_movimentacoes)
+
+        # Paginação
+        paginacao_layout = QHBoxLayout()
+        self.btn_pagina_anterior = QPushButton("Página anterior")
+        self.label_paginacao = QLabel()
+        self.btn_pagina_proxima = QPushButton("Próxima página")
+        paginacao_layout.addWidget(self.btn_pagina_anterior)
+        paginacao_layout.addWidget(self.label_paginacao)
+        paginacao_layout.addWidget(self.btn_pagina_proxima)
+        layout_meio.addLayout(paginacao_layout)
+
+        self.btn_pagina_anterior.clicked.connect(self.ir_para_pagina_anterior)
+        self.btn_pagina_proxima.clicked.connect(self.ir_para_pagina_proxima)
+
         layout_root.addLayout(layout_meio, 5)
 
         # ----------- DIREITA: Tabela itens da movimentação selecionada -----------
@@ -845,6 +863,20 @@ class MovimentacaoTabUI(QWidget):
         self.input_valor_abatimento.setVisible(not is_transacao)
         self.label_total_movimentacao.setVisible(not is_transacao)
         self.atualizar_total_movimentacao()
+
+    def resetar_e_filtrar(self):
+        self.pagina_atual = 1
+        self.atualizar_tabela()
+
+    def ir_para_pagina_anterior(self):
+        if self.pagina_atual > 1:
+            self.pagina_atual -= 1
+            self.atualizar_tabela()
+
+    def ir_para_pagina_proxima(self):
+        if self.pagina_atual < self.total_paginas:
+            self.pagina_atual += 1
+            self.atualizar_tabela()
 
     def focus_quantidade(self):
         self.input_quantidade.setFocus()
@@ -1020,7 +1052,14 @@ class MovimentacaoTabUI(QWidget):
     def atualizar_tabela(self):
         data_de = self.filtro_data_de.date().toPython()
         data_ate = self.filtro_data_ate.date().toPython()
-        movimentacoes = listar_movimentacoes(self.fornecedor['id'], data_de, data_ate)
+        offset = (self.pagina_atual - 1) * self.qtd_por_pagina
+        # Busca paginada
+        movimentacoes = listar_movimentacoes(
+            self.fornecedor['id'], data_de, data_ate, limit=self.qtd_por_pagina, offset=offset
+        )
+        total_movs = contar_movimentacoes(self.fornecedor['id'], data_de, data_ate)
+        self.total_paginas = max(1, (total_movs + self.qtd_por_pagina - 1) // self.qtd_por_pagina)
+
         self.tabela_movimentacoes.setRowCount(len(movimentacoes))
 
         # --- NOVO: Busca todos os itens das movimentações em lote ---
@@ -1040,6 +1079,11 @@ class MovimentacaoTabUI(QWidget):
             else:
                 valor_op_str = ""
             self.tabela_movimentacoes.setItem(i, 5, QTableWidgetItem(valor_op_str))
+
+        # Atualiza label e estados dos botões de paginação
+        self.label_paginacao.setText(f"Página {self.pagina_atual} de {self.total_paginas}")
+        self.btn_pagina_anterior.setEnabled(self.pagina_atual > 1)
+        self.btn_pagina_proxima.setEnabled(self.pagina_atual < self.total_paginas)
         self.atualiza_saldo_total()
 
     def atualiza_saldo_total(self):

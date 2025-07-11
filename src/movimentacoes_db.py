@@ -172,7 +172,7 @@ def contar_movimentacoes(fornecedor_id, data_de=None, data_ate=None):
     query = """
         SELECT COUNT(*) AS total
         FROM compras c
-        WHERE 1=1
+        WHERE c.fornecedor_id = %s
     """
     params = [fornecedor_id]
     if data_de:
