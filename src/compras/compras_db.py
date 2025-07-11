@@ -1,5 +1,38 @@
 from db_context import get_cursor
 from decimal import Decimal
+from collections import defaultdict
+
+def listar_compras(status=None, status_not=None, data_de=None, data_ate=None, fornecedor_id=None, origem=None):
+    query = """
+        SELECT c.id, c.data_compra AS data, c.valor_abatimento, c.total, f.nome AS fornecedor_nome, c.status, c.origem
+        FROM compras c
+        JOIN fornecedores f ON c.fornecedor_id = f.id
+        WHERE 1=1
+    """
+    params = []
+    if status is not None:
+        query += " AND c.status = %s"
+        params.append(status)
+    if status_not is not None:
+        query += " AND c.status != %s"
+        params.append(status_not)
+    if data_de:
+        query += " AND c.data_compra >= %s"
+        params.append(data_de)
+    if data_ate:
+        query += " AND c.data_compra <= %s"
+        params.append(data_ate)
+    if fornecedor_id:
+        query += " AND c.fornecedor_id = %s"
+        params.append(fornecedor_id)
+    if origem is not None:
+        query += " AND c.origem = %s"
+        params.append(origem)
+    query += " ORDER BY c.data_compra DESC, c.id DESC"
+
+    with get_cursor() as cursor:
+        cursor.execute(query, params)
+        return cursor.fetchall()
 
 def listar_fornecedores():
     with get_cursor() as cursor:
@@ -39,37 +72,6 @@ def obter_produto(produto_id):
         cursor.execute("SELECT id, nome, preco_base FROM produtos WHERE id = %s", (produto_id,))
         return cursor.fetchone()
 
-def listar_compras(status=None, status_not=None, data_de=None, data_ate=None, fornecedor_id=None, origem=None):
-    query = """
-        SELECT c.id, c.data_compra AS data, c.valor_abatimento, c.total, f.nome AS fornecedor_nome, c.status, c.origem
-        FROM compras c
-        JOIN fornecedores f ON c.fornecedor_id = f.id
-        WHERE 1=1
-    """
-    params = []
-    if status is not None:
-        query += " AND c.status = %s"
-        params.append(status)
-    if status_not is not None:
-        query += " AND c.status != %s"
-        params.append(status_not)
-    if data_de:
-        query += " AND c.data_compra >= %s"
-        params.append(data_de)
-    if data_ate:
-        query += " AND c.data_compra <= %s"
-        params.append(data_ate)
-    if fornecedor_id:
-        query += " AND c.fornecedor_id = %s"
-        params.append(fornecedor_id)
-    if origem is not None:
-        query += " AND c.origem = %s"
-        params.append(origem)
-    query += " ORDER BY c.data_compra DESC, c.id DESC"
-
-    with get_cursor() as cursor:
-        cursor.execute(query, params)
-        return cursor.fetchall()
 
 def adicionar_compra(
     fornecedor_id, data_compra, valor_abatimento, itens_compra, status,
@@ -128,10 +130,11 @@ def atualizar_compra(
             (fornecedor_id, data_compra, valor_abatimento, status, considerar_no_saldo_movimentacao, compra_id)
         )
         cursor.execute("DELETE FROM itens_compra WHERE compra_id = %s", (compra_id,))
-        for item in itens_compra:
-            cursor.execute(
+        # ---- Atualização em lote ----
+        if itens_compra:
+            cursor.executemany(
                 "INSERT INTO itens_compra (compra_id, produto_id, quantidade, preco_unitario) VALUES (%s, %s, %s, %s)",
-                (compra_id, item['produto_id'], item['quantidade'], item['preco'])
+                [(compra_id, item['produto_id'], item['quantidade'], item['preco']) for item in itens_compra]
             )
         cursor.execute("""
             UPDATE compras
@@ -140,16 +143,6 @@ def atualizar_compra(
                          WHERE compra_id = %s)
             WHERE id = %s
         """, (compra_id, compra_id))
-
-def listar_itens_compra(compra_id):
-    with get_cursor() as cursor:
-        cursor.execute("""
-            SELECT p.nome AS produto_nome, i.produto_id, i.quantidade, i.preco_unitario, (i.quantidade * i.preco_unitario) AS total
-            FROM itens_compra i
-            JOIN produtos p ON i.produto_id = p.id
-            WHERE i.compra_id = %s
-        """, (compra_id,))
-        return cursor.fetchall()
 
 def obter_fornecedor_id_da_compra(compra_id):
     if not compra_id:
@@ -249,29 +242,6 @@ def buscar_nome_conta_padrao(fornecedor_id):
     except mysql.connector.Error as e:
         print(f"Erro ao buscar conta padrão: {e}")
         return "Erro ao buscar conta"
-
-def obter_valor_com_abatimento_adiantamento(compra_id, total_produtos=None):
-    if total_produtos is None:
-        total_produtos = obter_total_produtos(compra_id)
-    with get_cursor() as cursor:
-        # Pega abatimento
-        cursor.execute("SELECT valor_abatimento FROM compras WHERE id = %s", (compra_id,))
-        row = cursor.fetchone()
-        abatimento = Decimal(str(row["valor_abatimento"])) if row and row["valor_abatimento"] else Decimal('0.0')
-        # Pega adiantamento/inclusao
-        cursor.execute("""
-                        SELECT COALESCE(SUM(valor), 0) as adiantamento
-                        FROM debitos_fornecedores
-                        WHERE compra_id = %s
-                        AND tipo = 'inclusao'
-                        """, (compra_id,))
-        row = cursor.fetchone()
-        adiantamento = Decimal(str(row["adiantamento"])) if row and row["adiantamento"] else Decimal('0.0')
-    total_produtos = Decimal(str(total_produtos))
-    if adiantamento > 0:
-        return total_produtos + adiantamento
-    else:
-        return total_produtos - abatimento
 
 def obter_saldo_devedor_fornecedor(fornecedor_id):
     with get_cursor() as cursor:
@@ -478,3 +448,58 @@ def atualizar_status_compra(compra_id, novo_status):
             "UPDATE compras SET status = %s WHERE id = %s",
             (novo_status, compra_id)
         )
+
+def listar_itens_compra(compra_ids):
+    if not compra_ids:
+        return {}
+    with get_cursor() as cursor:
+        format_ids = ','.join(['%s'] * len(compra_ids))
+        cursor.execute(f"""
+            SELECT i.compra_id, p.nome AS produto_nome, i.produto_id, i.quantidade, i.preco_unitario, 
+                   (i.quantidade * i.preco_unitario) AS total
+            FROM itens_compra i
+            JOIN produtos p ON i.produto_id = p.id
+            WHERE i.compra_id IN ({format_ids})
+        """, compra_ids)
+        itens = cursor.fetchall()
+    # Agrupa por compra_id
+    from collections import defaultdict
+    itens_por_mov = defaultdict(list)
+    for item in itens:
+        itens_por_mov[item['compra_id']].append(item)
+    return dict(itens_por_mov)
+
+def obter_totais_produtos_compras(compra_ids):
+    if not compra_ids:
+        return {}
+    with get_cursor() as cursor:
+        format_ids = ','.join(['%s'] * len(compra_ids))
+        cursor.execute(f"""
+            SELECT compra_id, SUM(quantidade * preco_unitario) AS total_produtos
+            FROM itens_compra
+            WHERE compra_id IN ({format_ids})
+            GROUP BY compra_id
+        """, compra_ids)
+        rows = cursor.fetchall()
+    return {row['compra_id']: row['total_produtos'] for row in rows}
+
+def obter_valores_finais_compras(compra_ids):
+    if not compra_ids:
+        return {}
+    with get_cursor() as cursor:
+        format_ids = ','.join(['%s'] * len(compra_ids))
+        cursor.execute(f"""
+            SELECT c.id AS compra_id,
+                   c.valor_abatimento,
+                   COALESCE((SELECT SUM(valor) FROM debitos_fornecedores df WHERE df.compra_id = c.id AND df.tipo = 'inclusao'), 0) AS adiantamento
+            FROM compras c
+            WHERE c.id IN ({format_ids})
+        """, compra_ids)
+        rows = cursor.fetchall()
+    valores = {}
+    for row in rows:
+        total_produtos = None # Preencher depois
+        abatimento = row['valor_abatimento'] or 0
+        adiantamento = row['adiantamento'] or 0
+        valores[row['compra_id']] = {'abatimento': abatimento, 'adiantamento': adiantamento}
+    return valores

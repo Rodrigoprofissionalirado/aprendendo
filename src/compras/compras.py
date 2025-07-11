@@ -21,7 +21,8 @@ from .compras_db import (
     obter_dados_para_editar_compra, obter_itens_e_lancamentos_da_compra, excluir_compra,
     obter_fornecedor_id_por_numero_balanca, obter_primeira_categoria_do_fornecedor,
     obter_dados_bancarios_para_campo_copiavel, atualizar_conta_bancaria_da_compra,
-    atualizar_status_compra as atualizar_status_compra_db
+    atualizar_status_compra as atualizar_status_compra_db, obter_totais_produtos_compras,
+    obter_valores_finais_compras
 )
 from .compras_logic import (
     obter_total_produtos_lista, calcular_valor_com_abatimento_adiantamento, formatar_moeda
@@ -487,10 +488,18 @@ class ComprasUI(QWidget):
             fornecedor_id=fornecedor_id,
             origem = 'compras'
         )
+        todos_ids = [c['id'] for c in compras_aberto] + [c['id'] for c in compras_concluidas]
+        self.itens_por_compra = listar_itens_compra(todos_ids)  # <-- Aqui!
         self.preencher_tabela_compras(self.tabela_compras_aberto, compras_aberto)
         self.preencher_tabela_compras(self.tabela_compras_concluidas, compras_concluidas)
 
     def preencher_tabela_compras(self, tabela, compras):
+        # NÃO carregue self.itens_por_compra aqui!
+        # Ele deve ser carregado uma única vez em atualizar_tabelas, com TODOS os IDs das compras visíveis.
+
+        compra_ids = [c['id'] for c in compras]
+        totais_produtos = obter_totais_produtos_compras(compra_ids)
+        valores_finais = obter_valores_finais_compras(compra_ids)
         tabela.blockSignals(True)
         try:
             tabela.setRowCount(len(compras))
@@ -498,12 +507,13 @@ class ComprasUI(QWidget):
                 tabela.setItem(i, 0, QTableWidgetItem(str(c['id'])))
                 tabela.setItem(i, 1, QTableWidgetItem(c['fornecedor_nome']))
                 tabela.setItem(i, 2, QTableWidgetItem(str(c['data'])))
-                total_produtos = obter_total_produtos(c['id'])
+                total_produtos = totais_produtos.get(c['id'], 0)
                 tabela.setItem(i, 3, QTableWidgetItem(self.locale.toString(float(total_produtos), 'f', 2)))
-                valor_final = obter_valor_com_abatimento_adiantamento(c['id'], total_produtos)
+
+                vf = valores_finais.get(c['id'], {'abatimento': 0, 'adiantamento': 0})
+                valor_final = total_produtos + vf['adiantamento'] - vf['abatimento']
                 tabela.setItem(i, 4, QTableWidgetItem(self.locale.toString(float(valor_final), 'f', 2)))
                 tabela.setItem(i, 5, QTableWidgetItem(c['status']))
-                pass
         finally:
             tabela.blockSignals(False)
 
@@ -881,8 +891,12 @@ class ComprasUI(QWidget):
         if compra_id_item is None:
             return
 
-        compra_id = int(compra_id_item.text())
-        itens, valor_abatimento, valor_adiantamento = obter_itens_e_lancamentos_da_compra(compra_id)
+        compra_id = int(compra_id_item.text())  # GARANTA QUE É INTEIRO
+        print("compra_id para busca:", compra_id)
+        print("chaves de self.itens_por_compra:", list(self.itens_por_compra.keys()))
+        itens = self.itens_por_compra.get(compra_id, [])
+        print("Itens da compra:", compra_id, itens)
+        _, valor_abatimento, valor_adiantamento = obter_itens_e_lancamentos_da_compra(compra_id)
 
         subtotal = float(sum(item["total"] for item in itens))
 
@@ -902,7 +916,8 @@ class ComprasUI(QWidget):
             self.tabela_itens_compra.setItem(len(itens), 0, QTableWidgetItem("Adiantamento"))
             self.tabela_itens_compra.setItem(len(itens), 1, QTableWidgetItem(""))
             self.tabela_itens_compra.setItem(len(itens), 2, QTableWidgetItem(""))
-            self.tabela_itens_compra.setItem(len(itens), 3, QTableWidgetItem(f"+{self.locale.toString(valor_adiantamento, 'f', 2)}"))
+            self.tabela_itens_compra.setItem(len(itens), 3,
+                                             QTableWidgetItem(f"+{self.locale.toString(valor_adiantamento, 'f', 2)}"))
             total_final = subtotal + valor_adiantamento
             self.label_total_com_abatimento.setText(
                 f"Total com Adiantamento: R$ {self.locale.toString(total_final, 'f', 2)}"
@@ -911,7 +926,8 @@ class ComprasUI(QWidget):
             self.tabela_itens_compra.setItem(len(itens), 0, QTableWidgetItem("Abatimento"))
             self.tabela_itens_compra.setItem(len(itens), 1, QTableWidgetItem(""))
             self.tabela_itens_compra.setItem(len(itens), 2, QTableWidgetItem(""))
-            self.tabela_itens_compra.setItem(len(itens), 3, QTableWidgetItem(f"-{self.locale.toString(valor_abatimento, 'f', 2)}"))
+            self.tabela_itens_compra.setItem(len(itens), 3,
+                                             QTableWidgetItem(f"-{self.locale.toString(valor_abatimento, 'f', 2)}"))
             total_final = subtotal - valor_abatimento
             self.label_total_com_abatimento.setText(
                 f"Total com Abatimento: R$ {self.locale.toString(total_final, 'f', 2)}"

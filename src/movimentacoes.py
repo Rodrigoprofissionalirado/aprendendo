@@ -19,10 +19,8 @@ from PIL import Image, ImageDraw, ImageFont
 from datetime import datetime
 from compras.compras_db import (
     listar_produtos,
-    listar_itens_compra,
     listar_fornecedores,
-    listar_compras,
-    obter_ajuste_fixo
+    obter_ajuste_fixo,
 )
 from movimentacoes_db import (
     listar_movimentacoes,
@@ -306,11 +304,7 @@ class MovimentacaoTabUI(QWidget):
 
         # --- OTIMIZAÇÃO: Busque todos os itens de uma vez só ---
         mov_ids = [mov['id'] for mov in movimentacoes]
-        itens_por_mov = {mid: [] for mid in mov_ids}
-        if mov_ids:
-            # Supondo que listar_itens_movimentacao aceite lista de ids, senão faça um for para cada
-            for mov_id in mov_ids:
-                itens_por_mov[mov_id] = listar_itens_movimentacao(mov_id)
+        itens_por_mov = listar_itens_movimentacao(mov_ids)
         # --------------------------------------------------------
 
         largura, _ = A4
@@ -482,10 +476,7 @@ class MovimentacaoTabUI(QWidget):
 
         # --- OTIMIZAÇÃO: Busque todos os itens de uma vez só ---
         mov_ids = [mov['id'] for mov in compras]
-        itens_por_mov = {mid: [] for mid in mov_ids}
-        if mov_ids:
-            for mov_id in mov_ids:
-                itens_por_mov[mov_id] = listar_itens_movimentacao(mov_id)
+        itens_por_mov = listar_itens_movimentacao(mov_ids)
         # --------------------------------------------------------
 
         largura_img = 1200
@@ -827,6 +818,7 @@ class MovimentacaoTabUI(QWidget):
         layout_dir.addWidget(btn_exportar_pdf)
         layout_dir.addWidget(btn_exportar_jpg)
 
+        self.atualizar_tabela()
         self.tipo_changed()
         self.atualiza_saldo_total()
 
@@ -1023,6 +1015,12 @@ class MovimentacaoTabUI(QWidget):
         data_ate = self.filtro_data_ate.date().toPython()
         movimentacoes = listar_movimentacoes(self.fornecedor['id'], data_de, data_ate)
         self.tabela_movimentacoes.setRowCount(len(movimentacoes))
+
+        # --- NOVO: Busca todos os itens das movimentações em lote ---
+        mov_ids = [m["id"] for m in movimentacoes]
+        self.itens_por_mov = listar_itens_movimentacao(mov_ids)
+        # ------------------------------------------------------------
+
         for i, m in enumerate(movimentacoes):
             self.tabela_movimentacoes.setItem(i, 0, QTableWidgetItem(str(m["id"])))
             self.tabela_movimentacoes.setItem(i, 1, QTableWidgetItem(str(m["data"])))
