@@ -88,10 +88,11 @@ def adicionar_compra(
         )
         compra_id = cursor.lastrowid
 
-        for item in itens_compra:
-            cursor.execute(
+        # --- Usando executemany para inserir todos os itens de uma vez ---
+        if itens_compra:
+            cursor.executemany(
                 "INSERT INTO itens_compra (compra_id, produto_id, quantidade, preco_unitario) VALUES (%s, %s, %s, %s)",
-                (compra_id, item['produto_id'], item['quantidade'], item['preco'])
+                [(compra_id, item['produto_id'], item['quantidade'], item['preco']) for item in itens_compra]
             )
 
         cursor.execute("""

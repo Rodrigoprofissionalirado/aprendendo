@@ -150,8 +150,13 @@ def inserir_movimentacao(fornecedor_id, data, tipo, direcao, descricao, valor_ab
     return compra_id
 
 def inserir_item_compra(compra_id, produto_id, quantidade, preco_unitario):
+    """
+        Insere vários itens de compra de uma só vez usando executemany.
+        :param compra_id: id da compra
+        :param itens: lista de dicionários ou tuplas (produto_id, quantidade, preco_unitario)
+        """
     with get_cursor(commit=True) as cursor:
-        cursor.execute(
+        cursor.executemany(
             "INSERT INTO itens_compra (compra_id, produto_id, quantidade, preco_unitario) VALUES (%s, %s, %s, %s)",
-            (compra_id, produto_id, quantidade, preco_unitario)
+            [(compra_id, item['produto_id'], item['quantidade'], item['preco_unitario']) for item in itens]
         )
