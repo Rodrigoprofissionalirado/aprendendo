@@ -13,7 +13,7 @@ def obter_categoria_principal(fornecedor_id):
             cat = cursor.fetchone()
         return cat
 
-def listar_movimentacoes(fornecedor_id, data_de=None, data_ate=None):
+def listar_movimentacoes(fornecedor_id, data_de=None, data_ate=None, limit=50, offset=0):
     query = """
         SELECT c.id, c.data_compra AS data, c.tipo, c.direcao, c.descricao, c.total AS valor_operacao,
                f.nome as fornecedor, f.fornecedores_numerobalanca
@@ -30,6 +30,8 @@ def listar_movimentacoes(fornecedor_id, data_de=None, data_ate=None):
         query += " AND c.data_compra <= %s"
         params.append(data_ate)
     query += " ORDER BY c.data_compra DESC, c.id DESC"
+    query += " LIMIT %s OFFSET %s"
+    params.extend([limit, offset])
     with get_cursor() as cursor:
         cursor.execute(query, params)
         return cursor.fetchall()
@@ -160,3 +162,21 @@ def inserir_item_compra(compra_id, produto_id, quantidade, preco_unitario):
             "INSERT INTO itens_compra (compra_id, produto_id, quantidade, preco_unitario) VALUES (%s, %s, %s, %s)",
             [(compra_id, item['produto_id'], item['quantidade'], item['preco_unitario']) for item in itens]
         )
+
+def contar_movimentacoes(fornecedor_id, data_de=None, data_ate=None):
+    query = """
+        SELECT COUNT(*) AS total
+        FROM compras c
+        WHERE 1=1
+    """
+    params = [fornecedor_id]
+    if data_de:
+        query += " AND c.data_compra >= %s"
+        params.append(data_de)
+    if data_ate:
+        query += " AND c.data_compra <= %s"
+        params.append(data_ate)
+    with get_cursor() as cursor:
+        cursor.execute(query, params)
+        row = cursor.fetchone()
+        return row["total"] if row else 0

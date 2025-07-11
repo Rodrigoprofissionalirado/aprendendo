@@ -2,7 +2,7 @@ from db_context import get_cursor
 from decimal import Decimal
 from collections import defaultdict
 
-def listar_compras(status=None, status_not=None, data_de=None, data_ate=None, fornecedor_id=None, origem=None):
+def listar_compras(status=None, status_not=None, data_de=None, data_ate=None, fornecedor_id=None, origem=None, limit=50, offset=0):
     query = """
         SELECT c.id, c.data_compra AS data, c.valor_abatimento, c.total, f.nome AS fornecedor_nome, c.status, c.origem
         FROM compras c
@@ -29,6 +29,8 @@ def listar_compras(status=None, status_not=None, data_de=None, data_ate=None, fo
         query += " AND c.origem = %s"
         params.append(origem)
     query += " ORDER BY c.data_compra DESC, c.id DESC"
+    query += " LIMIT %s OFFSET %s"
+    params.extend([limit, offset])
 
     with get_cursor() as cursor:
         cursor.execute(query, params)
@@ -504,3 +506,33 @@ def obter_valores_finais_compras(compra_ids):
         adiantamento = row['adiantamento'] or 0
         valores[row['compra_id']] = {'abatimento': abatimento, 'adiantamento': adiantamento}
     return valores
+
+def contar_compras(status=None, status_not=None, data_de=None, data_ate=None, fornecedor_id=None, origem=None):
+    query = """
+        SELECT COUNT(*) AS total
+        FROM compras c
+        WHERE 1=1
+    """
+    params = []
+    if status is not None:
+        query += " AND c.status = %s"
+        params.append(status)
+    if status_not is not None:
+        query += " AND c.status != %s"
+        params.append(status_not)
+    if data_de:
+        query += " AND c.data_compra >= %s"
+        params.append(data_de)
+    if data_ate:
+        query += " AND c.data_compra <= %s"
+        params.append(data_ate)
+    if fornecedor_id:
+        query += " AND c.fornecedor_id = %s"
+        params.append(fornecedor_id)
+    if origem is not None:
+        query += " AND c.origem = %s"
+        params.append(origem)
+    with get_cursor() as cursor:
+        cursor.execute(query, params)
+        row = cursor.fetchone()
+        return row["total"] if row else 0

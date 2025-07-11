@@ -22,7 +22,7 @@ from .compras_db import (
     obter_fornecedor_id_por_numero_balanca, obter_primeira_categoria_do_fornecedor,
     obter_dados_bancarios_para_campo_copiavel, atualizar_conta_bancaria_da_compra,
     atualizar_status_compra as atualizar_status_compra_db, obter_totais_produtos_compras,
-    obter_valores_finais_compras
+    obter_valores_finais_compras, contar_compras
 )
 from .compras_logic import (
     obter_total_produtos_lista, calcular_valor_com_abatimento_adiantamento, formatar_moeda
@@ -50,6 +50,14 @@ class ComprasUI(QWidget):
         self.item_edit_index = None
         self.compra_edit_id = None
         self.locale = QLocale(QLocale.Portuguese, QLocale.Brazil)
+
+        # Paginação
+        self.pagina_atual_aberto = 1
+        self.pagina_atual_concluida = 1
+        self.qtd_por_pagina = 50
+        self.total_paginas_aberto = 1
+        self.total_paginas_concluida = 1
+
         self.init_ui()
         self.carregar_fornecedores()
         self.carregar_produtos()
@@ -144,6 +152,16 @@ class ComprasUI(QWidget):
             lambda row, col: self.mostrar_itens_da_compra(row, col, tabela=self.tabela_compras_concluidas)
         )
         layout_concluidas.addWidget(self.tabela_compras_concluidas)
+
+        # Botões de paginação abaixo da tabela de compras concluídas
+        paginacao_concluida_layout = QHBoxLayout()
+        self.btn_pagina_anterior_concluida = QPushButton("Página anterior")
+        self.btn_pagina_proxima_concluida = QPushButton("Próxima página")
+        self.label_paginacao_concluida = QLabel()
+        paginacao_concluida_layout.addWidget(self.btn_pagina_anterior_concluida)
+        paginacao_concluida_layout.addWidget(self.label_paginacao_concluida)
+        paginacao_concluida_layout.addWidget(self.btn_pagina_proxima_concluida)
+        layout_concluidas.addLayout(paginacao_concluida_layout)
 
         # ===================== ENTRADA DE DADOS - ESQUERDA =====================
         layout_entrada = QVBoxLayout()
@@ -297,6 +315,16 @@ class ComprasUI(QWidget):
         self.tabela_compras_aberto.itemSelectionChanged.connect(self.atualizar_campo_texto_copiavel)
         layout_compras_com_filtros.addWidget(self.tabela_compras_aberto)
 
+        # Botões de paginação abaixo da tabela de compras em aberto
+        paginacao_aberto_layout = QHBoxLayout()
+        self.btn_pagina_anterior_aberto = QPushButton("Página anterior")
+        self.btn_pagina_proxima_aberto = QPushButton("Próxima página")
+        self.label_paginacao_aberto = QLabel()
+        paginacao_aberto_layout.addWidget(self.btn_pagina_anterior_aberto)
+        paginacao_aberto_layout.addWidget(self.label_paginacao_aberto)
+        paginacao_aberto_layout.addWidget(self.btn_pagina_proxima_aberto)
+        layout_compras_com_filtros.addLayout(paginacao_aberto_layout)
+
         # Área direita
         layout_direita = QVBoxLayout()
         layout_em_aberto.addLayout(layout_direita, 3)
@@ -339,6 +367,12 @@ class ComprasUI(QWidget):
         self.tabela_compras_concluidas.setItemDelegateForColumn(5, self.status_delegate)
         self.tabela_compras_aberto.itemChanged.connect(self.on_status_item_changed)
         self.tabela_compras_concluidas.itemChanged.connect(self.on_status_item_changed)
+
+        # Conexão dos botões com handlers
+        self.btn_pagina_anterior_aberto.clicked.connect(self.ir_para_pagina_anterior_aberto)
+        self.btn_pagina_proxima_aberto.clicked.connect(self.ir_para_pagina_proxima_aberto)
+        self.btn_pagina_anterior_concluida.clicked.connect(self.ir_para_pagina_anterior_concluida)
+        self.btn_pagina_proxima_concluida.clicked.connect(self.ir_para_pagina_proxima_concluida)
 
     def carregar_dados(self):
         self.atualizar_tabelas()
@@ -471,8 +505,19 @@ class ComprasUI(QWidget):
         data_de = self.filtro_data_de.date().toPython()
         data_ate = self.filtro_data_ate.date().toPython()
 
-        # Em aberto: todas exceto concluída
+        # Paginação - em aberto
+        offset_aberto = (self.pagina_atual_aberto - 1) * self.qtd_por_pagina
         compras_aberto = listar_compras(
+            status=None if status_filtro == "Concluída" else status_filtro,
+            status_not="Concluída",
+            data_de=data_de,
+            data_ate=data_ate,
+            fornecedor_id=fornecedor_id,
+            origem='compras',
+            limit=self.qtd_por_pagina,
+            offset=offset_aberto
+        )
+        total_aberto = contar_compras(
             status=None if status_filtro == "Concluída" else status_filtro,
             status_not="Concluída",
             data_de=data_de,
@@ -480,18 +525,55 @@ class ComprasUI(QWidget):
             fornecedor_id=fornecedor_id,
             origem='compras'
         )
-        # Concluídas: só concluída
+        self.total_paginas_aberto = max(1, ((total_aberto + self.qtd_por_pagina - 1) // self.qtd_por_pagina))
+
+        # Paginação - concluídas
+        offset_concluida = (self.pagina_atual_concluida - 1) * self.qtd_por_pagina
         compras_concluidas = listar_compras(
             status="Concluída",
             data_de=data_de,
             data_ate=data_ate,
             fornecedor_id=fornecedor_id,
-            origem = 'compras'
+            origem='compras',
+            limit=self.qtd_por_pagina,
+            offset=offset_concluida
         )
+        total_concluida = contar_compras(
+            status="Concluída",
+            data_de=data_de,
+            data_ate=data_ate,
+            fornecedor_id=fornecedor_id,
+            origem='compras'
+        )
+        self.total_paginas_concluida = max(1, ((total_concluida + self.qtd_por_pagina - 1) // self.qtd_por_pagina))
+
         todos_ids = [c['id'] for c in compras_aberto] + [c['id'] for c in compras_concluidas]
-        self.itens_por_compra = listar_itens_compra(todos_ids)  # <-- Aqui!
+        self.itens_por_compra = listar_itens_compra(todos_ids)
         self.preencher_tabela_compras(self.tabela_compras_aberto, compras_aberto)
         self.preencher_tabela_compras(self.tabela_compras_concluidas, compras_concluidas)
+
+        self.label_paginacao_aberto.setText(f"Página {self.pagina_atual_aberto} de {self.total_paginas_aberto}")
+        self.label_paginacao_concluida.setText(f"Página {self.pagina_atual_concluida} de {self.total_paginas_concluida}")
+
+    def ir_para_pagina_anterior_aberto(self):
+        if self.pagina_atual_aberto > 1:
+            self.pagina_atual_aberto -= 1
+            self.atualizar_tabelas()
+
+    def ir_para_pagina_proxima_aberto(self):
+        if self.pagina_atual_aberto < self.total_paginas_aberto:
+            self.pagina_atual_aberto += 1
+            self.atualizar_tabelas()
+
+    def ir_para_pagina_anterior_concluida(self):
+        if self.pagina_atual_concluida > 1:
+            self.pagina_atual_concluida -= 1
+            self.atualizar_tabelas()
+
+    def ir_para_pagina_proxima_concluida(self):
+        if self.pagina_atual_concluida < self.total_paginas_concluida:
+            self.pagina_atual_concluida += 1
+            self.atualizar_tabelas()
 
     def preencher_tabela_compras(self, tabela, compras):
         # NÃO carregue self.itens_por_compra aqui!

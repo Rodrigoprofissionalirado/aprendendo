@@ -34,7 +34,8 @@ from movimentacoes_db import (
     atualizar_movimentacao,
     inserir_movimentacao,
     inserir_item_compra,
-    buscar_fornecedor_id_por_numero_balanca
+    buscar_fornecedor_id_por_numero_balanca,
+    contar_movimentacoes
 )
 
 def decimal_para_str_brasil(valor, locale=None):
