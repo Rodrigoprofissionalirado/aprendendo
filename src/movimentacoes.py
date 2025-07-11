@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtGui import QIntValidator
 from PySide6.QtCore import Qt, QDate, QLocale, QEvent, QTimer
 from decimal import Decimal, InvalidOperation
+from functools import lru_cache
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
 from reportlab.lib.units import mm
@@ -37,6 +38,11 @@ from movimentacoes_db import (
     buscar_fornecedor_id_por_numero_balanca,
     contar_movimentacoes
 )
+
+# ---- CACHE PRODUTOS ----
+@lru_cache(maxsize=1)
+def get_produtos_cache():
+    return listar_produtos()
 
 def decimal_para_str_brasil(valor, locale=None):
     # Converte Decimal para string formatada no padrão brasileiro
@@ -859,7 +865,7 @@ class MovimentacaoTabUI(QWidget):
         self.combo_produto.clear()
         self.combo_produto.setEditable(True)
         self.combo_produto.addItem("", None)
-        for p in self.produtos:
+        for p in get_produtos_cache():
             self.combo_produto.addItem(p["nome"], p["id"])
 
     def adicionar_item(self):

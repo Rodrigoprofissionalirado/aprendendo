@@ -32,6 +32,26 @@ from .compras_export import (
 )
 from .compras_dialogs import DiferencaCompraDialog
 
+from functools import lru_cache
+
+# Adicione no início do arquivo:
+
+@lru_cache(maxsize=1)
+def get_fornecedores_cache():
+    return listar_fornecedores()
+
+@lru_cache(maxsize=1)
+def get_produtos_cache():
+    return listar_produtos()
+
+@lru_cache(maxsize=128)
+def get_categorias_fornecedor_cache(fornecedor_id):
+    return obter_categorias_do_fornecedor(fornecedor_id)
+
+@lru_cache(maxsize=128)
+def get_contas_fornecedor_cache(fornecedor_id):
+    return listar_contas_do_fornecedor(fornecedor_id)
+
 STATUS_LIST = [
     "Criada", "Emitindo nota", "Efetuando pagamento", "Finalizada", "Concluída"
 ]
@@ -408,7 +428,7 @@ class ComprasUI(QWidget):
         self.combo_categoria_temporaria.blockSignals(True)
         self.combo_categoria_temporaria.clear()
         self.combo_categoria_temporaria.addItem("Selecione uma categoria", 0)
-        categorias = obter_categorias_do_fornecedor(fornecedor_id)
+        categorias = get_categorias_fornecedor_cache(fornecedor_id)
         for c in categorias:
             self.combo_categoria_temporaria.addItem(c['nome'], c['id'])
         self.combo_categoria_temporaria.setCurrentIndex(1 if self.combo_categoria_temporaria.count() > 1 else 0)
@@ -460,7 +480,7 @@ class ComprasUI(QWidget):
             QMessageBox.warning(self, "Erro", "Não foi possível identificar o fornecedor da compra selecionada.")
             return
 
-        contas_do_fornecedor = listar_contas_do_fornecedor(fornecedor_id)
+        contas_do_fornecedor = get_contas_fornecedor_cache(fornecedor_id)
         if not contas_do_fornecedor:
             QMessageBox.information(self, "Sem contas", "Este fornecedor não possui contas bancárias cadastradas.")
             return
@@ -723,15 +743,6 @@ class ComprasUI(QWidget):
         self.atualizar_tabela_itens_adicionados()
         self.combo_produto.setCurrentIndex(-1)
         self.input_quantidade.clear()
-
-    def carregar_categorias_para_fornecedor(self, fornecedor_id):
-        self.combo_categoria_temporaria.blockSignals(True)
-        self.combo_categoria_temporaria.clear()
-        self.combo_categoria_temporaria.addItem("Selecione uma categoria", 0)
-        categorias = obter_categorias_do_fornecedor(fornecedor_id)
-        for c in categorias:
-            self.combo_categoria_temporaria.addItem(c['nome'], c['id'])
-        self.combo_categoria_temporaria.setCurrentIndex(1 if self.combo_categoria_temporaria.count() > 1 else 0)
 
     def atualizar_tabela_itens_adicionados(self):
         self.tabela_itens_adicionados.blockSignals(True)
@@ -1021,7 +1032,7 @@ class ComprasUI(QWidget):
         self.filtro_combo_fornecedor.clear()
         self.filtro_combo_fornecedor.addItem("Todos os Fornecedores", None)
         self.combo_fornecedor.addItem("", None)
-        for f in listar_fornecedores():
+        for f in get_fornecedores_cache():
             self.combo_fornecedor.addItem(f["nome"], f["id"])
             self.filtro_combo_fornecedor.addItem(f["nome"], f["id"])
 
@@ -1029,7 +1040,7 @@ class ComprasUI(QWidget):
         self.combo_produto.blockSignals(True)
         self.combo_produto.clear()
         self.combo_produto.setEditable(True)
-        produtos = listar_produtos()
+        produtos = get_produtos_cache()
         produtos.sort(key=lambda p: p["nome"])
         for p in produtos:
             self.combo_produto.addItem(p['nome'], p['id'])

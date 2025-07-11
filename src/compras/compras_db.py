@@ -1,6 +1,49 @@
 from db_context import get_cursor
 from decimal import Decimal
+from functools import lru_cache
 from collections import defaultdict
+
+@lru_cache(maxsize=1)
+def listar_fornecedores_cached():
+    with get_cursor() as cursor:
+        cursor.execute("SELECT id, nome, fornecedores_numerobalanca FROM fornecedores ORDER BY nome")
+        return cursor.fetchall()
+
+@lru_cache(maxsize=1)
+def listar_produtos_cached():
+    with get_cursor() as cursor:
+        cursor.execute("SELECT id, nome, preco_base FROM produtos ORDER BY nome")
+        return cursor.fetchall()
+
+@lru_cache(maxsize=128)
+def listar_categorias_do_fornecedor_cached(fornecedor_id):
+    with get_cursor() as cursor:
+        cursor.execute("SELECT id, nome FROM categorias_fornecedor_por_fornecedor WHERE fornecedor_id = %s ORDER BY nome", (fornecedor_id,))
+        return cursor.fetchall()
+
+@lru_cache(maxsize=128)
+def listar_contas_do_fornecedor_cached(fornecedor_id):
+    if not fornecedor_id:
+        return []
+    with get_cursor() as cursor:
+        cursor.execute("""
+            SELECT id, banco, agencia, conta, nome_conta, padrao
+            FROM dados_bancarios_fornecedor
+            WHERE fornecedor_id = %s
+            ORDER BY padrao DESC, nome_conta, banco
+        """, (fornecedor_id,))
+        rows = cursor.fetchall()
+        return [
+            {
+                'id': row['id'],
+                'apelido': row['nome_conta'] or row['banco'],
+                'banco': row['banco'],
+                'agencia': row['agencia'],
+                'conta': row['conta'],
+                'padrao': row['padrao'],
+            }
+            for row in rows
+        ]
 
 def listar_compras(status=None, status_not=None, data_de=None, data_ate=None, fornecedor_id=None, origem=None, limit=50, offset=0):
     query = """
@@ -37,37 +80,14 @@ def listar_compras(status=None, status_not=None, data_de=None, data_ate=None, fo
         return cursor.fetchall()
 
 def listar_fornecedores():
-    with get_cursor() as cursor:
-        cursor.execute("SELECT id, nome, fornecedores_numerobalanca FROM fornecedores ORDER BY nome")
-        return cursor.fetchall()
+    return listar_fornecedores_cached()
+
 
 def listar_contas_do_fornecedor(fornecedor_id):
-    if not fornecedor_id:
-        return []
-    with get_cursor() as cursor:
-        cursor.execute("""
-            SELECT id, banco, agencia, conta, nome_conta, padrao
-            FROM dados_bancarios_fornecedor
-            WHERE fornecedor_id = %s
-            ORDER BY padrao DESC, nome_conta, banco
-        """, (fornecedor_id,))
-        rows = cursor.fetchall()
-        return [
-            {
-                'id': row['id'],
-                'apelido': row['nome_conta'] or row['banco'],
-                'banco': row['banco'],
-                'agencia': row['agencia'],
-                'conta': row['conta'],
-                'padrao': row['padrao'],
-            }
-            for row in rows
-        ]
+    return listar_contas_do_fornecedor_cached(fornecedor_id)
 
 def listar_produtos():
-    with get_cursor() as cursor:
-        cursor.execute("SELECT id, nome, preco_base FROM produtos ORDER BY nome")
-        return cursor.fetchall()
+    return listar_produtos_cached()
 
 def obter_produto(produto_id):
     with get_cursor() as cursor:
@@ -536,3 +556,9 @@ def contar_compras(status=None, status_not=None, data_de=None, data_ate=None, fo
         cursor.execute(query, params)
         row = cursor.fetchone()
         return row["total"] if row else 0
+
+# Após qualquer alteração/inclusão/exclusão:
+# listar_fornecedores_cached.cache_clear()
+# listar_produtos_cached.cache_clear()
+# listar_categorias_do_fornecedor_cached.cache_clear()
+# listar_contas_do_fornecedor_cached.cache_clear()

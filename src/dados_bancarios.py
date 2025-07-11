@@ -6,6 +6,8 @@ from PySide6.QtWidgets import (
 )
 from db_context import get_cursor
 from PySide6.QtCore import Qt, QLocale
+from compras.compras_db import listar_contas_do_fornecedor_cached
+from compras.compras import get_contas_fornecedor_cache
 
 class DB:
     def listar_dados_bancarios(self):
@@ -199,6 +201,8 @@ class DadosBancariosUI(QWidget):
             self.limpar()
         else:
             QMessageBox.warning(self, 'Campos obrigatórios', 'Preencha todos os campos corretamente.')
+        listar_contas_do_fornecedor_cached.cache_clear()
+        get_contas_fornecedor_cache.cache_clear()
 
     def carregar_dado_selecionado(self, row, column):
         self.dado_selecionado = int(self.tabela.item(row, 0).text())
@@ -242,12 +246,16 @@ class DadosBancariosUI(QWidget):
             self.db.atualizar_dado_bancario(self.dado_selecionado, fornecedor_id, banco, cpf_cnpj, agencia, conta, padrao, nome_conta)
             self.carregar_tabela()
             self.limpar()
+        listar_contas_do_fornecedor_cached.cache_clear()
+        get_contas_fornecedor_cache.cache_clear()
 
     def excluir(self):
         if self.dado_selecionado:
             self.db.excluir_dado_bancario(self.dado_selecionado)
             self.carregar_tabela()
             self.limpar()
+        listar_contas_do_fornecedor_cached.cache_clear()
+        get_contas_fornecedor_cache.cache_clear()
 
     def limpar(self):
         self.dado_selecionado = None

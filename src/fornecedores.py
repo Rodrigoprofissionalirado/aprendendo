@@ -22,6 +22,9 @@ import os
 import tempfile
 import subprocess
 import platform
+from compras.compras_db import listar_fornecedores_cached, listar_categorias_do_fornecedor_cached
+from compras.compras import get_fornecedores_cache, get_categorias_fornecedor_cache
+from movimentacoes_db import obter_categoria_principal_cached
 
 def abrir_arquivo(caminho):
     """Abre arquivo PDF ou imagem com programa padrão do SO."""
@@ -52,6 +55,8 @@ class DB:
                 "INSERT INTO fornecedores (nome, fornecedores_endereco, fornecedores_numerobalanca) VALUES (%s, %s, %s)",
                 (nome, endereco, numero_balanca)
             )
+        listar_fornecedores_cached.cache_clear()
+        get_fornecedores_cache.cache_clear()
 
     def excluir_fornecedor(self, fornecedor_id):
         with get_cursor(commit=True) as cursor:
@@ -63,6 +68,8 @@ class DB:
                 "UPDATE fornecedores SET nome=%s, fornecedores_endereco=%s, fornecedores_numerobalanca=%s WHERE id=%s",
                 (nome, endereco, numero_balanca, fornecedor_id)
             )
+        listar_fornecedores_cached.cache_clear()
+        get_fornecedores_cache.cache_clear()
 
     def listar_precos_por_categoria(self, categoria_id):
         with get_cursor() as cursor:
@@ -421,6 +428,9 @@ class FornecedoresUI(QWidget):
                 QMessageBox.information(self, "Categoria", "Categoria excluída com sucesso.")
             except Exception as e:
                 QMessageBox.critical(self, "Erro", str(e))
+        listar_categorias_do_fornecedor_cached.cache_clear()
+        get_categorias_fornecedor_cache.cache_clear()
+        obter_categoria_principal_cached.cache_clear()
 
     def editar_categoria(self):
         fornecedor_idx = self.combo_fornecedores.currentIndex()
@@ -448,6 +458,9 @@ class FornecedoresUI(QWidget):
                 QMessageBox.information(self, "Categoria", "Categoria atualizada com sucesso.")
             except Exception as e:
                 QMessageBox.critical(self, "Erro", str(e))
+        listar_categorias_do_fornecedor_cached.cache_clear()
+        get_categorias_fornecedor_cache.cache_clear()
+        obter_categoria_principal_cached.cache_clear()
 
     def linha_selecionada(self, row, column):
         if 0 <= row < len(self.fornecedores_exibidos):
@@ -549,6 +562,8 @@ class FornecedoresUI(QWidget):
             else:
                 QMessageBox.warning(self, 'Campos obrigatórios',
                                     'Preencha o nome e o número da balança para atualizar.')
+        listar_fornecedores_cached.cache_clear()
+        get_fornecedores_cache.cache_clear()
 
     def excluir_fornecedor_combo(self):
         index = self.combo_fornecedores.currentIndex()
@@ -571,6 +586,8 @@ class FornecedoresUI(QWidget):
                 self.aplicar_filtro()
             except Exception as e:
                 QMessageBox.critical(self, 'Erro', str(e))
+        listar_fornecedores_cached.cache_clear()
+        get_fornecedores_cache.cache_clear()
 
     def cancelar_edicao(self):
         self.combo_fornecedores.setCurrentIndex(-1)
@@ -604,6 +621,9 @@ class FornecedoresUI(QWidget):
                 QMessageBox.information(self, "Categoria", "Categoria e ajustes adicionados com sucesso.")
             except Exception as e:
                 QMessageBox.critical(self, "Erro", str(e))
+        listar_categorias_do_fornecedor_cached.cache_clear()
+        get_categorias_fornecedor_cache.cache_clear()
+        obter_categoria_principal_cached.cache_clear()
 
     # ... [Os métodos exportar_pdf e exportar_jpg permanecem inalterados] ...
 
