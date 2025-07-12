@@ -443,8 +443,14 @@ def atualizar_status_compra(compra_id, novo_status):
         )
 
 def listar_itens_compra(compra_ids):
+    # Garante que compra_ids seja uma lista/tupla de ints
+    if isinstance(compra_ids, int):
+        compra_ids = [compra_ids]
     if not compra_ids:
         return {}
+    # Achata listas internas (ex: [[1,2,3]])
+    if any(isinstance(cid, (list, tuple)) for cid in compra_ids):
+        compra_ids = [item for sublist in compra_ids for item in (sublist if isinstance(sublist, (list, tuple)) else [sublist])]
     with get_cursor() as cursor:
         format_ids = ','.join(['%s'] * len(compra_ids))
         cursor.execute(f"""
@@ -453,7 +459,7 @@ def listar_itens_compra(compra_ids):
             FROM itens_compra i
             JOIN produtos p ON i.produto_id = p.id
             WHERE i.compra_id IN ({format_ids})
-        """, compra_ids)
+        """, tuple(compra_ids))
         itens = cursor.fetchall()
     # Agrupa por compra_id
     from collections import defaultdict

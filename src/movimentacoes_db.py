@@ -107,7 +107,7 @@ def obter_saldos_acumulados(fornecedor_id, data_de, data_ate, remove_acento):
 
 def listar_itens_movimentacao(compra_id):
     from compras.compras_db import listar_itens_compra
-    return listar_itens_compra(compra_id)
+    return listar_itens_compra([compra_id])
 
 def obter_abatimento_automatico(compra_id):
     with get_cursor() as cursor:
@@ -156,7 +156,7 @@ def inserir_movimentacao(fornecedor_id, data, tipo, direcao, descricao, valor_ab
         compra_id = cursor.lastrowid
     return compra_id
 
-def inserir_item_compra(compra_id, produto_id, quantidade, preco_unitario):
+def inserir_item_compra(compra_id, itens):
     """
         Insere vários itens de compra de uma só vez usando executemany.
         :param compra_id: id da compra

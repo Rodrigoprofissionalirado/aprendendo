@@ -19,6 +19,10 @@ class DebitosUI(QWidget):
         super().__init__()
         self.setWindowTitle("Controle de Débitos")
         self.init_ui()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        # Só atualiza quando a janela for exibida
         self.atualizar()
 
     def init_ui(self):
@@ -114,6 +118,9 @@ class DebitosUI(QWidget):
                 QMessageBox.warning(self, "Não encontrado", "Fornecedor não encontrado.")
 
     def atualizar(self):
+        if hasattr(self, "worker") and self.worker.isRunning():
+            self.worker.quit()
+            self.worker.wait()
         fornecedor_id = self.combo_fornecedor.currentData()
         data_de = self.data_de.date().toPython()
         data_ate = self.data_ate.date().toPython()
@@ -127,7 +134,7 @@ class DebitosUI(QWidget):
                                d.descricao, \
                                d.valor, \
                                d.tipo,
-                               IFNULL(c.id, 'Manual') as origem
+                               COALESCE(c.id, 'Manual') as origem
                         FROM debitos_fornecedores d
                                  LEFT JOIN compras c ON d.compra_id = c.id
                                  LEFT JOIN fornecedores f ON d.fornecedor_id = f.id
@@ -139,10 +146,11 @@ class DebitosUI(QWidget):
                     params.append(fornecedor_id)
                 query += " ORDER BY d.data_lancamento DESC"
 
-                with get_cursor() as cursor:
-                    cursor.execute(query, params)
-                    resultados = cursor.fetchall()
-            return resultados
+                cursor.execute(query, params)
+                resultados = cursor.fetchall()
+                # SANITIZE: converte Row para dict puro
+                resultados_puros = [dict(row) for row in resultados]
+            return resultados_puros
 
         self.worker = WorkerThread(tarefa_db)
         self.worker.finished.connect(self._atualizar_ui_debitos)
@@ -297,6 +305,9 @@ class DebitosUI(QWidget):
         self.atualizar()
 
     def exportar_pdf(self):
+        if hasattr(self, "worker") and self.worker.isRunning():
+            self.worker.quit()
+            self.worker.wait()
         def tarefa_pdf():
             path_temp = tempfile.mktemp(suffix=".pdf")
             printer = QPrinter()
@@ -313,12 +324,15 @@ class DebitosUI(QWidget):
 
             return path_temp
 
-            self.worker_export = WorkerThread(tarefa_pdf)
-            self.worker_export.finished.connect(lambda path: self.abrir_arquivo(path))
-            self.worker_export.erro.connect(self._mostrar_erro_thread)
-            self.worker_export.start()
+        self.worker_export = WorkerThread(tarefa_pdf)
+        self.worker_export.finished.connect(lambda path: self.abrir_arquivo(path))
+        self.worker_export.erro.connect(self._mostrar_erro_thread)
+        self.worker_export.start()
 
     def exportar_jpg(self):
+        if hasattr(self, "worker") and self.worker.isRunning():
+            self.worker.quit()
+            self.worker.wait()
         def tarefa_jpg():
             # Calcula altura com base no número de linhas + cabeçalho + totais
             linhas = self.tabela.rowCount()
@@ -334,10 +348,11 @@ class DebitosUI(QWidget):
 
             path_temp = tempfile.mktemp(suffix=".jpg")
             imagem.save(path_temp, "JPG")
-            self.worker_export = WorkerThread(tarefa_jpg)
-            self.worker_export.finished.connect(lambda path: self.abrir_arquivo(path))
-            self.worker_export.erro.connect(self._mostrar_erro_thread)
-            self.worker_export.start()
+
+        self.worker_export = WorkerThread(tarefa_jpg)
+        self.worker_export.finished.connect(lambda path: self.abrir_arquivo(path))
+        self.worker_export.erro.connect(self._mostrar_erro_thread)
+        self.worker_export.start()
 
     def abrir_arquivo(self, path):
         if platform.system() == "Windows":
@@ -429,6 +444,15 @@ class DebitosUI(QWidget):
         painter.drawText(20, y, f"Total de Abatimentos: R$ {total_abatimentos:.2f}")
         y += 20
         painter.drawText(20, y, f"Saldo Devedor Final: R$ {saldo_final:.2f}")
+
+    def closeEvent(self, event):
+        if hasattr(self, "worker") and self.worker.isRunning():
+            self.worker.quit()
+            self.worker.wait()
+        if hasattr(self, "worker_export") and self.worker_export.isRunning():
+            self.worker_export.quit()
+            self.worker_export.wait()
+        event.accept()
 
 
 if __name__ == "__main__":

@@ -166,6 +166,9 @@ class DadosBancariosUI(QWidget):
             self.combo_fornecedor_nome.addItem(f"{f['nome']}", f["id"])
 
     def carregar_tabela(self):
+        if hasattr(self, "worker") and self.worker.isRunning():
+            self.worker.quit()
+            self.worker.wait()
         filtro = self.input_filtro_nome.text().lower()
         def tarefa_db():
             dados = self.db.listar_dados_bancarios()
@@ -313,6 +316,12 @@ class DadosBancariosUI(QWidget):
         else:
             self.combo_fornecedor_nome.setCurrentIndex(-1)
         self.silenciar_sync = False
+
+    def closeEvent(self, event):
+        if hasattr(self, "worker") and self.worker.isRunning():
+            self.worker.quit()
+            self.worker.wait()
+        event.accept()
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)

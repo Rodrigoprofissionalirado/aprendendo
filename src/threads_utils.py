@@ -12,7 +12,12 @@ class WorkerThread(QThread):
 
     def run(self):
         try:
+            print("[WorkerThread] Iniciando função alvo...")
             resultado = self.target_func(*self.args, **self.kwargs)
+            print("[WorkerThread] Função concluída, emitindo resultado.")
             self.finished.emit(resultado)
         except Exception as e:
+            import traceback
+            print("[WorkerThread] Erro na thread:")
+            traceback.print_exc()
             self.erro.emit(str(e))

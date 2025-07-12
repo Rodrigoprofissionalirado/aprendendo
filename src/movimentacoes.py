@@ -128,6 +128,9 @@ class MovimentacaoTabUI(QWidget):
         self.atualizar_tabela()
 
     def editar_movimentacao_finalizada(self):
+        if hasattr(self, "worker") and self.worker.isRunning():
+            self.worker.quit()
+            self.worker.wait()
         linha = self.tabela_movimentacoes.currentRow()
         if linha < 0:
             QMessageBox.information(self, "Editar Movimentação", "Selecione uma movimentação para editar.")
@@ -149,6 +152,19 @@ class MovimentacaoTabUI(QWidget):
 
     def _preencher_edicao_movimentacao(self, compra_id, resultado):
         compra, itens = resultado
+        # Se itens vier como dicionário agrupado por compra_id
+        if isinstance(itens, dict):
+            itens = itens.get(compra_id, [])
+        self.itens_movimentacao = []
+        for item in itens:
+            self.itens_movimentacao.append({
+                "produto_id": item['produto_id'],
+                "nome": item['produto_nome'],
+                "quantidade": item['quantidade'],
+                "preco": item['preco_unitario'],
+                "total": item['total']
+            })
+        self.atualizar_tabela_itens_adicionados()
 
         if compra is None:
             QMessageBox.warning(self, "Erro", "Movimentação não encontrada.")
@@ -306,6 +322,9 @@ class MovimentacaoTabUI(QWidget):
             self.tabela_itens_adicionados.blockSignals(False)
 
     def exportar_movimentacoes_pdf(self):
+        if hasattr(self, "worker") and self.worker.isRunning():
+            self.worker.quit()
+            self.worker.wait()
         dialog = DialogFiltroData(self.filtro_data_de.date(), self.filtro_data_ate.date(), self)
         if not dialog.exec():
             return
@@ -385,6 +404,9 @@ class MovimentacaoTabUI(QWidget):
         c.restoreState()
 
     def exportar_movimentacoes_jpg(self):
+        if hasattr(self, "worker") and self.worker.isRunning():
+            self.worker.quit()
+            self.worker.wait()
         dialog = DialogFiltroData(self.filtro_data_de.date(), self.filtro_data_ate.date(), self)
         if not dialog.exec():
             return
@@ -827,18 +849,24 @@ class MovimentacaoTabUI(QWidget):
                 '0.00')
             valor_operacao = total - valor_abatimento
 
+        # Prepara lista de itens para inserir_item_compra
+        itens = [
+            {
+                "produto_id": item["produto_id"],
+                "quantidade": item["quantidade"],
+                "preco_unitario": item["preco"]
+            }
+            for item in self.itens_movimentacao
+        ]
+
         if self.movimentacao_edit_id is not None:
             compra_id = self.movimentacao_edit_id
             try:
                 atualizar_movimentacao(
                     compra_id, data, tipo, direcao, descricao, valor_abatimento, valor_operacao
                 )
-                if tipo != "transação":
-                    # Remove itens antigos e adiciona os novos
-                    for item in self.itens_movimentacao:
-                        inserir_item_compra(
-                            compra_id, item["produto_id"], item["quantidade"], item["preco"]
-                        )
+                if tipo != "transação" and itens:
+                    inserir_item_compra(compra_id, itens)
                 QMessageBox.information(self, "Sucesso", "Movimentação editada com sucesso.")
             except Exception as e:
                 QMessageBox.critical(self, "Erro", f"Erro ao editar movimentação: {e}")
@@ -848,11 +876,8 @@ class MovimentacaoTabUI(QWidget):
                 compra_id = inserir_movimentacao(
                     self.fornecedor['id'], data, tipo, direcao, descricao, valor_abatimento, valor_operacao
                 )
-                if tipo != "transação":
-                    for item in self.itens_movimentacao:
-                        inserir_item_compra(
-                            compra_id, item["produto_id"], item["quantidade"], item["preco"]
-                        )
+                if tipo != "transação" and itens:
+                    inserir_item_compra(compra_id, itens)
                 QMessageBox.information(self, "Sucesso", "Movimentação cadastrada com sucesso.")
             except Exception as e:
                 QMessageBox.critical(self, "Erro", f"Erro ao cadastrar movimentação: {e}")
@@ -862,6 +887,9 @@ class MovimentacaoTabUI(QWidget):
         self.atualiza_saldo_total()
 
     def atualizar_tabela(self):
+        if hasattr(self, "worker") and self.worker.isRunning():
+            self.worker.quit()
+            self.worker.wait()
         data_de = self.filtro_data_de.date().toPython()
         data_ate = self.filtro_data_ate.date().toPython()
         offset = (self.pagina_atual - 1) * self.qtd_por_pagina
@@ -875,6 +903,8 @@ class MovimentacaoTabUI(QWidget):
             mov_ids = [m["id"] for m in movimentacoes]
             itens_por_mov = listar_itens_movimentacao(mov_ids)
 
+            import datetime
+
             def sanitize(obj):
                 if isinstance(obj, dict):
                     return {k: sanitize(v) for k, v in obj.items()}
@@ -882,7 +912,7 @@ class MovimentacaoTabUI(QWidget):
                     return [sanitize(x) for x in obj]
                 elif isinstance(obj, Decimal):
                     return float(obj)
-                elif isinstance(obj, (datetime, QDate)):
+                elif isinstance(obj, (datetime.datetime, datetime.date, QDate)):
                     try:
                         return obj.strftime('%d/%m/%Y')
                     except Exception:
@@ -936,7 +966,9 @@ class MovimentacaoTabUI(QWidget):
         if tipo == "transação":
             self.tabela_itens.setRowCount(0)
             return
-        itens = listar_itens_movimentacao(compra_id)
+        # Agora garantimos que "itens" é uma lista de dicts
+        itens_por_mov = listar_itens_movimentacao([compra_id])
+        itens = itens_por_mov.get(compra_id, [])
         self.tabela_itens.setRowCount(len(itens))
         for i, item in enumerate(itens):
             self.tabela_itens.setItem(i, 0, QTableWidgetItem(item["produto_nome"]))
@@ -1054,6 +1086,15 @@ class MovimentacoesUI(QWidget):
             tab = self.tabs.currentWidget()
             if tab and hasattr(tab, "atualiza_saldo_total"):
                 tab.atualiza_saldo_total()
+
+    def closeEvent(self, event):
+        for attr in ["worker", "worker_edit", "worker_export_pdf", "worker_export_jpg"]:
+            if hasattr(self, attr):
+                worker = getattr(self, attr)
+                if worker.isRunning():
+                    worker.quit()
+                    worker.wait()
+        event.accept()
 
 if __name__ == "__main__":
     app = QApplication([])

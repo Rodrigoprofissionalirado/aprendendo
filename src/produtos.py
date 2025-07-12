@@ -61,6 +61,9 @@ class ProdutosUI(QWidget):
         self.carregar_tabela()
 
     def carregar_tabela(self):
+        if hasattr(self, "worker") and self.worker.isRunning():
+            self.worker.quit()
+            self.worker.wait()
         def tarefa_db():
             with get_cursor() as cursor:
                 cursor.execute("SELECT * FROM produtos")
@@ -144,6 +147,12 @@ class ProdutosUI(QWidget):
         self.dado_selecionado = None
         self.input_nome.clear()
         self.input_preco.clear()
+
+    def closeEvent(self, event):
+        if hasattr(self, "worker") and self.worker.isRunning():
+            self.worker.quit()
+            self.worker.wait()
+        event.accept()
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)

@@ -386,6 +386,9 @@ class FornecedoresUI(QWidget):
         self.carregar_categorias_do_fornecedor(f['id'])
 
     def carregar_categorias_do_fornecedor(self, fornecedor_id):
+        if hasattr(self, "worker_tabela") and self.worker_tabela.isRunning():
+            self.worker_tabela.quit()
+            self.worker_tabela.wait()
         def tarefa_db():
             categorias = self.db.listar_categorias_do_fornecedor(fornecedor_id)
             if not categorias:
@@ -651,6 +654,9 @@ class FornecedoresUI(QWidget):
     # ... [Os métodos exportar_pdf e exportar_jpg permanecem inalterados] ...
 
     def exportar_pdf(self):
+        if hasattr(self, "worker_tabela") and self.worker_tabela.isRunning():
+            self.worker_tabela.quit()
+            self.worker_tabela.wait()
         fornecedor_idx = self.combo_fornecedores.currentIndex()
         categoria_idx = self.combo_categoria.currentIndex()
         if fornecedor_idx < 0 or categoria_idx < 0:
@@ -770,6 +776,9 @@ class FornecedoresUI(QWidget):
         c.restoreState()
 
     def exportar_jpg(self):
+        if hasattr(self, "worker_tabela") and self.worker_tabela.isRunning():
+            self.worker_tabela.quit()
+            self.worker_tabela.wait()
         fornecedor_idx = self.combo_fornecedores.currentIndex()
         categoria_idx = self.combo_categoria.currentIndex()
         if fornecedor_idx < 0 or categoria_idx < 0:
@@ -900,6 +909,15 @@ class FornecedoresUI(QWidget):
                 marca.alpha_composite(txt_img, (px, py))
         resultado = Image.alpha_composite(imagem.convert("RGBA"), marca)
         return resultado.convert("RGB")
+
+    def closeEvent(self, event):
+        for attr in ["worker_tabela", "worker_categorias", "worker_exportar_pdf", "worker_exportar_jpg"]:
+            if hasattr(self, attr):
+                worker = getattr(self, attr)
+                if worker.isRunning():
+                    worker.quit()
+                    worker.wait()
+        event.accept()
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)

@@ -521,6 +521,9 @@ class ComprasUI(QWidget):
         dialog.exec()
 
     def atualizar_tabelas(self):
+        if hasattr(self, "worker") and self.worker.isRunning():
+            self.worker.quit()
+            self.worker.wait()
         status_filtro = self.filtro_combo_status.currentData()
         fornecedor_id = self.filtro_combo_fornecedor.currentData()
         data_de = self.filtro_data_de.date().toPython()
@@ -530,7 +533,6 @@ class ComprasUI(QWidget):
         pagina_atual_concluida = self.pagina_atual_concluida
 
         def tarefa_db():
-            from .compras_db import listar_compras, contar_compras, listar_itens_compra
             offset_aberto = (pagina_atual_aberto - 1) * qtd_por_pagina
             compras_aberto = listar_compras(
                 status=None if status_filtro == "Concluída" else status_filtro,
@@ -579,6 +581,12 @@ class ComprasUI(QWidget):
     def _atualizar_tabelas_ui(self, resultado):
         compras_aberto, total_aberto, compras_concluidas, total_concluida, itens_por_compra = resultado
         self.itens_por_compra = itens_por_compra
+        self.preencher_tabela_compras(self.tabela_compras_aberto, compras_aberto)
+        self.preencher_tabela_compras(self.tabela_compras_concluidas, compras_concluidas)
+
+        self.label_paginacao_aberto.setText(f"Página {self.pagina_atual_aberto} de {self.total_paginas_aberto}")
+        self.label_paginacao_concluida.setText(
+            f"Página {self.pagina_atual_concluida} de {self.total_paginas_concluida}")
         # Atualize as tabelas da UI normalmente a partir dos dados recebidos
 
     def _mostrar_erro_thread(self, mensagem):
@@ -1064,6 +1072,9 @@ class ComprasUI(QWidget):
 
     @requer_permissao(['admin', 'gerente', 'operador', 'consulta'])
     def exportar_compra_pdf(self):
+        if hasattr(self, "worker") and self.worker.isRunning():
+            self.worker.quit()
+            self.worker.wait()
         compra_id = self.obter_compra_id_selecionado()
         if compra_id is None:
             QMessageBox.warning(self, "Exportar PDF", "Selecione uma compra para exportar.")
@@ -1087,6 +1098,9 @@ class ComprasUI(QWidget):
 
     @requer_permissao(['admin', 'gerente', 'operador', 'consulta'])
     def exportar_compra_jpg(self):
+        if hasattr(self, "worker") and self.worker.isRunning():
+            self.worker.quit()
+            self.worker.wait()
         compra_id = self.obter_compra_id_selecionado()
         if compra_id is None:
             QMessageBox.warning(self, "Exportar JPG", "Selecione uma compra para exportar.")
@@ -1108,8 +1122,21 @@ class ComprasUI(QWidget):
         self.worker_jpg.erro.connect(self._mostrar_erro_thread)
         self.worker_jpg.start()
 
+    def closeEvent(self, event):
+        if hasattr(self, "worker") and self.worker.isRunning():
+            self.worker.quit()
+            self.worker.wait()
+        if hasattr(self, "worker_pdf") and self.worker_pdf.isRunning():
+            self.worker_pdf.quit()
+            self.worker_pdf.wait()
+        if hasattr(self, "worker_jpg") and self.worker_jpg.isRunning():
+            self.worker_jpg.quit()
+            self.worker_jpg.wait()
+        event.accept()
+
     def showEvent(self, event):
         super().showEvent(event)
+        self.atualizar_tabelas()
         fornecedor_id = self.combo_fornecedor.currentData()
         if fornecedor_id is not None:
             self.carregar_categorias_para_fornecedor(fornecedor_id)
