@@ -266,36 +266,6 @@ def buscar_nome_conta_padrao(fornecedor_id):
         print(f"Erro ao buscar conta padrão: {e}")
         return "Erro ao buscar conta"
 
-def obter_saldo_devedor_fornecedor(fornecedor_id):
-    with get_cursor() as cursor:
-        cursor.execute("""
-                        SELECT valor, tipo
-                        FROM debitos_fornecedores
-                        WHERE fornecedor_id = %s
-                        """, (fornecedor_id,))
-        saldo = Decimal('0.00')
-        for row in cursor.fetchall():
-            if row["tipo"] in ("inclusao", "adiantamento"):
-                saldo += Decimal(str(row["valor"]))
-            else:
-                saldo -= Decimal(str(row["valor"]))
-        return saldo
-
-def buscar_nome_conta_padrao(fornecedor_id):
-    try:
-        with get_cursor() as cursor:
-            cursor.execute("""
-                            SELECT nome_conta
-                            FROM dados_bancarios_fornecedor
-                            WHERE fornecedor_id = %s
-                            AND padrao = 1 LIMIT 1
-                            """, (fornecedor_id,))
-            row = cursor.fetchone()
-            return row["nome_conta"] if row else "Conta não cadastrada"
-    except mysql.connector.Error as e:
-        print(f"Erro ao buscar conta padrão: {e}")
-        return "Erro ao buscar conta"
-
 def obter_categorias_do_fornecedor(fornecedor_id):
     with get_cursor() as cursor:
         cursor.execute("SELECT id, nome FROM categorias_fornecedor_por_fornecedor WHERE fornecedor_id = %s ORDER BY nome", (fornecedor_id,))
