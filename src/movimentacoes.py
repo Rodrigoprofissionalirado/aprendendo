@@ -253,6 +253,7 @@ class MovimentacaoTabUI(QWidget):
             QMessageBox.information(self, "Sucesso", "Movimentação excluída com sucesso.")
             self.atualizar_tabela()
             self.tabela_itens.setRowCount(0)
+            self.atualiza_saldo_total()
         except Exception as e:
             QMessageBox.critical(self, "Erro", f"Erro ao excluir movimentação: {e}")
 
