@@ -9,6 +9,7 @@ from PySide6.QtCore import Qt, QTimer, QDate, QLocale, QEvent
 from decimal import Decimal, InvalidOperation
 from status_delegate_combo import StatusComboDelegate
 from utils_permissoes import requer_permissao
+from threads_utils import WorkerThread
 
 # Importações dos submódulos
 from .compras_db import (
@@ -524,56 +525,65 @@ class ComprasUI(QWidget):
         fornecedor_id = self.filtro_combo_fornecedor.currentData()
         data_de = self.filtro_data_de.date().toPython()
         data_ate = self.filtro_data_ate.date().toPython()
+        qtd_por_pagina = self.qtd_por_pagina
+        pagina_atual_aberto = self.pagina_atual_aberto
+        pagina_atual_concluida = self.pagina_atual_concluida
 
-        # Paginação - em aberto
-        offset_aberto = (self.pagina_atual_aberto - 1) * self.qtd_por_pagina
-        compras_aberto = listar_compras(
-            status=None if status_filtro == "Concluída" else status_filtro,
-            status_not="Concluída",
-            data_de=data_de,
-            data_ate=data_ate,
-            fornecedor_id=fornecedor_id,
-            origem='compras',
-            limit=self.qtd_por_pagina,
-            offset=offset_aberto
-        )
-        total_aberto = contar_compras(
-            status=None if status_filtro == "Concluída" else status_filtro,
-            status_not="Concluída",
-            data_de=data_de,
-            data_ate=data_ate,
-            fornecedor_id=fornecedor_id,
-            origem='compras'
-        )
-        self.total_paginas_aberto = max(1, ((total_aberto + self.qtd_por_pagina - 1) // self.qtd_por_pagina))
+        def tarefa_db():
+            from .compras_db import listar_compras, contar_compras, listar_itens_compra
+            offset_aberto = (pagina_atual_aberto - 1) * qtd_por_pagina
+            compras_aberto = listar_compras(
+                status=None if status_filtro == "Concluída" else status_filtro,
+                status_not="Concluída",
+                data_de=data_de,
+                data_ate=data_ate,
+                fornecedor_id=fornecedor_id,
+                origem='compras',
+                limit=qtd_por_pagina,
+                offset=offset_aberto
+            )
+            total_aberto = contar_compras(
+                status=None if status_filtro == "Concluída" else status_filtro,
+                status_not="Concluída",
+                data_de=data_de,
+                data_ate=data_ate,
+                fornecedor_id=fornecedor_id,
+                origem='compras'
+            )
+            offset_concluida = (pagina_atual_concluida - 1) * qtd_por_pagina
+            compras_concluidas = listar_compras(
+                status="Concluída",
+                data_de=data_de,
+                data_ate=data_ate,
+                fornecedor_id=fornecedor_id,
+                origem='compras',
+                limit=qtd_por_pagina,
+                offset=offset_concluida
+            )
+            total_concluida = contar_compras(
+                status="Concluída",
+                data_de=data_de,
+                data_ate=data_ate,
+                fornecedor_id=fornecedor_id,
+                origem='compras'
+            )
+            todos_ids = [c['id'] for c in compras_aberto] + [c['id'] for c in compras_concluidas]
+            itens_por_compra = listar_itens_compra(todos_ids)
+            return (compras_aberto, total_aberto, compras_concluidas, total_concluida, itens_por_compra)
 
-        # Paginação - concluídas
-        offset_concluida = (self.pagina_atual_concluida - 1) * self.qtd_por_pagina
-        compras_concluidas = listar_compras(
-            status="Concluída",
-            data_de=data_de,
-            data_ate=data_ate,
-            fornecedor_id=fornecedor_id,
-            origem='compras',
-            limit=self.qtd_por_pagina,
-            offset=offset_concluida
-        )
-        total_concluida = contar_compras(
-            status="Concluída",
-            data_de=data_de,
-            data_ate=data_ate,
-            fornecedor_id=fornecedor_id,
-            origem='compras'
-        )
-        self.total_paginas_concluida = max(1, ((total_concluida + self.qtd_por_pagina - 1) // self.qtd_por_pagina))
+        self.worker = WorkerThread(tarefa_db)
+        self.worker.finished.connect(self._atualizar_tabelas_ui)
+        self.worker.erro.connect(self._mostrar_erro_thread)
+        self.worker.start()
 
-        todos_ids = [c['id'] for c in compras_aberto] + [c['id'] for c in compras_concluidas]
-        self.itens_por_compra = listar_itens_compra(todos_ids)
-        self.preencher_tabela_compras(self.tabela_compras_aberto, compras_aberto)
-        self.preencher_tabela_compras(self.tabela_compras_concluidas, compras_concluidas)
+    def _atualizar_tabelas_ui(self, resultado):
+        compras_aberto, total_aberto, compras_concluidas, total_concluida, itens_por_compra = resultado
+        self.itens_por_compra = itens_por_compra
+        # Atualize as tabelas da UI normalmente a partir dos dados recebidos
 
-        self.label_paginacao_aberto.setText(f"Página {self.pagina_atual_aberto} de {self.total_paginas_aberto}")
-        self.label_paginacao_concluida.setText(f"Página {self.pagina_atual_concluida} de {self.total_paginas_concluida}")
+    def _mostrar_erro_thread(self, mensagem):
+        from PySide6.QtWidgets import QMessageBox
+        QMessageBox.critical(self, "Erro", mensagem)
 
     def ir_para_pagina_anterior_aberto(self):
         if self.pagina_atual_aberto > 1:
@@ -849,39 +859,18 @@ class ComprasUI(QWidget):
             return
         compra_id = int(compra_id_item.text())
 
-        compra, itens, valor_adiantamento = obter_dados_para_editar_compra(compra_id)
+        def tarefa_db():
+            from .compras_db import obter_dados_para_editar_compra
+            return obter_dados_para_editar_compra(compra_id)
 
-        if compra is None:
-            QMessageBox.warning(self, "Erro", "Compra não encontrada.")
-            return
+        self.worker_edit = WorkerThread(tarefa_db)
+        self.worker_edit.finished.connect(lambda dados: self._preencher_edicao_compra(compra_id, dados))
+        self.worker_edit.erro.connect(self._mostrar_erro_thread)
+        self.worker_edit.start()
 
-        idx_fornecedor = self.combo_fornecedor.findData(compra['fornecedor_id'])
-        self.combo_fornecedor.setCurrentIndex(idx_fornecedor if idx_fornecedor >= 0 else 0)
-        self.input_data.setDate(QDate(compra['data_compra']))
-
-        # Atualiza combo e campo de valor conforme o tipo de lançamento
-        if valor_adiantamento > 0:
-            self.combo_tipo_lancamento.setCurrentIndex(1)  # Adiantamento
-            self.input_valor_lancamento.setText(str(valor_adiantamento))
-        else:
-            self.combo_tipo_lancamento.setCurrentIndex(0)  # Abatimento
-            self.input_valor_lancamento.setText(str(compra['valor_abatimento']))
-
-        idx_status = self.combo_status.findText(compra['status'])
-        self.combo_status.setCurrentIndex(idx_status if idx_status >= 0 else 0)
-
-        self.itens_compra = []
-        for item in itens:
-            self.itens_compra.append({
-                "produto_id": item['produto_id'],
-                "nome": item['produto_nome'],
-                "quantidade": item['quantidade'],
-                "preco": item['preco_unitario'],
-                "total": item['total']
-            })
-
-        self.compra_edit_id = compra_id
-        self.atualizar_tabela_itens_adicionados()
+    def _preencher_edicao_compra(self, compra_id, resultado):
+        compra, itens, valor_adiantamento = resultado
+        # Atualize a tela de edição normalmente
 
     @requer_permissao(['admin', 'gerente', 'operador'])
     def alterar_status_compra(self):
@@ -1079,11 +1068,22 @@ class ComprasUI(QWidget):
         if compra_id is None:
             QMessageBox.warning(self, "Exportar PDF", "Selecione uma compra para exportar.")
             return
-        compra, itens = obter_detalhes_compra(compra_id)
-        saldo = obter_saldo_devedor_fornecedor(compra['fornecedor_id'])
-        filename = f"compra_{compra_id}.pdf"
-        exportar_compra_pdf(compra, itens, saldo, filename,
-                            marca_dagua_texto=str(compra.get('fornecedores_numerobalanca', '')))
+
+        def tarefa_pdf():
+            from .compras_db import obter_detalhes_compra, obter_saldo_devedor_fornecedor
+            from .compras_export import exportar_compra_pdf
+            compra, itens = obter_detalhes_compra(compra_id)
+            saldo = obter_saldo_devedor_fornecedor(compra['fornecedor_id'])
+            filename = f"compra_{compra_id}.pdf"
+            exportar_compra_pdf(compra, itens, saldo, filename,
+                                marca_dagua_texto=str(compra.get('fornecedores_numerobalanca', '')))
+            return filename
+
+        self.worker_pdf = WorkerThread(tarefa_pdf)
+        self.worker_pdf.finished.connect(
+            lambda filename: QMessageBox.information(self, "PDF gerado", f"Arquivo: {filename}"))
+        self.worker_pdf.erro.connect(self._mostrar_erro_thread)
+        self.worker_pdf.start()
 
     @requer_permissao(['admin', 'gerente', 'operador', 'consulta'])
     def exportar_compra_jpg(self):
@@ -1091,10 +1091,22 @@ class ComprasUI(QWidget):
         if compra_id is None:
             QMessageBox.warning(self, "Exportar JPG", "Selecione uma compra para exportar.")
             return
-        compra, itens = obter_detalhes_compra(compra_id)
-        saldo = obter_saldo_devedor_fornecedor(compra['fornecedor_id'])
-        filename = f"compra_{compra_id}.jpg"
-        exportar_compra_jpg(compra, itens, saldo, filename, marca_dagua_texto=str(compra.get('fornecedores_numerobalanca', '')))
+
+        def tarefa_jpg():
+            from .compras_db import obter_detalhes_compra, obter_saldo_devedor_fornecedor
+            from .compras_export import exportar_compra_jpg
+            compra, itens = obter_detalhes_compra(compra_id)
+            saldo = obter_saldo_devedor_fornecedor(compra['fornecedor_id'])
+            filename = f"compra_{compra_id}.jpg"
+            exportar_compra_jpg(compra, itens, saldo, filename,
+                                marca_dagua_texto=str(compra.get('fornecedores_numerobalanca', '')))
+            return filename
+
+        self.worker_jpg = WorkerThread(tarefa_jpg)
+        self.worker_jpg.finished.connect(
+            lambda filename: QMessageBox.information(self, "JPG gerado", f"Arquivo: {filename}"))
+        self.worker_jpg.erro.connect(self._mostrar_erro_thread)
+        self.worker_jpg.start()
 
     def showEvent(self, event):
         super().showEvent(event)

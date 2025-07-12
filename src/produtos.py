@@ -5,6 +5,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt, QLocale
 from db_context import get_cursor
+from threads_utils import WorkerThread
 from utils_permissoes import requer_permissao
 from compras.compras_db import listar_produtos_cached
 from compras.compras import get_produtos_cache
@@ -60,10 +61,17 @@ class ProdutosUI(QWidget):
         self.carregar_tabela()
 
     def carregar_tabela(self):
-        with get_cursor() as cursor:
-            cursor.execute("SELECT * FROM produtos")
-            dados = cursor.fetchall()
+        def tarefa_db():
+            with get_cursor() as cursor:
+                cursor.execute("SELECT * FROM produtos")
+                return cursor.fetchall()
 
+        self.worker = WorkerThread(tarefa_db)
+        self.worker.finished.connect(self._atualizar_tabela_produtos)
+        self.worker.erro.connect(self._mostrar_erro_thread)
+        self.worker.start()
+
+    def _atualizar_tabela_produtos(self, dados):
         locale = QLocale(QLocale.Portuguese, QLocale.Brazil)
         self.tabela.setRowCount(len(dados))
         for i, dado in enumerate(dados):
@@ -71,6 +79,10 @@ class ProdutosUI(QWidget):
             self.tabela.setItem(i, 1, QTableWidgetItem(dado['nome']))
             preco_formatado = locale.toString(float(dado['preco_base']), 'f', 2)
             self.tabela.setItem(i, 2, QTableWidgetItem(preco_formatado))
+
+    def _mostrar_erro_thread(self, mensagem):
+        from PySide6.QtWidgets import QMessageBox
+        QMessageBox.critical(self, "Erro", mensagem)
 
     @requer_permissao(['admin', 'gerente', 'operador'])
     def adicionar(self):

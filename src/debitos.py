@@ -11,6 +11,7 @@ from PySide6.QtCore import Qt, QDate, QMarginsF, QLocale
 from db_context import get_cursor  # Certifique-se que seu get_cursor usa 'with'
 from PySide6.QtGui import QPainter, QFont, QImage, QPageLayout
 from PySide6.QtPrintSupport import QPrinter
+from threads_utils import WorkerThread
 
 
 class DebitosUI(QWidget):
@@ -117,25 +118,38 @@ class DebitosUI(QWidget):
         data_de = self.data_de.date().toPython()
         data_ate = self.data_ate.date().toPython()
 
-        query = """
-            SELECT d.data_lancamento, f.nome as fornecedor_nome, f.fornecedores_numerobalanca, 
-                   d.descricao, d.valor, d.tipo,
-                   IFNULL(c.id, 'Manual') as origem
-            FROM debitos_fornecedores d
-            LEFT JOIN compras c ON d.compra_id = c.id
-            LEFT JOIN fornecedores f ON d.fornecedor_id = f.id
-            WHERE d.data_lancamento BETWEEN %s AND %s
-        """
-        params = [data_de, data_ate]
-        if fornecedor_id:
-            query += " AND d.fornecedor_id = %s"
-            params.append(fornecedor_id)
-        query += " ORDER BY d.data_lancamento DESC"
+        def tarefa_db():
+            with get_cursor() as cursor:
+                query = """
+                        SELECT d.data_lancamento, \
+                               f.nome                 as fornecedor_nome, \
+                               f.fornecedores_numerobalanca,
+                               d.descricao, \
+                               d.valor, \
+                               d.tipo,
+                               IFNULL(c.id, 'Manual') as origem
+                        FROM debitos_fornecedores d
+                                 LEFT JOIN compras c ON d.compra_id = c.id
+                                 LEFT JOIN fornecedores f ON d.fornecedor_id = f.id
+                        WHERE d.data_lancamento BETWEEN %s AND %s
+                        """
+                params = [data_de, data_ate]
+                if fornecedor_id:
+                    query += " AND d.fornecedor_id = %s"
+                    params.append(fornecedor_id)
+                query += " ORDER BY d.data_lancamento DESC"
 
-        with get_cursor() as cursor:
-            cursor.execute(query, params)
-            resultados = cursor.fetchall()
+                with get_cursor() as cursor:
+                    cursor.execute(query, params)
+                    resultados = cursor.fetchall()
+            return resultados
 
+        self.worker = WorkerThread(tarefa_db)
+        self.worker.finished.connect(self._atualizar_ui_debitos)
+        self.worker.erro.connect(self._mostrar_erro_thread)
+        self.worker.start()
+
+    def _atualizar_ui_debitos(self, resultados):
         self.tabela.setRowCount(len(resultados))
         saldo = 0.0
         for i, row in enumerate(resultados):
@@ -148,6 +162,10 @@ class DebitosUI(QWidget):
             self.tabela.setItem(i, 6, QTableWidgetItem(str(row["origem"])))
             saldo += float(row["valor"]) if row["tipo"] == "inclusao" else -float(row["valor"])
         self.label_saldo.setText(f"Saldo devedor: R$ {saldo:.2f}")
+
+    def _mostrar_erro_thread(self, mensagem):
+        from PySide6.QtWidgets import QMessageBox
+        QMessageBox.critical(self, "Erro", mensagem)
 
     def filtrar_por_fornecedor(self, fornecedor_id):
         idx = self.combo_fornecedor.findData(fornecedor_id)
@@ -279,37 +297,47 @@ class DebitosUI(QWidget):
         self.atualizar()
 
     def exportar_pdf(self):
-        path_temp = tempfile.mktemp(suffix=".pdf")
-        printer = QPrinter()
-        printer.setOutputFormat(QPrinter.PdfFormat)
-        printer.setOutputFileName(path_temp)
-        printer.setPageOrientation(QPageLayout.Landscape)
-        # Define as margens (esquerda, topo, direita, inferior) em milímetros
-        margins = QMarginsF(20, 20, 20, 20)
-        printer.setPageMargins(margins, QPageLayout.Millimeter)
+        def tarefa_pdf():
+            path_temp = tempfile.mktemp(suffix=".pdf")
+            printer = QPrinter()
+            printer.setOutputFormat(QPrinter.PdfFormat)
+            printer.setOutputFileName(path_temp)
+            printer.setPageOrientation(QPageLayout.Landscape)
+            # Define as margens (esquerda, topo, direita, inferior) em milímetros
+            margins = QMarginsF(20, 20, 20, 20)
+            printer.setPageMargins(margins, QPageLayout.Millimeter)
 
-        painter = QPainter(printer)
-        y_final = self._desenhar_relatorio(painter, printer)
-        painter.end()
+            painter = QPainter(printer)
+            y_final = self._desenhar_relatorio(painter, printer)
+            painter.end()
 
-        self.abrir_arquivo(path_temp)
+            return path_temp
+
+            self.worker_export = WorkerThread(tarefa_pdf)
+            self.worker_export.finished.connect(lambda path: self.abrir_arquivo(path))
+            self.worker_export.erro.connect(self._mostrar_erro_thread)
+            self.worker_export.start()
 
     def exportar_jpg(self):
-        # Calcula altura com base no número de linhas + cabeçalho + totais
-        linhas = self.tabela.rowCount()
-        altura = 100 + (linhas + 5) * 30  # margem + cada linha + espaço para totais
+        def tarefa_jpg():
+            # Calcula altura com base no número de linhas + cabeçalho + totais
+            linhas = self.tabela.rowCount()
+            altura = 100 + (linhas + 5) * 30  # margem + cada linha + espaço para totais
 
-        largura = 1200
-        imagem = QImage(largura, altura, QImage.Format_RGB32)
-        imagem.fill(Qt.white)
+            largura = 1200
+            imagem = QImage(largura, altura, QImage.Format_RGB32)
+            imagem.fill(Qt.white)
 
-        painter = QPainter(imagem)
-        self._desenhar_relatorio(painter)
-        painter.end()
+            painter = QPainter(imagem)
+            self._desenhar_relatorio(painter)
+            painter.end()
 
-        path_temp = tempfile.mktemp(suffix=".jpg")
-        imagem.save(path_temp, "JPG")
-        self.abrir_arquivo(path_temp)
+            path_temp = tempfile.mktemp(suffix=".jpg")
+            imagem.save(path_temp, "JPG")
+            self.worker_export = WorkerThread(tarefa_jpg)
+            self.worker_export.finished.connect(lambda path: self.abrir_arquivo(path))
+            self.worker_export.erro.connect(self._mostrar_erro_thread)
+            self.worker_export.start()
 
     def abrir_arquivo(self, path):
         if platform.system() == "Windows":

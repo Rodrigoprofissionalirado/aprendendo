@@ -253,3 +253,23 @@ def adicionar_marca_dagua_area(imagem, texto, x_inicio, x_fim, y_inicio, altura,
             marca.alpha_composite(txt_img, (px, py))
     resultado = Image.alpha_composite(imagem.convert("RGBA"), marca)
     return resultado.convert("RGB")
+
+def exportar_compra_pdf_threaded(compra, itens, saldo, filename, marca_dagua_texto=""):
+    def tarefa_pdf():
+        exportar_compra_pdf(compra, itens, saldo, filename, marca_dagua_texto=marca_dagua_texto)
+        return filename
+
+    worker = WorkerThread(tarefa_pdf)
+    worker.finished.connect(lambda path: print(f"PDF gerado: {path}"))
+    worker.erro.connect(lambda msg: print(f"Erro: {msg}"))
+    worker.start()
+
+def exportar_compra_jpg_threaded(compra, itens, saldo, filename, marca_dagua_texto=""):
+    def tarefa_jpg():
+        exportar_compra_jpg(compra, itens, saldo, filename, marca_dagua_texto=marca_dagua_texto)
+        return filename
+
+    worker = WorkerThread(tarefa_jpg)
+    worker.finished.connect(lambda path: print(f"JPG gerado: {path}"))
+    worker.erro.connect(lambda msg: print(f"Erro: {msg}"))
+    worker.start()

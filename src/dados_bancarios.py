@@ -5,6 +5,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout, QComboBox, QGridLayout
 )
 from db_context import get_cursor
+from threads_utils import WorkerThread
 from PySide6.QtCore import Qt, QLocale
 from compras.compras_db import listar_contas_do_fornecedor_cached
 from compras.compras import get_contas_fornecedor_cache
@@ -166,10 +167,19 @@ class DadosBancariosUI(QWidget):
 
     def carregar_tabela(self):
         filtro = self.input_filtro_nome.text().lower()
-        dados = self.db.listar_dados_bancarios()
-        if filtro:
-            dados = [d for d in dados if filtro in d['fornecedor_nome'].lower() or filtro in str(d['fornecedores_numerobalanca'])]
+        def tarefa_db():
+            dados = self.db.listar_dados_bancarios()
+            if filtro:
+                dados = [d for d in dados if
+                         filtro in d['fornecedor_nome'].lower() or filtro in str(d['fornecedores_numerobalanca'])]
+            return dados
 
+        self.worker = WorkerThread(tarefa_db)
+        self.worker.finished.connect(self._atualizar_tabela_dados)
+        self.worker.erro.connect(self._mostrar_erro_thread)
+        self.worker.start()
+
+    def _atualizar_tabela_dados(self, dados):
         self.tabela.setRowCount(len(dados))
         for i, dado in enumerate(dados):
             self.tabela.setItem(i, 0, QTableWidgetItem(str(dado['id'])))
@@ -181,6 +191,10 @@ class DadosBancariosUI(QWidget):
             self.tabela.setItem(i, 6, QTableWidgetItem(dado['agencia']))
             self.tabela.setItem(i, 7, QTableWidgetItem(dado['conta']))
             self.tabela.setItem(i, 8, QTableWidgetItem('Sim' if dado['padrao'] else 'Não'))
+
+    def _mostrar_erro_thread(self, mensagem):
+        from PySide6.QtWidgets import QMessageBox
+        QMessageBox.critical(self, "Erro", mensagem)
 
     def limpar_filtro(self):
         self.input_filtro_nome.clear()

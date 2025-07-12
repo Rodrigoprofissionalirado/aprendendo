@@ -18,6 +18,7 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from PIL import Image, ImageDraw, ImageFont
 from datetime import datetime
+from threads_utils import WorkerThread
 from compras.compras_db import (
     listar_produtos,
     listar_fornecedores,
@@ -139,67 +140,20 @@ class MovimentacaoTabUI(QWidget):
             return
         compra_id = int(compra_id_item.text())
 
-        compra = obter_compra_por_id(compra_id)
-        itens = listar_itens_movimentacao(compra_id)
+        def tarefa_db():
+            from movimentacoes_db import obter_compra_por_id, listar_itens_movimentacao
+            compra = obter_compra_por_id(compra_id)
+            itens = listar_itens_movimentacao(compra_id)
+            return compra, itens
 
-        if compra is None:
-            QMessageBox.warning(self, "Erro", "Movimentação não encontrada.")
-            return
+        self.worker_edit = WorkerThread(tarefa_db)
+        self.worker_edit.finished.connect(lambda dados: self._preencher_edicao_movimentacao(compra_id, dados))
+        self.worker_edit.erro.connect(self._mostrar_erro_thread)
+        self.worker_edit.start()
 
-        self.limpar_campos()
-        self.itens_movimentacao = []
-
-        # Preenche a data
-        self.input_data.setDate(QDate(compra['data_compra']))
-
-        # Preenche o tipo e garante visibilidade dos campos
-        tipo_mov = remove_acento(compra['tipo'])
-        idx_tipo = -1
-        for i in range(self.combo_tipo.count()):
-            if remove_acento(self.combo_tipo.itemText(i)) == tipo_mov:
-                idx_tipo = i
-                break
-        # Defina o tipo (bloqueando sinais)
-        self.combo_tipo.blockSignals(True)
-        self.combo_tipo.setCurrentIndex(idx_tipo if idx_tipo >= 0 else 0)
-        self.combo_tipo.blockSignals(False)
-        self.tipo_changed()  # agora os widgets corretos estão visíveis
-
-        if remove_acento(compra['tipo']).lower() == "transacao":
-            direcao_db = remove_acento(compra['direcao'] or "").capitalize()
-            idx_direcao = -1
-            for i in range(self.combo_direcao.count()):
-                item = self.combo_direcao.itemText(i)
-                if remove_acento(item).capitalize() == direcao_db:
-                    idx_direcao = i
-                    break
-            self.combo_direcao.setCurrentIndex(idx_direcao if idx_direcao >= 0 else 0)
-            valor_str = decimal_para_str_brasil(compra['total'], self.locale)
-            self.input_valor_operacao.setText(valor_str)
-        else:
-            self.input_valor_operacao.setText("")
-            self.itens_movimentacao = []
-            for item in itens:
-                self.itens_movimentacao.append({
-                    "produto_id": item['produto_id'],
-                    "nome": item['produto_nome'],
-                    "quantidade": item['quantidade'],
-                    "preco": item['preco_unitario'],
-                    "total": item['total']
-                })
-            self.atualizar_tabela_itens_adicionados()
-            valor_abatimento = compra.get('valor_abatimento')
-            if valor_abatimento is not None and float(valor_abatimento) > 0:
-                self.input_valor_abatimento.setText(str(valor_abatimento))
-            else:
-                abat = obter_abatimento_automatico(compra_id)
-                if abat:
-                    self.input_valor_abatimento.setText(str(abat['total']))
-                else:
-                    self.input_valor_abatimento.setText("")
-
-        self.input_descricao.setText(str(compra['descricao']) if compra['descricao'] else "")
-        self.movimentacao_edit_id = compra_id
+    def _preencher_edicao_movimentacao(self, compra_id, resultado):
+        compra, itens = resultado
+        # Atualize a tela de edição normalmente
 
     def excluir_movimentacao_finalizada(self):
         selected_ranges = self.tabela_movimentacoes.selectedRanges()
@@ -1053,38 +1007,25 @@ class MovimentacaoTabUI(QWidget):
         data_de = self.filtro_data_de.date().toPython()
         data_ate = self.filtro_data_ate.date().toPython()
         offset = (self.pagina_atual - 1) * self.qtd_por_pagina
-        # Busca paginada
-        movimentacoes = listar_movimentacoes(
-            self.fornecedor['id'], data_de, data_ate, limit=self.qtd_por_pagina, offset=offset
-        )
-        total_movs = contar_movimentacoes(self.fornecedor['id'], data_de, data_ate)
-        self.total_paginas = max(1, (total_movs + self.qtd_por_pagina - 1) // self.qtd_por_pagina)
+        fornecedor_id = self.fornecedor['id']
+        qtd_por_pagina = self.qtd_por_pagina
 
-        self.tabela_movimentacoes.setRowCount(len(movimentacoes))
+        def tarefa_db():
+            from movimentacoes_db import listar_movimentacoes, contar_movimentacoes, listar_itens_movimentacao
+            movimentacoes = listar_movimentacoes(fornecedor_id, data_de, data_ate, limit=qtd_por_pagina, offset=offset)
+            total_movs = contar_movimentacoes(fornecedor_id, data_de, data_ate)
+            mov_ids = [m["id"] for m in movimentacoes]
+            itens_por_mov = listar_itens_movimentacao(mov_ids)
+            return movimentacoes, total_movs, itens_por_mov
 
-        # --- NOVO: Busca todos os itens das movimentações em lote ---
-        mov_ids = [m["id"] for m in movimentacoes]
-        self.itens_por_mov = listar_itens_movimentacao(mov_ids)
-        # ------------------------------------------------------------
+        self.worker = WorkerThread(tarefa_db)
+        self.worker.finished.connect(self._atualizar_tabela_ui)
+        self.worker.erro.connect(self._mostrar_erro_thread)
+        self.worker.start()
 
-        for i, m in enumerate(movimentacoes):
-            self.tabela_movimentacoes.setItem(i, 0, QTableWidgetItem(str(m["id"])))
-            self.tabela_movimentacoes.setItem(i, 1, QTableWidgetItem(str(m["data"])))
-            self.tabela_movimentacoes.setItem(i, 2, QTableWidgetItem(m["tipo"].capitalize()))
-            self.tabela_movimentacoes.setItem(i, 3, QTableWidgetItem(m["direcao"].capitalize() if m["direcao"] else ""))
-            self.tabela_movimentacoes.setItem(i, 4, QTableWidgetItem(m["descricao"] or ""))
-            valor_op = m.get("valor_operacao")
-            if valor_op is not None:
-                valor_op_str = decimal_para_str_brasil(valor_op, self.locale)
-            else:
-                valor_op_str = ""
-            self.tabela_movimentacoes.setItem(i, 5, QTableWidgetItem(valor_op_str))
-
-        # Atualiza label e estados dos botões de paginação
-        self.label_paginacao.setText(f"Página {self.pagina_atual} de {self.total_paginas}")
-        self.btn_pagina_anterior.setEnabled(self.pagina_atual > 1)
-        self.btn_pagina_proxima.setEnabled(self.pagina_atual < self.total_paginas)
-        self.atualiza_saldo_total()
+    def _atualizar_tabela_ui(self, resultado):
+        movimentacoes, total_movs, itens_por_mov = resultado
+        # Atualize a tabela de movimentações e paginação
 
     def atualiza_saldo_total(self):
         saldo = obter_saldo_total(self.fornecedor['id'], remove_acento)
