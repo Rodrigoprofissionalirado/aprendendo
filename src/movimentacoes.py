@@ -37,7 +37,8 @@ from movimentacoes_db import (
     inserir_movimentacao,
     inserir_item_compra,
     buscar_fornecedor_id_por_numero_balanca,
-    contar_movimentacoes
+    contar_movimentacoes,
+    obter_saldo_anterior
 )
 
 # ---- CACHE PRODUTOS ----
@@ -347,7 +348,10 @@ class MovimentacaoTabUI(QWidget):
             margem = 20 * mm
             espacamento_blocos = 10 * mm
 
-            altura_total = margem
+            # NOVO: saldo anterior ao período
+            saldo_anterior = obter_saldo_anterior(fornecedor_id, data_de, remove_acento)
+
+            altura_total = margem + 40  # espaço extra para saldo anterior
             blocos = []
             for mov in movimentacoes:
                 bloco = {}
@@ -360,6 +364,13 @@ class MovimentacaoTabUI(QWidget):
             filename = f"movimentacoes_{data_de.strftime('%Y%m%d')}_{data_ate.strftime('%Y%m%d')}_extrato.pdf"
             c = canvas.Canvas(filename, pagesize=(largura, altura_total))
             y = altura_total - margem
+
+            # NOVO: saldo anterior no topo
+            c.setFont("Helvetica-Bold", 14)
+            c.setFillColorRGB(0, 0.39, 0) if saldo_anterior >= 0 else c.setFillColorRGB(1, 0, 0)
+            c.drawString(margem, y, f"SALDO ANTERIOR AO PERÍODO: R$ {float(saldo_anterior):,.2f}")
+            c.setFillColorRGB(0, 0, 0)
+            y -= 30
 
             for bloco in blocos:
                 mov = bloco['mov']
@@ -388,15 +399,14 @@ class MovimentacaoTabUI(QWidget):
                     c.drawString(margem, y, f"Descrição: {descricao}")
                     y -= 13
 
-                # Marca d'água para o bloco
                 self.adicionar_marca_dagua_pdf_area(
                     c,
                     texto=str(mov['fornecedores_numerobalanca']),
                     x_inicio=margem,
                     x_fim=largura - margem,
-                    y_topo=y + 73,  # topo do bloco (ajustar se desejar)
+                    y_topo=y + 73,
                     altura=bloco['altura'] - 18,
-                    tamanho_fonte=24,  # menor
+                    tamanho_fonte=24,
                     cor=(0.8, 0.8, 0.8),
                     angulo=25
                 )
@@ -443,9 +453,9 @@ class MovimentacaoTabUI(QWidget):
                 # SALDO TOTAL APÓS ESTA MOVIMENTAÇÃO (cor e fonte menor)
                 c.setFont("Helvetica-Bold", 10)
                 if saldo_atual < 0:
-                    c.setFillColorRGB(1, 0, 0)  # vermelho
+                    c.setFillColorRGB(1, 0, 0)
                 else:
-                    c.setFillColorRGB(0, 0.39, 0)  # verde escuro (aprox. #006400)
+                    c.setFillColorRGB(0, 0.39, 0)
                 c.drawString(margem, y, f"SALDO TOTAL APÓS ESTA MOVIMENTAÇÃO: R$ {float(saldo_atual):,.2f}")
                 c.setFillColorRGB(0, 0, 0)
                 y -= 14
@@ -523,11 +533,13 @@ class MovimentacaoTabUI(QWidget):
             mov_ids = [mov['id'] for mov in compras]
             itens_por_mov = listar_itens_movimentacao(mov_ids)
 
+            saldo_anterior = obter_saldo_anterior(fornecedor_id, data_de, remove_acento)
+
             largura_img = 1200
             margem = 20 * mm
             espacamento_blocos = 10 * mm
 
-            altura_total = margem
+            altura_total = margem + 40
             blocos = []
             for mov in compras:
                 bloco = {}
@@ -551,6 +563,12 @@ class MovimentacaoTabUI(QWidget):
                 fonte_saldo = ImageFont.truetype("arialbd.ttf", 17)
             except IOError:
                 fonte = fonte_bold = fonte_mono = fonte_menor = fonte_saldo = ImageFont.load_default()
+
+            # NOVO: saldo anterior no topo
+            cor_saldo = (0, 70, 0) if saldo_anterior >= 0 else (220, 0, 0)
+            draw.text((margem, y_base), f"SALDO ANTERIOR AO PERÍODO: R$ {float(saldo_anterior):,.2f}",
+                        fill=cor_saldo, font=fonte_bold)
+            y_base += 30
 
             for bloco in blocos:
                 mov = bloco['mov']

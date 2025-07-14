@@ -185,3 +185,32 @@ def contar_movimentacoes(fornecedor_id, data_de=None, data_ate=None):
         cursor.execute(query, params)
         row = cursor.fetchone()
         return row["total"] if row else 0
+
+def obter_saldo_anterior(fornecedor_id, data_de, remove_acento):
+    """Retorna o saldo acumulado até ANTES da data_de informada (não incluindo ela)."""
+    from decimal import Decimal
+    saldo = Decimal("0.00")
+    with get_cursor() as cursor:
+        cursor.execute("""
+            SELECT tipo, direcao, total, data_compra
+            FROM compras
+            WHERE fornecedor_id = %s
+              AND considerar_no_saldo_movimentacao = TRUE
+              AND data_compra < %s
+            ORDER BY data_compra, id
+        """, (fornecedor_id, data_de))
+        compras = cursor.fetchall()
+        for mov in compras:
+            tipo = remove_acento(mov['tipo'] or '')
+            direcao = remove_acento(mov['direcao'] or '')
+            valor_op = Decimal(mov['total']) if mov['total'] is not None else Decimal('0.00')
+            if tipo == "compra":
+                saldo += valor_op
+            elif tipo == "venda":
+                saldo -= valor_op
+            elif tipo == "transacao":
+                if direcao == "entrada":
+                    saldo += valor_op
+                elif direcao == "saida":
+                    saldo -= valor_op
+    return saldo
