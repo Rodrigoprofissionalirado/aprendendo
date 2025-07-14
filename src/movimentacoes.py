@@ -341,9 +341,12 @@ class MovimentacaoTabUI(QWidget):
             saldo_por_id = obter_saldos_acumulados(fornecedor_id, data_de, data_ate, remove_acento)
             mov_ids = [mov['id'] for mov in movimentacoes]
             itens_por_mov = listar_itens_movimentacao(mov_ids)
+
+            # Parâmetros do PDF
             largura, _ = A4
             margem = 20 * mm
             espacamento_blocos = 10 * mm
+
             altura_total = margem
             blocos = []
             for mov in movimentacoes:
@@ -353,9 +356,104 @@ class MovimentacaoTabUI(QWidget):
                 bloco['altura'] = 250 + 28 * (len(bloco['itens']) if bloco['itens'] else 1)
                 altura_total += bloco['altura'] + espacamento_blocos
                 blocos.append(bloco)
+
             filename = f"movimentacoes_{data_de.strftime('%Y%m%d')}_{data_ate.strftime('%Y%m%d')}_extrato.pdf"
             c = canvas.Canvas(filename, pagesize=(largura, altura_total))
-            # ... gera PDF ...
+            y = altura_total - margem
+
+            for bloco in blocos:
+                mov = bloco['mov']
+                itens = bloco['itens']
+                tipo = mov['tipo'].capitalize()
+                direcao = (mov.get('direcao') or "").capitalize()
+                descricao = mov['descricao'] or ""
+                valor_operacao = float(mov['valor_operacao'] or 0)
+                saldo_atual = saldo_por_id.get(mov['id'], 0)
+
+                c.setFont("Helvetica-Bold", 13)
+                c.setFillColorRGB(0, 0, 0)
+                c.drawString(margem, y, f"Movimentação ID: {mov['id']} | Tipo: {tipo}")
+                y -= 16
+                c.setFont("Helvetica", 11)
+                c.drawString(margem, y, f"Fornecedor: {mov['fornecedor']}")
+                y -= 13
+                c.drawString(margem, y, f"Nº Balança: {mov['fornecedores_numerobalanca']}")
+                y -= 13
+                c.drawString(margem, y, f"Data: {mov['data'].strftime('%d/%m/%Y')}")
+                y -= 13
+                if direcao:
+                    c.drawString(margem, y, f"Direção: {direcao}")
+                    y -= 13
+                if descricao:
+                    c.drawString(margem, y, f"Descrição: {descricao}")
+                    y -= 13
+
+                # Marca d'água para o bloco
+                self.adicionar_marca_dagua_pdf_area(
+                    c,
+                    texto=str(mov['fornecedores_numerobalanca']),
+                    x_inicio=margem,
+                    x_fim=largura - margem,
+                    y_topo=y + 73,  # topo do bloco (ajustar se desejar)
+                    altura=bloco['altura'] - 18,
+                    tamanho_fonte=24,  # menor
+                    cor=(0.8, 0.8, 0.8),
+                    angulo=25
+                )
+
+                if itens:
+                    y -= 8
+                    c.setFont("Helvetica-Bold", 11)
+                    c.setFillColorRGB(0, 0, 0)
+                    c.drawString(margem, y, "Produtos")
+                    y -= 12
+                    c.setFont("Helvetica-Bold", 10)
+                    c.drawString(margem, y, "Produto")
+                    c.drawString(margem + 180, y, "Qtd")
+                    c.drawString(margem + 240, y, "Unitário")
+                    c.drawString(margem + 330, y, "Total")
+                    y -= 8
+                    c.line(margem, y, largura - margem, y)
+                    y -= 8
+                    c.setFont("Helvetica", 10)
+                    total = 0
+                    for item in itens:
+                        c.drawString(margem, y, item['produto_nome'])
+                        c.drawString(margem + 180, y, str(item['quantidade']))
+                        c.drawString(margem + 240, y, f"R$ {item['preco_unitario']:.2f}")
+                        c.drawString(margem + 330, y, f"R$ {item['total']:.2f}")
+                        total += float(item['total'])
+                        y -= 13
+                    y -= 8
+                    c.line(margem, y, largura - margem, y)
+                    y -= 10
+                    c.setFont("Helvetica-Bold", 11)
+                    c.setFillColorRGB(0, 0, 0)
+                    c.drawString(margem, y, f"Subtotal: R$ {total:.2f}")
+                    y -= 12
+                    c.drawString(margem, y, f"Total Final (com abatimento): R$ {valor_operacao:.2f}")
+                    y -= 13
+                else:
+                    y -= 13
+                    c.setFont("Helvetica-Bold", 11)
+                    c.setFillColorRGB(0, 0, 0)
+                    c.drawString(margem, y, f"Valor da Operação: R$ {valor_operacao:.2f}")
+                    y -= 13
+
+                # SALDO TOTAL APÓS ESTA MOVIMENTAÇÃO (cor e fonte menor)
+                c.setFont("Helvetica-Bold", 10)
+                if saldo_atual < 0:
+                    c.setFillColorRGB(1, 0, 0)  # vermelho
+                else:
+                    c.setFillColorRGB(0, 0.39, 0)  # verde escuro (aprox. #006400)
+                c.drawString(margem, y, f"SALDO TOTAL APÓS ESTA MOVIMENTAÇÃO: R$ {float(saldo_atual):,.2f}")
+                c.setFillColorRGB(0, 0, 0)
+                y -= 14
+
+                c.setFont("Helvetica-Oblique", 8)
+                c.drawString(margem, y, f"Gerado em: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}")
+                y -= espacamento_blocos
+
             c.save()
             return filename
 
@@ -424,9 +522,11 @@ class MovimentacaoTabUI(QWidget):
             saldo_por_id = obter_saldos_acumulados(fornecedor_id, data_de, data_ate, remove_acento)
             mov_ids = [mov['id'] for mov in compras]
             itens_por_mov = listar_itens_movimentacao(mov_ids)
+
             largura_img = 1200
             margem = 20 * mm
             espacamento_blocos = 10 * mm
+
             altura_total = margem
             blocos = []
             for mov in compras:
@@ -436,8 +536,118 @@ class MovimentacaoTabUI(QWidget):
                 bloco['altura'] = 250 + 28 * (len(bloco['itens']) if bloco['itens'] else 1)
                 altura_total += bloco['altura'] + espacamento_blocos
                 blocos.append(bloco)
+
+            # Parâmetros do JPG
             imagem = Image.new("RGB", (int(largura_img), int(altura_total)), "white")
-            # ... gera imagem ...
+            draw = ImageDraw.Draw(imagem)
+            y_base = margem
+            marca_dagua_blocos = []
+
+            try:
+                fonte = ImageFont.truetype("arial.ttf", 18)
+                fonte_bold = ImageFont.truetype("arialbd.ttf", 24)
+                fonte_mono = ImageFont.truetype("arial.ttf", 16)
+                fonte_menor = ImageFont.truetype("arial.ttf", 15)
+                fonte_saldo = ImageFont.truetype("arialbd.ttf", 17)
+            except IOError:
+                fonte = fonte_bold = fonte_mono = fonte_menor = fonte_saldo = ImageFont.load_default()
+
+            for bloco in blocos:
+                mov = bloco['mov']
+                itens = bloco['itens']
+                tipo = mov['tipo'].capitalize()
+                direcao = (mov.get('direcao') or "").capitalize()
+                descricao = mov['descricao'] or ""
+                valor_operacao = float(mov['valor_operacao'] or 0)
+                saldo_atual = saldo_por_id.get(mov['id'], 0)
+                y = y_base
+
+                draw.text((margem, y), f"Movimentação ID: {mov['id']} | Tipo: {tipo}", fill="black", font=fonte_bold)
+                y += 36
+                draw.text((margem, y), f"Fornecedor: {mov['fornecedor']}", fill="black", font=fonte)
+                y += 24
+                draw.text((margem, y), f"Nº Balança: {mov['fornecedores_numerobalanca']}", fill="black", font=fonte)
+                y += 24
+                draw.text((margem, y), f"Data: {mov['data'].strftime('%d/%m/%Y')}", fill="black", font=fonte)
+                y += 24
+                if direcao:
+                    draw.text((margem, y), f"Direção: {direcao}", fill="black", font=fonte)
+                    y += 24
+                if descricao:
+                    draw.text((margem, y), f"Descrição: {descricao}", fill="black", font=fonte)
+                    y += 24
+
+                if itens:
+                    y += 6
+                    draw.text((margem, y), "Produtos", fill="black", font=fonte_bold)
+                    y += 26
+                    draw.text((margem, y), "Produto", fill="black", font=fonte_menor)
+                    draw.text((margem + 500, y), "Qtd", fill="black", font=fonte_menor)
+                    draw.text((margem + 650, y), "Unitário", fill="black", font=fonte_menor)
+                    draw.text((margem + 800, y), "Total", fill="black", font=fonte_menor)
+                    y += 5
+                    draw.line((margem, y + 20, largura_img - margem, y + 20), fill="black", width=1)
+                    y += 22
+
+                    total = 0
+                    for item in itens:
+                        draw.text((margem, y), item['produto_nome'], fill="black", font=fonte_mono)
+                        draw.text((margem + 500, y), str(item['quantidade']), fill="black", font=fonte_mono)
+                        draw.text((margem + 650, y), f"R$ {item['preco_unitario']:.2f}", fill="black", font=fonte_mono)
+                        draw.text((margem + 800, y), f"R$ {item['total']:.2f}", fill="black", font=fonte_mono)
+                        total += float(item['total'])
+                        y += 28
+                    y += 5
+                    draw.line((margem, y, largura_img - margem, y), fill="black", width=1)
+                    y += 7
+                    draw.text((margem, y), f"Subtotal: R$ {total:.2f}", fill="black", font=fonte_menor)
+                    y += 19
+                    draw.text((margem, y), f"Total Final (com abatimento): R$ {valor_operacao:.2f}", fill="black",
+                              font=fonte_menor)
+                    y += 19
+                else:
+                    y += 8
+                    draw.text((margem, y), f"Valor da Operação: R$ {valor_operacao:.2f}", fill="black",
+                              font=fonte_menor)
+                    y += 19
+
+                # S A L D O   (com cor)
+                saldo_str = f"SALDO TOTAL APÓS ESTA MOVIMENTAÇÃO: R$ {float(saldo_atual):,.2f}"
+                if saldo_atual < 0:
+                    cor_saldo = (220, 0, 0)  # vermelho
+                else:
+                    cor_saldo = (0, 70, 0)  # verde escuro (aprox. #006400)
+                draw.text((margem, y), saldo_str, fill=cor_saldo, font=fonte_saldo)
+                y += 21
+
+                draw.text((margem, y), f"Gerado em: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}", fill="gray",
+                          font=fonte_menor)
+
+                marca_dagua_blocos.append({
+                    "texto": str(mov['fornecedores_numerobalanca']),
+                    "x_inicio": margem,
+                    "x_fim": largura_img - margem,
+                    "y_inicio": y_base + 70,
+                    "altura": bloco['altura'] - 70
+                })
+
+                y_base += bloco['altura'] + 25
+
+            # Aplica as marcas d'água reatribuindo imagem
+            for md in marca_dagua_blocos:
+                imagem = self.adicionar_marca_dagua_area(
+                    imagem,
+                    texto=md["texto"],
+                    x_inicio=md["x_inicio"],
+                    x_fim=md["x_fim"],
+                    y_inicio=md["y_inicio"],
+                    altura=md["altura"],
+                    fonte_path="arial.ttf",
+                    tamanho_fonte=36,
+                    opacidade=80,
+                    angulo=25
+                )
+
             nome_arquivo = f"movimentacoes_{data_de.strftime('%Y%m%d')}_{data_ate.strftime('%Y%m%d')}_extrato.jpg"
             imagem.save(nome_arquivo)
             return nome_arquivo
@@ -621,7 +831,7 @@ class MovimentacaoTabUI(QWidget):
         layout_filtros = QHBoxLayout()
         self.filtro_data_de = QDateEdit()
         self.filtro_data_de.setCalendarPopup(True)
-        self.filtro_data_de.setDate(QDate.currentDate().addMonths(-1))
+        self.filtro_data_de.setDate(QDate.currentDate().addDays(-7))
         layout_filtros.addWidget(QLabel("De:"))
         layout_filtros.addWidget(self.filtro_data_de)
         self.filtro_data_ate = QDateEdit()
