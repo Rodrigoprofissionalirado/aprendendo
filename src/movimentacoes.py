@@ -4,7 +4,8 @@ import unicodedata
 from PySide6.QtWidgets import (
     QApplication, QWidget, QLabel, QPushButton, QVBoxLayout, QHBoxLayout,
     QGridLayout, QComboBox, QDateEdit, QLineEdit, QTableWidget,
-    QTableWidgetItem, QMessageBox, QSizePolicy, QTabWidget, QDialog
+    QTableWidgetItem, QMessageBox, QSizePolicy, QTabWidget, QDialog,
+    QSizePolicy, QHeaderView, QSplitter
 )
 from PySide6.QtGui import QIntValidator
 from PySide6.QtCore import Qt, QDate, QLocale, QEvent, QTimer
@@ -716,6 +717,8 @@ class MovimentacaoTabUI(QWidget):
 
     def init_ui(self):
         layout_root = QHBoxLayout(self)
+
+        # ESQUERDA
         layout_esq = QVBoxLayout()
         form_grid = QGridLayout()
 
@@ -842,9 +845,8 @@ class MovimentacaoTabUI(QWidget):
 
         layout_esq.addLayout(form_grid)
         layout_esq.addStretch()
-        layout_root.addLayout(layout_esq, 3)
 
-        # ----------- MEIO: Tabela movimentações (sem coluna de fornecedor) -----------
+        # MEIO
         layout_meio = QVBoxLayout()
         layout_filtros = QHBoxLayout()
         self.filtro_data_de = QDateEdit()
@@ -860,6 +862,7 @@ class MovimentacaoTabUI(QWidget):
         btn_filtrar = QPushButton("Filtrar")
         btn_filtrar.clicked.connect(self.resetar_e_filtrar)
         layout_filtros.addWidget(btn_filtrar)
+        layout_filtros.addStretch()
         layout_meio.addLayout(layout_filtros)
 
         self.tabela_movimentacoes = QTableWidget()
@@ -870,6 +873,7 @@ class MovimentacaoTabUI(QWidget):
         self.tabela_movimentacoes.setEditTriggers(QTableWidget.NoEditTriggers)
         self.tabela_movimentacoes.cellClicked.connect(self.mostrar_itens_movimentacao)
         self.tabela_movimentacoes.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.tabela_movimentacoes.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         layout_meio.addWidget(self.tabela_movimentacoes)
 
         # Paginação
@@ -880,24 +884,24 @@ class MovimentacaoTabUI(QWidget):
         paginacao_layout.addWidget(self.btn_pagina_anterior)
         paginacao_layout.addWidget(self.label_paginacao)
         paginacao_layout.addWidget(self.btn_pagina_proxima)
+        paginacao_layout.addStretch()
         layout_meio.addLayout(paginacao_layout)
+        layout_meio.addStretch()
 
         self.btn_pagina_anterior.clicked.connect(self.ir_para_pagina_anterior)
         self.btn_pagina_proxima.clicked.connect(self.ir_para_pagina_proxima)
 
-        layout_root.addLayout(layout_meio, 5)
-
-        # ----------- DIREITA: Tabela itens da movimentação selecionada -----------
+        # DIREITA
         layout_dir = QVBoxLayout()
         layout_dir.addWidget(QLabel("Itens da movimentação selecionada:"))
         self.tabela_itens = QTableWidget()
         self.tabela_itens.setColumnCount(4)
         self.tabela_itens.setHorizontalHeaderLabels(["Produto", "Qtd", "Preço", "Total"])
         self.tabela_itens.setEditTriggers(QTableWidget.NoEditTriggers)
-        self.tabela_itens.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        self.tabela_itens.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.tabela_itens.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         layout_dir.addWidget(self.tabela_itens)
-        layout_root.addLayout(layout_dir, 3)
-        # Botões de exportação abaixo do layout da direita
+        layout_dir.addStretch()
         btn_exportar_pdf = QPushButton("Exportar Movimentações em PDF")
         btn_exportar_pdf.clicked.connect(self.exportar_movimentacoes_pdf)
         btn_exportar_jpg = QPushButton("Exportar Movimentações em JPG")
@@ -905,6 +909,22 @@ class MovimentacaoTabUI(QWidget):
 
         layout_dir.addWidget(btn_exportar_pdf)
         layout_dir.addWidget(btn_exportar_jpg)
+
+        # CRIAR WIDGETS PARA O SPLITTER
+        widget_esq = QWidget()
+        widget_esq.setLayout(layout_esq)
+        widget_meio = QWidget()
+        widget_meio.setLayout(layout_meio)
+        widget_dir = QWidget()
+        widget_dir.setLayout(layout_dir)
+
+        splitter = QSplitter(Qt.Horizontal)
+        splitter.addWidget(widget_esq)
+        splitter.addWidget(widget_meio)
+        splitter.addWidget(widget_dir)
+        splitter.setSizes([320, 720, 320])
+
+        layout_root.addWidget(splitter)
 
         self.atualizar_tabela()
         self.tipo_changed()
