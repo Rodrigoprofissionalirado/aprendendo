@@ -2,7 +2,8 @@ import sys
 from PySide6.QtWidgets import (
     QApplication, QWidget, QLabel, QPushButton, QVBoxLayout,
     QHBoxLayout, QGridLayout, QComboBox, QDateEdit, QLineEdit,
-    QTableWidget, QTableWidgetItem, QMessageBox, QTabWidget, QDialog, QCheckBox
+    QTableWidget, QTableWidgetItem, QMessageBox, QTabWidget, QDialog, QCheckBox,
+    QSizePolicy, QHeaderView, QSplitter
 )
 from PySide6.QtGui import QIntValidator
 from PySide6.QtCore import Qt, QTimer, QDate, QLocale, QEvent
@@ -145,6 +146,8 @@ class ComprasUI(QWidget):
         )
 
         layout_principal.addLayout(layout_filtros)
+        #layout_principal.addStretch()  # espaço flexível
+
         # ---------------------- Fim dos filtros -----------------
 
         self.tabs = QTabWidget()
@@ -156,9 +159,10 @@ class ComprasUI(QWidget):
         self.tabs.addTab(self.tab_em_aberto, "Em aberto")
         self.tabs.addTab(self.tab_concluidas, "Concluídas")
 
-        # Layout Em Aberto
-        layout_em_aberto = QHBoxLayout()
-        self.tab_em_aberto.setLayout(layout_em_aberto)
+        # Layout Em Aberto com QSplitter
+        splitter = QSplitter(Qt.Horizontal)
+        self.tab_em_aberto.setLayout(QVBoxLayout())
+        self.tab_em_aberto.layout().addWidget(splitter)
 
         # ===================== TAB CONCLUÍDAS =====================
         layout_concluidas = QVBoxLayout()
@@ -172,6 +176,9 @@ class ComprasUI(QWidget):
         self.tabela_compras_concluidas.cellClicked.connect(
             lambda row, col: self.mostrar_itens_da_compra(row, col, tabela=self.tabela_compras_concluidas)
         )
+        # Responsividade: tabelas expansivas e colunas flexíveis
+        self.tabela_compras_concluidas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.tabela_compras_concluidas.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         layout_concluidas.addWidget(self.tabela_compras_concluidas)
 
         # Botões de paginação abaixo da tabela de compras concluídas
@@ -185,8 +192,11 @@ class ComprasUI(QWidget):
         layout_concluidas.addLayout(paginacao_concluida_layout)
 
         # ===================== ENTRADA DE DADOS - ESQUERDA =====================
-        layout_entrada = QVBoxLayout()
+        widget_esquerda = QWidget()
+        layout_entrada = QVBoxLayout(widget_esquerda)
         layout_dados = QGridLayout()
+
+        # ... [o restante dos widgets de entrada permanece igual] ...
 
         # Número da balança
         self.combo_fornecedor = QComboBox()
@@ -282,6 +292,8 @@ class ComprasUI(QWidget):
         self.tabela_itens_adicionados.setEditTriggers(QTableWidget.DoubleClicked | QTableWidget.SelectedClicked)
         self.tabela_itens_adicionados.cellChanged.connect(self.atualizar_item_editado)
         self.tabela_itens_adicionados.setSelectionBehavior(QTableWidget.SelectRows)
+        self.tabela_itens_adicionados.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.tabela_itens_adicionados.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
 
         layout_entrada.addWidget(QLabel("Itens da Compra (antes de finalizar):"))
         layout_entrada.addWidget(self.tabela_itens_adicionados)
@@ -318,13 +330,10 @@ class ComprasUI(QWidget):
         self.btn_alterar_status.clicked.connect(self.alterar_status_compra)
         layout_entrada.addWidget(self.btn_alterar_status)
 
-        layout_em_aberto.addLayout(layout_entrada, 3)
+        # ===================== Filtros e tabela - meio =====================
+        widget_central = QWidget()
+        layout_compras_com_filtros = QVBoxLayout(widget_central)
 
-        # Filtros e tabela - meio
-        layout_compras_com_filtros = QVBoxLayout()
-        layout_em_aberto.addLayout(layout_compras_com_filtros, 5)
-
-        # Tabela principal de compras em aberto
         self.tabela_compras_aberto = QTableWidget()
         self.tabela_compras_aberto.setColumnCount(6)
         self.tabela_compras_aberto.setHorizontalHeaderLabels([
@@ -334,6 +343,8 @@ class ComprasUI(QWidget):
         self.tabela_compras_aberto.cellClicked.connect(
             lambda row, col: self.mostrar_itens_da_compra(row, col, tabela=self.tabela_compras_aberto))
         self.tabela_compras_aberto.itemSelectionChanged.connect(self.atualizar_campo_texto_copiavel)
+        self.tabela_compras_aberto.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.tabela_compras_aberto.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         layout_compras_com_filtros.addWidget(self.tabela_compras_aberto)
 
         # Botões de paginação abaixo da tabela de compras em aberto
@@ -346,13 +357,15 @@ class ComprasUI(QWidget):
         paginacao_aberto_layout.addWidget(self.btn_pagina_proxima_aberto)
         layout_compras_com_filtros.addLayout(paginacao_aberto_layout)
 
-        # Área direita
-        layout_direita = QVBoxLayout()
-        layout_em_aberto.addLayout(layout_direita, 3)
+        # ===================== Área direita =====================
+        widget_direita = QWidget()
+        layout_direita = QVBoxLayout(widget_direita)
         self.tabela_itens_compra = QTableWidget()
         self.tabela_itens_compra.setColumnCount(4)
         self.tabela_itens_compra.setHorizontalHeaderLabels(["Produto", "Qtd", "Preço Unit.", "Total"])
         self.tabela_itens_compra.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.tabela_itens_compra.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.tabela_itens_compra.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         layout_direita.addWidget(self.tabela_itens_compra)
 
         self.label_total_com_abatimento = QLabel("Total com Abatimento: R$ 0,00")
@@ -378,6 +391,12 @@ class ComprasUI(QWidget):
         self.btn_exportar_jpg = QPushButton("Exportar JPG")
         self.btn_exportar_jpg.clicked.connect(self.exportar_compra_jpg)
         layout_direita.addWidget(self.btn_exportar_jpg)
+
+        # Adiciona widgets ao splitter para layout flexível
+        splitter.addWidget(widget_esquerda)
+        splitter.addWidget(widget_central)
+        splitter.addWidget(widget_direita)
+        splitter.setSizes([300, 600, 300])  # proporção inicial das áreas
 
         self.setLayout(layout_principal)
         self.itens_compra = []
