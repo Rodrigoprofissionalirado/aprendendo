@@ -4,7 +4,8 @@ import sys
 from PySide6.QtWidgets import (
     QApplication, QWidget, QLabel, QPushButton, QVBoxLayout,
     QLineEdit, QMessageBox, QTableWidget, QTableWidgetItem, QHBoxLayout,
-    QComboBox, QGridLayout, QInputDialog, QDialog, QDialogButtonBox, QFormLayout, QDoubleSpinBox
+    QComboBox, QGridLayout, QInputDialog, QDialog, QDialogButtonBox, QFormLayout,
+    QDoubleSpinBox, QSizePolicy, QHeaderView, QSplitter
 )
 from PySide6.QtCore import Qt, QLocale
 from PySide6.QtGui import QIntValidator
@@ -270,8 +271,9 @@ class FornecedoresUI(QWidget):
         filtro_layout = QHBoxLayout()
         filtro_layout.addLayout(linha_nome)
         filtro_layout.addLayout(linha_balanca)
+        filtro_layout.addStretch()  # Empurra os filtros para a esquerda
 
-        # Dados do fornecedor
+        # PAINEL ESQUERDA (cadastro/edição)
         layout_dados = QGridLayout()
         layout_dados.addWidget(self.label_dropdown, 0, 0, 1, 2)
         layout_dados.addWidget(self.combo_fornecedores, 1, 0, 1, 2)
@@ -285,42 +287,56 @@ class FornecedoresUI(QWidget):
         layout_dados.addWidget(self.combo_categoria, 5, 1)
         layout_dados.addWidget(self.btn_editar_categoria, 6, 0)
         layout_dados.addWidget(self.btn_add_categoria, 6, 1)
-        layout_dados.addWidget(self.btn_excluir_categoria, 7, 0, 1, 2)  # Botão abaixo da seleção de categoria
+        layout_dados.addWidget(self.btn_excluir_categoria, 7, 0, 1, 2)
 
-        # Botões CRUD
         layout_botoes = QHBoxLayout()
         layout_botoes.addWidget(self.btn_adicionar)
         layout_botoes.addWidget(self.btn_atualizar)
         layout_botoes.addWidget(self.btn_excluir)
         layout_botoes.addWidget(self.btn_cancelar)
-
-        layout_topo = QVBoxLayout()
-        layout_topo.addLayout(layout_dados)
-        layout_topo.addLayout(layout_botoes)
+        layout_botoes.addStretch()
 
         layout_esquerda = QVBoxLayout()
-        layout_esquerda.addLayout(layout_topo)
+        layout_esquerda.addLayout(layout_dados)
+        layout_esquerda.addLayout(layout_botoes)
+        layout_esquerda.addStretch()
+        widget_esquerda = QWidget()
+        widget_esquerda.setLayout(layout_esquerda)
 
-        # Tabelas
-        layout_tabelas = QHBoxLayout()
-        layout_tabelas.addWidget(self.tabela)
-        layout_tabelas.addWidget(self.tabela_precos)
+        # PAINEL CENTRAL (tabela de fornecedores + filtros)
+        self.tabela.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.tabela.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        layout_central = QVBoxLayout()
+        layout_central.addLayout(filtro_layout)
+        layout_central.addWidget(self.tabela)
+        layout_central.addStretch()
+        widget_central = QWidget()
+        widget_central.setLayout(layout_central)
 
-        # Exportações
+        # PAINEL DIREITA (tabela de preços + exportação)
+        self.tabela_precos.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.tabela_precos.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         layout_export = QHBoxLayout()
         layout_export.addWidget(self.btn_export_pdf)
         layout_export.addWidget(self.btn_export_jpg)
-
+        layout_export.addStretch()
         layout_direita = QVBoxLayout()
-        layout_direita.addLayout(filtro_layout)
-        layout_direita.addLayout(layout_tabelas)
+        layout_direita.addWidget(QLabel("Tabela de Preços da Categoria"))
+        layout_direita.addWidget(self.tabela_precos)
         layout_direita.addLayout(layout_export)
+        layout_direita.addStretch()
+        widget_direita = QWidget()
+        widget_direita.setLayout(layout_direita)
 
-        # Layout principal
+        # SPLITTER COM TRÊS PAINÉIS
+        splitter = QSplitter(Qt.Horizontal)
+        splitter.addWidget(widget_esquerda)
+        splitter.addWidget(widget_central)
+        splitter.addWidget(widget_direita)
+        splitter.setSizes([320, 600, 400])
+
         layout_principal = QHBoxLayout()
-        layout_principal.addLayout(layout_esquerda, 1)
-        layout_principal.addLayout(layout_direita, 2)
-
+        layout_principal.addWidget(splitter)
         self.setLayout(layout_principal)
 
     def aplicar_filtro(self):
