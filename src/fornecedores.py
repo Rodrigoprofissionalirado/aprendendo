@@ -171,6 +171,8 @@ class FornecedoresUI(QWidget):
         self.fornecedores_exibidos = []
         self.categorias_do_fornecedor = []
         self.editando_ajuste = False  # Para bloquear recursão no slot de edição
+        self._em_linha_selecionada = False  # Flag para proteção
+        self._carregando_categorias = False  # Flag de carregamento
         self.init_ui()
 
     def init_ui(self):
@@ -402,9 +404,17 @@ class FornecedoresUI(QWidget):
         self.carregar_categorias_do_fornecedor(f['id'])
 
     def carregar_categorias_do_fornecedor(self, fornecedor_id):
-        if hasattr(self, "worker_tabela") and self.worker_tabela.isRunning():
-            self.worker_tabela.quit()
-            self.worker_tabela.wait()
+        # Trava para evitar múltiplos carregamentos simultâneos
+        if self._carregando_categorias:
+            return
+        self._carregando_categorias = True
+        self.tabela.setEnabled(False)  # Desabilita tabela central
+
+        # Finaliza worker anterior se estiver rodando
+        if hasattr(self, "worker_categorias") and self.worker_categorias.isRunning():
+            self.worker_categorias.quit()
+            self.worker_categorias.wait()
+
         def tarefa_db():
             categorias = self.db.listar_categorias_do_fornecedor(fornecedor_id)
             if not categorias:
@@ -428,6 +438,8 @@ class FornecedoresUI(QWidget):
         for c in categorias:
             self.combo_categoria.addItem(c['nome'], c['id'])
         self.tabela_precos.setRowCount(0)
+        self.tabela.setEnabled(True)  # Habilita tabela novamente
+        self._carregando_categorias = False  # Libera trava
         if self.combo_categoria.count() > 0:
             self.combo_categoria.setCurrentIndex(0)
             self.categoria_selecionada(0)
@@ -505,20 +517,25 @@ class FornecedoresUI(QWidget):
         obter_categoria_principal_cached.cache_clear()
 
     def linha_selecionada(self, row, column):
-        if 0 <= row < len(self.fornecedores_exibidos):
-            f = self.fornecedores_exibidos[row]
-            index_combo = self.combo_fornecedores.findData(f['id'])
-            if index_combo != -1:
-                self.combo_fornecedores.setCurrentIndex(index_combo)
-            # Preencha os campos diretamente
-            self.input_nome.setText(f['nome'])
-            self.input_endereco.setText(f.get('fornecedores_endereco', '') or f.get('endereco', ''))
-            self.input_numero_balanca.setText(
-                str(f.get('fornecedores_numerobalanca', '') or f.get('numerobalanca', '')))
-            self.carregar_categorias_do_fornecedor(f['id'])
-            if self.combo_categoria.count() > 0:
-                self.combo_categoria.setCurrentIndex(0)
-                self.categoria_selecionada(0)
+        if self._em_linha_selecionada:
+            return
+        self._em_linha_selecionada = True
+        try:
+            if 0 <= row < len(self.fornecedores_exibidos):
+                f = self.fornecedores_exibidos[row]
+                index_combo = self.combo_fornecedores.findData(f['id'])
+                if index_combo != -1:
+                    self.combo_fornecedores.setCurrentIndex(index_combo)
+                self.input_nome.setText(f['nome'])
+                self.input_endereco.setText(f.get('fornecedores_endereco', '') or f.get('endereco', ''))
+                self.input_numero_balanca.setText(
+                    str(f.get('fornecedores_numerobalanca', '') or f.get('numerobalanca', '')))
+                self.carregar_categorias_do_fornecedor(f['id'])
+                if self.combo_categoria.count() > 0:
+                    self.combo_categoria.setCurrentIndex(0)
+                    self.categoria_selecionada(0)
+        finally:
+            self._em_linha_selecionada = False
 
     def preencher_tabela_precos(self, categoria_id):
         self.editando_ajuste = True
