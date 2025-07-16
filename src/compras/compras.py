@@ -843,10 +843,11 @@ class ComprasUI(QWidget):
         if self.compra_edit_id is None:
             compra_id = adicionar_compra(
                 fornecedor_id, data_compra, valor_abatimento, self.itens_compra, status,
-                origem='compras', considerar_no_saldo_movimentacao=considerar_no_saldo  # <--- NOVO
+                origem='compras', considerar_no_saldo_movimentacao=considerar_no_saldo
             )
             if tipo_lancamento == "adiantamento" and valor_inclusao > 0:
                 inserir_adiantamento(fornecedor_id, compra_id, data_compra, valor_inclusao)
+            # Não chama inserir_abatimento manualmente!
             QMessageBox.information(self, "Sucesso", "Compra cadastrada com sucesso.")
         else:
             remover_lancamentos_antigos(self.compra_edit_id)
@@ -861,7 +862,7 @@ class ComprasUI(QWidget):
                 valor_abatimento,
                 self.itens_compra,
                 status,
-                considerar_no_saldo_movimentacao=considerar_no_saldo  # <--- NOVO
+                considerar_no_saldo_movimentacao=considerar_no_saldo
             )
             QMessageBox.information(self, "Sucesso", "Compra editada com sucesso.")
 
@@ -897,7 +898,47 @@ class ComprasUI(QWidget):
 
     def _preencher_edicao_compra(self, compra_id, resultado):
         compra, itens, valor_adiantamento = resultado
-        # Atualize a tela de edição normalmente
+
+        if compra is None:
+            QMessageBox.warning(self, "Erro", "Compra não encontrada.")
+            return
+
+        idx_fornecedor = self.combo_fornecedor.findData(compra['fornecedor_id'])
+        self.combo_fornecedor.setCurrentIndex(idx_fornecedor if idx_fornecedor >= 0 else 0)
+
+        # Data pode precisar ser convertida para QDate corretamente
+        if isinstance(compra['data_compra'], QDate):
+            self.input_data.setDate(compra['data_compra'])
+        else:
+            # Tenta converter de str para QDate
+            try:
+                self.input_data.setDate(QDate.fromString(str(compra['data_compra']), "yyyy-MM-dd"))
+            except Exception:
+                self.input_data.setDate(QDate.currentDate())
+
+        # Atualiza combo e campo de valor conforme o tipo de lançamento
+        if valor_adiantamento > 0:
+            self.combo_tipo_lancamento.setCurrentIndex(1)  # Adiantamento
+            self.input_valor_lancamento.setText(str(valor_adiantamento))
+        else:
+            self.combo_tipo_lancamento.setCurrentIndex(0)  # Abatimento
+            self.input_valor_lancamento.setText(str(compra.get('valor_abatimento', 0)))
+
+        idx_status = self.combo_status.findText(compra['status'])
+        self.combo_status.setCurrentIndex(idx_status if idx_status >= 0 else 0)
+
+        self.itens_compra = []
+        for item in itens:
+            self.itens_compra.append({
+                "produto_id": item['produto_id'],
+                "nome": item['produto_nome'],
+                "quantidade": item['quantidade'],
+                "preco": item['preco_unitario'],
+                "total": item['total']
+            })
+
+        self.compra_edit_id = compra_id
+        self.atualizar_tabela_itens_adicionados()
 
     @requer_permissao(['admin', 'gerente', 'operador'])
     def alterar_status_compra(self):
