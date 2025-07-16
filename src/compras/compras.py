@@ -830,7 +830,9 @@ class ComprasUI(QWidget):
         fornecedor_id = self.combo_fornecedor.currentData()
         data_compra = self.input_data.date().toPython()
         try:
-            valor_lancamento = Decimal(self.input_valor_lancamento.text().replace(',', '.')) if self.input_valor_lancamento.text() else Decimal('0.00')
+            valor_lancamento = Decimal(self.input_valor_lancamento.text().replace(',',
+                                                                                  '.')) if self.input_valor_lancamento.text() else Decimal(
+                '0.00')
         except (ValueError, InvalidOperation):
             QMessageBox.warning(self, "Erro", "Valor de abatimento/adiantamento inválido.")
             return
@@ -838,7 +840,56 @@ class ComprasUI(QWidget):
         status = self.combo_status.currentText()
         valor_abatimento = valor_lancamento if tipo_lancamento == "abatimento" else Decimal('0.00')
         valor_inclusao = valor_lancamento if tipo_lancamento == "adiantamento" else Decimal('0.00')
-        considerar_no_saldo = self.checkbox_considerar_no_saldo.isChecked()  # <--- NOVO
+        considerar_no_saldo = self.checkbox_considerar_no_saldo.isChecked()
+
+        # PATCH INICIO: Verifica diferença de produtos antes de salvar edição
+        if self.compra_edit_id is not None:
+            compra_antiga, itens_antigos, _ = obter_dados_para_editar_compra(self.compra_edit_id)
+            total_antigo = sum(float(item['total']) for item in itens_antigos)
+            total_novo = float(obter_total_produtos_lista(self.itens_compra))
+
+            diferenca = total_novo - total_antigo
+            # Só mostra o popup se mudou o total dos produtos (não apenas abate/adiantamento)
+            if abs(diferenca) > 0.01:
+                resultado = self.mostrar_dialog_diferenca(diferenca)
+                if resultado == "converter_abate":
+                    valor_atual = Decimal(self.input_valor_lancamento.text().replace(',',
+                                                                                     '.')) if self.input_valor_lancamento.text() else Decimal(
+                        '0.00')
+                    tipo_atual = self.combo_tipo_lancamento.currentData()
+                    tipo_diferenca = "adiantamento" if diferenca < 0 else "abatimento"
+                    valor_diferenca = Decimal(abs(diferenca))
+
+                    if tipo_atual == tipo_diferenca:
+                        # Mesmos tipos: soma
+                        novo_valor = valor_atual + valor_diferenca
+                        idx_tipo = 1 if tipo_diferenca == "adiantamento" else 0
+                        self.combo_tipo_lancamento.setCurrentIndex(idx_tipo)
+                        self.input_valor_lancamento.setText(str(novo_valor))
+                    else:
+                        saldo = valor_atual - valor_diferenca
+                        if saldo > 0:
+                            # Abatimento
+                            self.input_valor_lancamento.setText(str(abs(saldo)))
+                            idx_tipo = 0  # abatimento
+                            self.combo_tipo_lancamento.setCurrentIndex(idx_tipo)
+                        elif saldo < 0:
+                            # Adiantamento
+                            self.input_valor_lancamento.setText(str(abs(saldo)))
+                            idx_tipo = 1  # adiantamento
+                            self.combo_tipo_lancamento.setCurrentIndex(idx_tipo)
+                        else:
+                            self.input_valor_lancamento.setText("0.00")
+
+                    # Recalcula variáveis para salvar corretamente
+                    valor_lancamento = Decimal(self.input_valor_lancamento.text().replace(',',
+                                                                                          '.')) if self.input_valor_lancamento.text() else Decimal(
+                        '0.00')
+                    tipo_lancamento = self.combo_tipo_lancamento.currentData()
+                    valor_abatimento = valor_lancamento if tipo_lancamento == "abatimento" else Decimal('0.00')
+                    valor_inclusao = valor_lancamento if tipo_lancamento == "adiantamento" else Decimal('0.00')
+                # Se resultado for "somente_alterar", segue normalmente
+        # PATCH FIM
 
         if self.compra_edit_id is None:
             compra_id = adicionar_compra(
