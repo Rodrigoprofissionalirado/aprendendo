@@ -184,7 +184,7 @@ class FornecedoresUI(QWidget):
         self.organizar_layouts()
 
         self.atualizar_tabela()
-        self.carregar_combo_fornecedores()
+        #self.carregar_combo_fornecedores()
         self.cancelar_edicao()
 
     def criar_widgets(self):
@@ -379,6 +379,8 @@ class FornecedoresUI(QWidget):
             self.tabela.setItem(i, 1, QTableWidgetItem(row['nome']))
             self.tabela.setItem(i, 2, QTableWidgetItem(row.get('fornecedores_endereco', '') or row.get('endereco', '')))
 
+        self.carregar_combo_fornecedores()
+
     def _mostrar_erro_thread(self, mensagem):
         from PySide6.QtWidgets import QMessageBox
         QMessageBox.critical(self, "Erro", mensagem)
@@ -387,6 +389,8 @@ class FornecedoresUI(QWidget):
         self.combo_fornecedores.clear()
         for f in self.fornecedores:
             self.combo_fornecedores.addItem(f['nome'], f['id'])
+        if self.combo_fornecedores.count() > 0:
+            self.combo_fornecedores.setCurrentIndex(0)
 
     def fornecedor_selecionado(self, index):
         if index < 0 or index >= len(self.fornecedores):
