@@ -344,15 +344,27 @@ class FornecedoresUI(QWidget):
     def aplicar_filtro(self):
         nome_filtro = self.input_filtro_nome.text().lower()
         balanca_filtro = self.input_filtro_balanca.text()
-        filtrados = []
 
-        for f in self.fornecedores:
-            nome_ok = nome_filtro in f['nome'].lower()
-            balanca_ok = balanca_filtro == '' or str(f.get('fornecedores_numerobalanca', '') or f.get('numerobalanca', '')).startswith(balanca_filtro)
-            if nome_ok and balanca_ok:
-                filtrados.append(f)
+        # Sempre filtra sobre self.fornecedores!
+        if not nome_filtro and not balanca_filtro:
+            filtrados = self.fornecedores
+        else:
+            filtrados = []
+            for f in self.fornecedores:
+                nome_ok = nome_filtro in f['nome'].lower()
+                balanca_ok = balanca_filtro == '' or str(
+                    f.get('fornecedores_numerobalanca', '') or f.get('numerobalanca', '')).startswith(balanca_filtro)
+                if nome_ok and balanca_ok:
+                    filtrados.append(f)
 
-        self.atualizar_tabela(filtrados)
+        self.fornecedores_exibidos = filtrados
+        self.tabela.setRowCount(len(filtrados))
+        for i, row in enumerate(filtrados):
+            self.tabela.setItem(i, 0, QTableWidgetItem(
+                str(row.get('fornecedores_numerobalanca', '') or row.get('numerobalanca', ''))))
+            self.tabela.setItem(i, 1, QTableWidgetItem(row['nome']))
+            self.tabela.setItem(i, 2, QTableWidgetItem(row.get('fornecedores_endereco', '') or row.get('endereco', '')))
+        self.carregar_combo_fornecedores(filtrados)
 
     def atualizar_tabela(self, dados=None):
         if dados is not None:
@@ -379,15 +391,17 @@ class FornecedoresUI(QWidget):
             self.tabela.setItem(i, 1, QTableWidgetItem(row['nome']))
             self.tabela.setItem(i, 2, QTableWidgetItem(row.get('fornecedores_endereco', '') or row.get('endereco', '')))
 
-        self.carregar_combo_fornecedores()
+        # Chama aplicar_filtro para garantir sincronismo após atualização da tabela
+        self.aplicar_filtro()
 
     def _mostrar_erro_thread(self, mensagem):
         from PySide6.QtWidgets import QMessageBox
         QMessageBox.critical(self, "Erro", mensagem)
 
-    def carregar_combo_fornecedores(self):
+    def carregar_combo_fornecedores(self, lista=None):
         self.combo_fornecedores.clear()
-        for f in self.fornecedores:
+        fornecedores = lista if lista is not None else self.fornecedores
+        for f in fornecedores:
             self.combo_fornecedores.addItem(f['nome'], f['id'])
         if self.combo_fornecedores.count() > 0:
             self.combo_fornecedores.setCurrentIndex(0)
