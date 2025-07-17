@@ -95,7 +95,7 @@ def exportar_compra_pdf(compra, itens, saldo, filename, marca_dagua_texto=""):
     c.setFont(fonte_padrao + "-Bold", 11)
     if saldo < 0:
         c.drawString(20 * mm, y, f"Saldo positivo do fornecedor: R$ {-saldo:.2f}")
-    else:
+    if saldo > 0:
         c.drawString(20 * mm, y, f"Saldo devedor do fornecedor: R$ {abs(saldo):.2f}")
 
     y -= 20 * mm
@@ -198,7 +198,7 @@ def exportar_compra_jpg(compra, itens, saldo, filename, marca_dagua_texto=""):
 
     if saldo < 0:
         draw.text((30, y), f"Saldo positivo do fornecedor: R$ {-saldo:.2f}", fill="black", font=fonte_bold)
-    else:
+    if saldo > 0:
         draw.text((30, y), f"Saldo devedor do fornecedor: R$ {abs(saldo):.2f}", fill="black", font=fonte_bold)
     y += 40
 
