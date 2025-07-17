@@ -509,13 +509,20 @@ class ComprasUI(QWidget):
         dialog.setWindowTitle("Escolher conta do fornecedor para esta compra")
 
         layout = QVBoxLayout(dialog)
-        layout.addWidget(QLabel("Selecione a conta bancária:"))
+        layout.addWidget(QLabel("Selecione a conta bancária ou chave PIX:"))
 
         combo_contas = QComboBox(dialog)
         for conta in contas_do_fornecedor:
-            texto = f"{conta['apelido']} - {conta['banco']} Ag:{conta['agencia']} Conta:{conta['conta']}"
+            texto = f"{conta['apelido']}"
+            detalhes = []
+            if conta.get('banco'):
+                detalhes.append(f"{conta['banco']} Ag:{conta['agencia']} Conta:{conta['conta']}")
+            if conta.get('chave_pix'):
+                detalhes.append(f"PIX: {conta['chave_pix']}")
             if conta.get('padrao'):
-                texto += " (padrão)"
+                detalhes.append("(padrão)")
+            if detalhes:
+                texto += " - " + " | ".join(detalhes)
             combo_contas.addItem(texto, conta['id'])
 
         layout.addWidget(combo_contas)

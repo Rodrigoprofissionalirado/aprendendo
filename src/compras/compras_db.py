@@ -27,7 +27,7 @@ def listar_contas_do_fornecedor_cached(fornecedor_id):
         return []
     with get_cursor() as cursor:
         cursor.execute("""
-            SELECT id, banco, agencia, conta, nome_conta, padrao
+            SELECT id, banco, agencia, conta, nome_conta, padrao, chave_pix
             FROM dados_bancarios_fornecedor
             WHERE fornecedor_id = %s
             ORDER BY padrao DESC, nome_conta, banco
@@ -36,11 +36,12 @@ def listar_contas_do_fornecedor_cached(fornecedor_id):
         return [
             {
                 'id': row['id'],
-                'apelido': row['nome_conta'] or row['banco'],
+                'apelido': row['nome_conta'] or row['banco'] or (row['chave_pix'] if row['chave_pix'] else ''),
                 'banco': row['banco'],
                 'agencia': row['agencia'],
                 'conta': row['conta'],
                 'padrao': row['padrao'],
+                'chave_pix': row.get('chave_pix', ''),
             }
             for row in rows
         ]
@@ -389,42 +390,74 @@ def obter_fornecedor_id_por_numero_balanca(numero):
     return resultado['id'] if resultado else None
 
 def obter_dados_bancarios_para_campo_copiavel(compra_id):
+    def monta_texto(row, valor):
+        linhas = []
+        if row.get('nome_conta'):
+            linhas.append(f"{row['nome_conta']} - R$ {valor}")
+        elif row.get('banco'):
+            linhas.append(f"{row['banco']} - R$ {valor}")
+        else:
+            linhas.append(f"Conta/Pix - R$ {valor}")
+
+        if row.get('banco'):
+            agencia = row.get('agencia')
+            conta = row.get('conta')
+            dados_bancarios = f"{row['banco']}"
+            if agencia:
+                dados_bancarios += f" (Ag: {agencia}"
+                if conta:
+                    dados_bancarios += f", Conta: {conta})"
+                else:
+                    dados_bancarios += ")"
+            elif conta:
+                dados_bancarios += f" (Conta: {conta})"
+            linhas.append(dados_bancarios)
+        elif row.get('agencia') or row.get('conta'):
+            dados_bancarios = ""
+            if row.get('agencia'):
+                dados_bancarios += f"Ag: {row['agencia']}"
+            if row.get('conta'):
+                if dados_bancarios:
+                    dados_bancarios += ", "
+                dados_bancarios += f"Conta: {row['conta']}"
+            linhas.append(dados_bancarios)
+
+        if row.get('CPFouCNPJ'):
+            tipo_doc = "CNPJ" if len(row['CPFouCNPJ']) > 14 else "CPF"
+            linhas.append(f"{tipo_doc}: {row['CPFouCNPJ']}")
+
+        if row.get('chave_pix'):
+            linhas.append(f"Chave PIX: {row['chave_pix']}")
+
+        return "\n".join([l for l in linhas if l])
+
     with get_cursor() as cursor:
         # Primeiro tenta pegar a conta personalizada (da compra)
         cursor.execute("""
-            SELECT c.total, dbf.banco, dbf.agencia, dbf.conta, dbf.nome_conta, dbf.CPFouCNPJ
+            SELECT c.total, dbf.banco, dbf.agencia, dbf.conta, dbf.nome_conta, dbf.CPFouCNPJ, dbf.chave_pix
             FROM compras c
                 LEFT JOIN dados_bancarios_fornecedor dbf ON c.dados_bancarios_id = dbf.id
             WHERE c.id = %s
         """, (compra_id,))
         row = cursor.fetchone()
-        if row and row['banco']:
+        if row:
             valor = f"{row['total']:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-            tipo_doc = "CNPJ" if row['CPFouCNPJ'] and len(row['CPFouCNPJ']) > 14 else "CPF"
-            texto = (
-                f"{row['nome_conta'] or row['banco']} - R$ {valor}\n"
-                f"{row['banco']} (Ag: {row['agencia']}, Conta: {row['conta']})\n"
-                f"{tipo_doc}: {row['CPFouCNPJ']}"
-            )
-            return texto
-        else:
-            # Se não houver conta personalizada, busca a padrão do fornecedor com o mesmo formato
-            cursor.execute("""
-                SELECT dbf.banco, dbf.agencia, dbf.conta, dbf.nome_conta, dbf.CPFouCNPJ, c.total
-                FROM compras c
-                JOIN dados_bancarios_fornecedor dbf
-                    ON dbf.fornecedor_id = c.fornecedor_id AND dbf.padrao = 1
-                WHERE c.id = %s LIMIT 1
-            """, (compra_id,))
-            row = cursor.fetchone()
-            if row:
-                valor = f"{row['total']:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-                tipo_doc = "CNPJ" if row['CPFouCNPJ'] and len(row['CPFouCNPJ']) > 14 else "CPF"
-                texto = (
-                    f"{row['nome_conta'] or row['banco']} - R$ {valor}\n"
-                    f"{row['banco']} (Ag: {row['agencia']}, Conta: {row['conta']})\n"
-                    f"{tipo_doc}: {row['CPFouCNPJ']}"
-                )
+            texto = monta_texto(row, valor)
+            if texto:
+                return texto
+        # Se não houver conta personalizada, busca a padrão do fornecedor
+        cursor.execute("""
+            SELECT dbf.banco, dbf.agencia, dbf.conta, dbf.nome_conta, dbf.CPFouCNPJ, dbf.chave_pix, c.total
+            FROM compras c
+            JOIN dados_bancarios_fornecedor dbf
+                ON dbf.fornecedor_id = c.fornecedor_id AND dbf.padrao = 1
+            WHERE c.id = %s LIMIT 1
+        """, (compra_id,))
+        row = cursor.fetchone()
+        if row:
+            valor = f"{row['total']:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+            texto = monta_texto(row, valor)
+            if texto:
                 return texto
     return ""
 
