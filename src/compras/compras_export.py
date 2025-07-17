@@ -8,6 +8,11 @@ from datetime import datetime
 from PIL import Image, ImageDraw, ImageFont
 import platform
 import os
+import re
+
+def limpar_numero_nome_produto(nome):
+    # Remove todos os números do nome do produto
+    return re.sub(r'\d+', '', nome).strip()
 
 def exportar_compra_pdf(compra, itens, saldo, filename, marca_dagua_texto=""):
     c = canvas.Canvas(filename, pagesize=A4)
@@ -68,7 +73,7 @@ def exportar_compra_pdf(compra, itens, saldo, filename, marca_dagua_texto=""):
             c.showPage()
             y = height - 30 * mm
         c.setFont(fonte_padrao, 11)
-        c.drawString(20 * mm, y, item['produto_nome'])
+        c.drawString(20 * mm, y, limpar_numero_nome_produto(item['produto_nome']))
         c.drawString(90 * mm, y, str(item['quantidade']))
         c.drawString(110 * mm, y, f"R$ {item['preco_unitario']:.2f}")
         c.drawString(140 * mm, y, f"R$ {item['total']:.2f}")
@@ -168,7 +173,7 @@ def exportar_compra_jpg(compra, itens, saldo, filename, marca_dagua_texto=""):
 
     total = 0
     for item in itens:
-        draw.text((30, y), item['produto_nome'], fill="black", font=fonte_mono)
+        draw.text((30, y), limpar_numero_nome_produto(item['produto_nome']), fill="black", font=fonte_mono)
         draw.text((400, y), str(item['quantidade']), fill="black", font=fonte_mono)
         draw.text((470, y), f"{item['preco_unitario']:.2f}", fill="black", font=fonte_mono)
         draw.text((570, y), f"{item['total']:.2f}", fill="black", font=fonte_mono)

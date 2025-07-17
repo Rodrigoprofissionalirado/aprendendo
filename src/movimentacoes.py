@@ -1,6 +1,7 @@
 import sys
 import os, platform
 import unicodedata
+import re
 from PySide6.QtWidgets import (
     QApplication, QWidget, QLabel, QPushButton, QVBoxLayout, QHBoxLayout,
     QGridLayout, QComboBox, QDateEdit, QLineEdit, QTableWidget,
@@ -106,6 +107,10 @@ def remove_acento(txt):
         c for c in unicodedata.normalize('NFKD', txt)
         if not unicodedata.combining(c)
     ).lower().strip()
+
+def limpar_numero_nome_produto(nome):
+    # Remove todos os números do nome do produto
+    return re.sub(r'\d+', '', nome).strip()
 
 class MovimentacaoTabUI(QWidget):
     STATUS_LIST = [
@@ -429,7 +434,7 @@ class MovimentacaoTabUI(QWidget):
                     c.setFont("Helvetica", 10)
                     total = 0
                     for item in itens:
-                        c.drawString(margem, y, item['produto_nome'])
+                        c.drawString(margem, y, limpar_numero_nome_produto(item['produto_nome']))
                         c.drawString(margem + 180, y, str(item['quantidade']))
                         c.drawString(margem + 240, y, f"R$ {item['preco_unitario']:.2f}")
                         c.drawString(margem + 330, y, f"R$ {item['total']:.2f}")
@@ -610,7 +615,7 @@ class MovimentacaoTabUI(QWidget):
 
                     total = 0
                     for item in itens:
-                        draw.text((margem, y), item['produto_nome'], fill="black", font=fonte_mono)
+                        draw.text((margem, y), limpar_numero_nome_produto(item['produto_nome']), fill="black", font=fonte_mono)
                         draw.text((margem + 500, y), str(item['quantidade']), fill="black", font=fonte_mono)
                         draw.text((margem + 650, y), f"R$ {item['preco_unitario']:.2f}", fill="black", font=fonte_mono)
                         draw.text((margem + 800, y), f"R$ {item['total']:.2f}", fill="black", font=fonte_mono)
