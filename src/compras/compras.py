@@ -869,19 +869,18 @@ class ComprasUI(QWidget):
                     else:
                         saldo = valor_atual - valor_diferenca
                         if saldo > 0:
-                            # Abatimento
+                            # Sinal positivo: abatimento
                             self.input_valor_lancamento.setText(str(abs(saldo)))
-                            idx_tipo = 0  # abatimento
-                            self.combo_tipo_lancamento.setCurrentIndex(idx_tipo)
+                            self.combo_tipo_lancamento.setCurrentIndex(0)  # 0 = abatimento
                         elif saldo < 0:
-                            # Adiantamento
+                            # Sinal negativo: adiantamento
                             self.input_valor_lancamento.setText(str(abs(saldo)))
-                            idx_tipo = 1  # adiantamento
-                            self.combo_tipo_lancamento.setCurrentIndex(idx_tipo)
+                            self.combo_tipo_lancamento.setCurrentIndex(1)  # 1 = adiantamento
                         else:
                             self.input_valor_lancamento.setText("0.00")
+                            # Você pode manter o tipo anterior ou escolher um padrão aqui
 
-                    # Recalcula variáveis para salvar corretamente
+                    # Recalcula as variáveis para salvar corretamente
                     valor_lancamento = Decimal(self.input_valor_lancamento.text().replace(',',
                                                                                           '.')) if self.input_valor_lancamento.text() else Decimal(
                         '0.00')
