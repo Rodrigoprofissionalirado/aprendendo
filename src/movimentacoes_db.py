@@ -43,9 +43,11 @@ def listar_movimentacoes(fornecedor_id, data_de=None, data_ate=None, limit=50, o
 
 def obter_saldo_total(fornecedor_id, remove_acento):
     saldo = Decimal("0.00")
+    compra_ids = []
+
     with get_cursor() as cursor:
         cursor.execute("""
-            SELECT tipo, direcao, total
+            SELECT id, tipo, direcao, total
             FROM compras
             WHERE fornecedor_id = %s
               AND considerar_no_saldo_movimentacao = TRUE
@@ -64,6 +66,22 @@ def obter_saldo_total(fornecedor_id, remove_acento):
                     saldo += valor_op
                 elif direcao == "saida":
                     saldo -= valor_op
+            compra_ids.append(mov['id'])
+
+    # Agora, soma todos os adiantamentos (debitos_fornecedores, tipo='inclusao') relacionados a essas compras
+    if compra_ids:
+        ids_str = ','.join(['%s'] * len(compra_ids))
+        query = f"""
+            SELECT COALESCE(SUM(valor),0) AS soma_adiantamentos
+            FROM debitos_fornecedores
+            WHERE compra_id IN ({ids_str}) AND tipo = 'inclusao'
+        """
+        with get_cursor() as cursor:
+            cursor.execute(query, compra_ids)
+            row = cursor.fetchone()
+            adiantamento = row['soma_adiantamentos'] if row and row['soma_adiantamentos'] is not None else Decimal('0.00')
+            saldo += Decimal(adiantamento)
+
     return saldo
 
 def obter_saldos_acumulados(fornecedor_id, data_de, data_ate, remove_acento):

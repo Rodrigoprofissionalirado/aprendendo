@@ -20,11 +20,14 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from PIL import Image, ImageDraw, ImageFont
 from datetime import datetime
+
 from threads_utils import WorkerThread
 from compras.compras_db import (
     listar_produtos,
     listar_fornecedores,
     obter_ajuste_fixo,
+    obter_itens_e_lancamentos_da_compra,
+    obter_valor_com_abatimento_adiantamento
 )
 from movimentacoes_db import (
     listar_movimentacoes,
@@ -1085,8 +1088,8 @@ class MovimentacaoTabUI(QWidget):
         direcao = self.combo_direcao.currentText().lower() if tipo == "transação" else None
         descricao = self.input_descricao.text().strip()
         valor_abatimento = None
-        if tipo != "transação":
-            valor_abatimento = str_brasil_para_decimal(self.input_valor_abatimento.text())
+        compra_id = self.movimentacao_edit_id
+
         if tipo == "transação":
             try:
                 valor_operacao = Decimal(self.input_valor_operacao.text().replace(",", "."))
@@ -1097,11 +1100,57 @@ class MovimentacaoTabUI(QWidget):
             if not self.itens_movimentacao:
                 QMessageBox.warning(self, "Erro", "Adicione pelo menos um item antes de salvar.")
                 return
-            total = sum(Decimal(str(item['total'])) for item in self.itens_movimentacao)
-            valor_abatimento = Decimal(self.input_valor_abatimento.text().replace(',',
-                                                                                  '.')) if self.input_valor_abatimento.text() else Decimal(
-                '0.00')
-            valor_operacao = total - valor_abatimento
+
+            # PATCH: calcula valor_operacao incluindo adiantamento
+            # Se estiver editando uma movimentação existente, use seu compra_id.
+            # Se for uma nova, só pega o valor normalmente.
+            if compra_id is not None:
+                valor_operacao = obter_valor_com_abatimento_adiantamento(compra_id)
+                valor_abatimento = str_brasil_para_decimal(self.input_valor_abatimento.text())
+            else:
+                # Se for uma nova movimentação, simule o cálculo:
+                total = sum(Decimal(str(item['total'])) for item in self.itens_movimentacao)
+                valor_abatimento = str_brasil_para_decimal(self.input_valor_abatimento.text())
+                # Se houver adiantamento já lançado antes de salvar, busque esse valor.
+                # Exemplo: valor_adiantamento = buscar_valor_adiantamento_temporario()
+                valor_adiantamento = Decimal('0.00')  # Substitua pela lógica correta se necessário
+                valor_operacao = total + valor_adiantamento - valor_abatimento
+
+        # Prepara lista de itens para inserir_item_compra
+        itens = [
+            {
+                "produto_id": item["produto_id"],
+                "quantidade": item["quantidade"],
+                "preco_unitario": item["preco"]
+            }
+            for item in self.itens_movimentacao
+        ]
+
+        if compra_id is not None:
+            try:
+                atualizar_movimentacao(
+                    compra_id, data, tipo, direcao, descricao, valor_abatimento, valor_operacao
+                )
+                if tipo != "transação" and itens:
+                    inserir_item_compra(compra_id, itens)
+                QMessageBox.information(self, "Sucesso", "Movimentação editada com sucesso.")
+            except Exception as e:
+                QMessageBox.critical(self, "Erro", f"Erro ao editar movimentação: {e}")
+            self.movimentacao_edit_id = None
+        else:
+            try:
+                compra_id = inserir_movimentacao(
+                    self.fornecedor['id'], data, tipo, direcao, descricao, valor_abatimento, valor_operacao
+                )
+                if tipo != "transação" and itens:
+                    inserir_item_compra(compra_id, itens)
+                QMessageBox.information(self, "Sucesso", "Movimentação cadastrada com sucesso.")
+            except Exception as e:
+                QMessageBox.critical(self, "Erro", f"Erro ao cadastrar movimentação: {e}")
+        self.limpar_itens()
+        self.limpar_campos()
+        self.atualizar_tabela()
+        self.atualiza_saldo_total()
 
         # Prepara lista de itens para inserir_item_compra
         itens = [
@@ -1195,12 +1244,24 @@ class MovimentacaoTabUI(QWidget):
         self.tabela_movimentacoes.setRowCount(len(movimentacoes))
         for i, mov in enumerate(movimentacoes):
             try:
-                self.tabela_movimentacoes.setItem(i, 0, QTableWidgetItem(str(mov.get('id', ""))))
+                compra_id = mov.get('id', "")
+                self.tabela_movimentacoes.setItem(i, 0, QTableWidgetItem(str(compra_id)))
                 self.tabela_movimentacoes.setItem(i, 1, QTableWidgetItem(mov.get('data', "")))
-                self.tabela_movimentacoes.setItem(i, 2, QTableWidgetItem(mov.get('tipo', "")))
+                tipo = mov.get('tipo', "")
+                self.tabela_movimentacoes.setItem(i, 2, QTableWidgetItem(tipo))
                 self.tabela_movimentacoes.setItem(i, 3, QTableWidgetItem(str(mov.get('direcao', ""))))
                 self.tabela_movimentacoes.setItem(i, 4, QTableWidgetItem(mov.get('descricao', "")))
-                self.tabela_movimentacoes.setItem(i, 5, QTableWidgetItem(f"{mov.get('valor_operacao', 0.0):.2f}"))
+
+                # PATCH: para transação, sempre use mov['valor_operacao'] do banco
+                if tipo.lower() == "transacao":
+                    valor_operacao = mov.get('valor_operacao')
+                    # Se vier None, tenta buscar 'total' (caso campo no dict seja diferente)
+                    if valor_operacao is None:
+                        valor_operacao = mov.get('total', 0.0)
+                    self.tabela_movimentacoes.setItem(i, 5, QTableWidgetItem(f"{float(valor_operacao):.2f}"))
+                else:
+                    valor_operacao = obter_valor_com_abatimento_adiantamento(compra_id)
+                    self.tabela_movimentacoes.setItem(i, 5, QTableWidgetItem(f"{float(valor_operacao):.2f}"))
             except Exception as e:
                 print(f"Erro ao setar linha {i}: {e}, mov={mov}")
 
@@ -1220,10 +1281,12 @@ class MovimentacaoTabUI(QWidget):
         if tipo == "transação":
             self.tabela_itens.setRowCount(0)
             return
-        # Agora garantimos que "itens" é uma lista de dicts
-        itens_por_mov = listar_itens_movimentacao([compra_id])
-        itens = itens_por_mov.get(compra_id, [])
-        self.tabela_itens.setRowCount(len(itens))
+
+        # PATCH: usar obter_itens_e_lancamentos_da_compra para mostrar produtos + abatimento + adiantamento
+        itens, valor_abatimento, valor_adiantamento = obter_itens_e_lancamentos_da_compra(compra_id)
+        linha_extra = int(valor_adiantamento > 0) + int(valor_abatimento > 0)
+        self.tabela_itens.setRowCount(len(itens) + linha_extra)
+
         for i, item in enumerate(itens):
             self.tabela_itens.setItem(i, 0, QTableWidgetItem(item["produto_nome"]))
             self.tabela_itens.setItem(i, 1, QTableWidgetItem(str(item["quantidade"])))
@@ -1232,6 +1295,22 @@ class MovimentacaoTabUI(QWidget):
             self.tabela_itens.setItem(i, 2, QTableWidgetItem(preco_formatado))
             total_formatado = self.locale.toString(preco_unitario * float(item['quantidade']), 'f', 2)
             self.tabela_itens.setItem(i, 3, QTableWidgetItem(total_formatado))
+
+        row = len(itens)
+        # Adiantamento
+        if valor_adiantamento > 0:
+            self.tabela_itens.setItem(row, 0, QTableWidgetItem("Adiantamento"))
+            self.tabela_itens.setItem(row, 1, QTableWidgetItem(""))
+            self.tabela_itens.setItem(row, 2, QTableWidgetItem(""))
+            self.tabela_itens.setItem(row, 3, QTableWidgetItem(f"+{self.locale.toString(valor_adiantamento, 'f', 2)}"))
+            row += 1
+        # Abatimento
+        if valor_abatimento > 0:
+            self.tabela_itens.setItem(row, 0, QTableWidgetItem("Abatimento"))
+            self.tabela_itens.setItem(row, 1, QTableWidgetItem(""))
+            self.tabela_itens.setItem(row, 2, QTableWidgetItem(""))
+            self.tabela_itens.setItem(row, 3, QTableWidgetItem(f"-{self.locale.toString(valor_abatimento, 'f', 2)}"))
+
 
 class MovimentacoesUI(QWidget):
     def __init__(self):

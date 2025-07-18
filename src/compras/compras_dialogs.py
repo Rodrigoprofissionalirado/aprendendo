@@ -29,3 +29,31 @@ class DiferencaCompraDialog(QDialog):
     def converter_abate(self):
         self.resultado = "converter_abate"
         self.accept()
+
+class ConfirmTransacaoDialog(QDialog):
+    def __init__(self, mensagem, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Confirmação de Transação")
+        self.resultado = None
+
+        layout = QVBoxLayout(self)
+        label = QLabel(mensagem)
+        layout.addWidget(label)
+
+        botoes = QHBoxLayout()
+        btn_sim = QPushButton("Sim")
+        btn_nao = QPushButton("Não")
+        botoes.addWidget(btn_sim)
+        botoes.addWidget(btn_nao)
+        layout.addLayout(botoes)
+
+        btn_sim.clicked.connect(self.on_sim)
+        btn_nao.clicked.connect(self.on_nao)
+
+    def on_sim(self):
+        self.resultado = True
+        self.accept()
+
+    def on_nao(self):
+        self.resultado = False
+        self.accept()
