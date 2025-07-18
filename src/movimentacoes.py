@@ -1172,7 +1172,7 @@ class MovimentacaoTabUI(QWidget):
         if compra_id is not None:
             try:
                 atualizar_movimentacao(
-                    compra_id, data, tipo, direcao, descricao, valor_abatimento, valor_operacao
+                    compra_id, data, tipo, direcao, descricao, valor_abatimento, valor_operacao, tipo_lancamento, valor_lancamento
                 )
                 if tipo != "transação" and itens:
                     inserir_item_compra(compra_id, itens)
@@ -1210,7 +1210,7 @@ class MovimentacaoTabUI(QWidget):
         self.limpar_itens()
         self.limpar_campos()
         self.atualizar_tabela()
-        self.atualiza_saldo_total()
+        #self.atualiza_saldo_total()
 
     def atualizar_tabela(self):
         if hasattr(self, "worker") and self.worker.isRunning():
@@ -1290,6 +1290,7 @@ class MovimentacaoTabUI(QWidget):
 
         self.total_paginas = max(1, (total_movs + self.qtd_por_pagina - 1) // self.qtd_por_pagina)
         self.label_paginacao.setText(f"Página {self.pagina_atual} de {self.total_paginas}")
+        self.atualiza_saldo_total()
 
     def atualiza_saldo_total(self):
         saldo = obter_saldo_total(self.fornecedor['id'], remove_acento)
