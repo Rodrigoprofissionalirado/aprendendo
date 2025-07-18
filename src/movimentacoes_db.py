@@ -151,7 +151,11 @@ def obter_compra_por_id(compra_id):
 
 def excluir_movimentacao(compra_id):
     with get_cursor(commit=True) as cursor:
+        # Primeiro exclui adiantamentos/abatimentos vinculados
+        cursor.execute("DELETE FROM debitos_fornecedores WHERE compra_id = %s", (compra_id,))
+        # Depois exclui itens_compra (se usar)
         cursor.execute("DELETE FROM itens_compra WHERE compra_id = %s", (compra_id,))
+        # Por fim, exclui a movimentação em si
         cursor.execute("DELETE FROM compras WHERE id = %s", (compra_id,))
 
 def buscar_fornecedor_id_por_numero_balanca(numero_balanca):
