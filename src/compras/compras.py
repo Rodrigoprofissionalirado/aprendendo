@@ -698,7 +698,7 @@ class ComprasUI(QWidget):
 
             self.atualizar_tabelas()
 
-    def lancar_transacao_saida_para_compra(compra_id):
+    def lancar_transacao_saida_para_compra(self, compra_id):
         from movimentacoes_db import inserir_movimentacao, inserir_item_compra
         compra, itens = obter_detalhes_compra(compra_id)
         fornecedor_id = compra['fornecedor_id']

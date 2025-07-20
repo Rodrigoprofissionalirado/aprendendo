@@ -193,7 +193,8 @@ def obter_detalhes_compra(compra_id):
         compra = cursor.fetchone()
 
         cursor.execute("""
-            SELECT p.nome                            AS produto_nome,
+            SELECT p.nome AS produto_nome,
+                   i.produto_id,
                    i.quantidade,
                    i.preco_unitario,
                    (i.quantidade * i.preco_unitario) AS total
