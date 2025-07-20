@@ -5,6 +5,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout, QComboBox, QGridLayout
 )
 from db_context import get_cursor
+from threads_utils import WorkerThread
 from PySide6.QtCore import Qt, QLocale
 from compras.compras_db import listar_contas_do_fornecedor_cached
 from compras.compras import get_contas_fornecedor_cache
@@ -28,35 +29,34 @@ class DB:
         with get_cursor(commit=True) as cursor:
             cursor.execute("UPDATE dados_bancarios_fornecedor SET padrao = 0 WHERE fornecedor_id = %s", (fornecedor_id,))
 
-
-    def adicionar_dado_bancario(self, fornecedor_id, banco, cpf_cnpj, agencia, conta, padrao, nome_conta):
+    def adicionar_dado_bancario(self, fornecedor_id, banco, cpf_cnpj, agencia, conta, padrao, nome_conta, chave_pix):
         with get_cursor(commit=True) as cursor:
             if padrao == 1:
                 cursor.execute("UPDATE dados_bancarios_fornecedor SET padrao = 0 WHERE fornecedor_id = %s", (fornecedor_id,))
             cursor.execute(
                 """
                 INSERT INTO dados_bancarios_fornecedor 
-                (fornecedor_id, banco, CPFouCNPJ, agencia, conta, padrao, nome_conta)
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                (fornecedor_id, banco, CPFouCNPJ, agencia, conta, padrao, nome_conta, chave_pix)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                 """,
-                (fornecedor_id, banco, cpf_cnpj, agencia, conta, padrao, nome_conta)
+                (fornecedor_id, banco, cpf_cnpj, agencia, conta, padrao, nome_conta, chave_pix)
             )
 
     def excluir_dado_bancario(self, dado_id):
         with get_cursor(commit=True) as cursor:
             cursor.execute("DELETE FROM dados_bancarios_fornecedor WHERE id = %s", (dado_id,))
 
-    def atualizar_dado_bancario(self, dado_id, fornecedor_id, banco, cpf_cnpj, agencia, conta, padrao, nome_conta):
+    def atualizar_dado_bancario(self, dado_id, fornecedor_id, banco, cpf_cnpj, agencia, conta, padrao, nome_conta, chave_pix):
         with get_cursor(commit=True) as cursor:
             if padrao == 1:
                 cursor.execute("UPDATE dados_bancarios_fornecedor SET padrao = 0 WHERE fornecedor_id = %s", (fornecedor_id,))
             cursor.execute(
                 """
                 UPDATE dados_bancarios_fornecedor 
-                SET fornecedor_id=%s, nome_conta=%s, banco=%s, CPFouCNPJ=%s, agencia=%s, conta=%s, padrao=%s
+                SET fornecedor_id=%s, nome_conta=%s, banco=%s, CPFouCNPJ=%s, agencia=%s, conta=%s, padrao=%s, chave_pix=%s
                 WHERE id=%s
                 """,
-                (fornecedor_id, nome_conta, banco, cpf_cnpj, agencia, conta, padrao, dado_id)
+                (fornecedor_id, nome_conta, banco, cpf_cnpj, agencia, conta, padrao, chave_pix, dado_id)
             )
 
 class DadosBancariosUI(QWidget):
@@ -102,6 +102,8 @@ class DadosBancariosUI(QWidget):
         self.input_conta = QLineEdit()
         self.input_padrao = QComboBox()
         self.input_padrao.addItems(['Não', 'Sim'])
+        self.input_chave_pix = QLineEdit()
+        self.input_chave_pix.setPlaceholderText("Chave PIX (e-mail, CPF, telefone, aleatória)")
 
         form_layout.addWidget(QLabel('Nome Conta'), 2, 0)
         form_layout.addWidget(self.input_nome_conta, 2, 1)
@@ -113,8 +115,10 @@ class DadosBancariosUI(QWidget):
         form_layout.addWidget(self.input_agencia, 5, 1)
         form_layout.addWidget(QLabel('Conta'), 6, 0)
         form_layout.addWidget(self.input_conta, 6, 1)
-        form_layout.addWidget(QLabel('Padrão'), 7, 0)
-        form_layout.addWidget(self.input_padrao, 7, 1)
+        form_layout.addWidget(QLabel('Chave PIX'), 7, 0)
+        form_layout.addWidget(self.input_chave_pix, 7, 1)
+        form_layout.addWidget(QLabel('Padrão'), 8, 0)
+        form_layout.addWidget(self.input_padrao, 8, 1)
 
         self.btn_adicionar = QPushButton('Adicionar')
         self.btn_adicionar.clicked.connect(self.adicionar)
@@ -135,9 +139,9 @@ class DadosBancariosUI(QWidget):
         btn_layout.addWidget(self.btn_limpar)
 
         self.tabela = QTableWidget()
-        self.tabela.setColumnCount(9)
+        self.tabela.setColumnCount(10)
         self.tabela.setHorizontalHeaderLabels([
-            'ID', 'Fornecedor', 'Nº Balança', 'Nome Conta', 'Banco', 'CPF/CNPJ', 'Agência', 'Conta', 'Padrão'
+            'ID', 'Fornecedor', 'Nº Balança', 'Nome Conta', 'Banco', 'CPF/CNPJ', 'Agência', 'Conta', 'Padrão', 'Chave PIX'
         ])
         self.tabela.setEditTriggers(QTableWidget.NoEditTriggers)
         self.tabela.cellClicked.connect(self.carregar_dado_selecionado)
@@ -165,11 +169,23 @@ class DadosBancariosUI(QWidget):
             self.combo_fornecedor_nome.addItem(f"{f['nome']}", f["id"])
 
     def carregar_tabela(self):
+        if hasattr(self, "worker") and self.worker.isRunning():
+            self.worker.quit()
+            self.worker.wait()
         filtro = self.input_filtro_nome.text().lower()
-        dados = self.db.listar_dados_bancarios()
-        if filtro:
-            dados = [d for d in dados if filtro in d['fornecedor_nome'].lower() or filtro in str(d['fornecedores_numerobalanca'])]
+        def tarefa_db():
+            dados = self.db.listar_dados_bancarios()
+            if filtro:
+                dados = [d for d in dados if
+                         filtro in d['fornecedor_nome'].lower() or filtro in str(d['fornecedores_numerobalanca'])]
+            return dados
 
+        self.worker = WorkerThread(tarefa_db)
+        self.worker.finished.connect(self._atualizar_tabela_dados)
+        self.worker.erro.connect(self._mostrar_erro_thread)
+        self.worker.start()
+
+    def _atualizar_tabela_dados(self, dados):
         self.tabela.setRowCount(len(dados))
         for i, dado in enumerate(dados):
             self.tabela.setItem(i, 0, QTableWidgetItem(str(dado['id'])))
@@ -181,6 +197,11 @@ class DadosBancariosUI(QWidget):
             self.tabela.setItem(i, 6, QTableWidgetItem(dado['agencia']))
             self.tabela.setItem(i, 7, QTableWidgetItem(dado['conta']))
             self.tabela.setItem(i, 8, QTableWidgetItem('Sim' if dado['padrao'] else 'Não'))
+            self.tabela.setItem(i, 9, QTableWidgetItem(dado.get('chave_pix', '')))
+
+    def _mostrar_erro_thread(self, mensagem):
+        from PySide6.QtWidgets import QMessageBox
+        QMessageBox.critical(self, "Erro", mensagem)
 
     def limpar_filtro(self):
         self.input_filtro_nome.clear()
@@ -194,13 +215,24 @@ class DadosBancariosUI(QWidget):
         agencia = self.input_agencia.text()
         conta = self.input_conta.text()
         padrao = 1 if self.input_padrao.currentText() == 'Sim' else 0
+        chave_pix = self.input_chave_pix.text()
 
-        if nome_conta and banco and cpf_cnpj and agencia and conta and fornecedor_id is not None:
-            self.db.adicionar_dado_bancario(fornecedor_id, banco, cpf_cnpj, agencia, conta, padrao, nome_conta)
-            self.carregar_tabela()
-            self.limpar()
-        else:
-            QMessageBox.warning(self, 'Campos obrigatórios', 'Preencha todos os campos corretamente.')
+        # Validação: precisa ter pelo menos chave PIX OU dados bancários mínimos (banco, agência, conta)
+        dados_bancarios_preenchidos = banco and agencia and conta
+        chave_pix_preenchida = chave_pix.strip() != ""
+
+        if fornecedor_id is None:
+            QMessageBox.warning(self, 'Campos obrigatórios', 'Selecione um fornecedor.')
+            return
+
+        if not (chave_pix_preenchida or dados_bancarios_preenchidos):
+            QMessageBox.warning(self, 'Campos obrigatórios', 'Preencha pelo menos a chave PIX ou os dados bancários (Banco, Agência, Conta).')
+            return
+
+        # Permite cadastrar com chave PIX, dados bancários, ou ambos
+        self.db.adicionar_dado_bancario(fornecedor_id, banco, cpf_cnpj, agencia, conta, padrao, nome_conta, chave_pix)
+        self.carregar_tabela()
+        self.limpar()
         listar_contas_do_fornecedor_cached.cache_clear()
         get_contas_fornecedor_cache.cache_clear()
 
@@ -227,6 +259,7 @@ class DadosBancariosUI(QWidget):
         self.input_agencia.setText(self.tabela.item(row, 6).text())
         self.input_conta.setText(self.tabela.item(row, 7).text())
         self.input_padrao.setCurrentText(self.tabela.item(row, 8).text())
+        self.input_chave_pix.setText(self.tabela.item(row, 9).text())
         self.silenciar_sync = False
 
     def atualizar(self):
@@ -238,12 +271,20 @@ class DadosBancariosUI(QWidget):
             agencia = self.input_agencia.text()
             conta = self.input_conta.text()
             padrao = 1 if self.input_padrao.currentText() == 'Sim' else 0
+            chave_pix = self.input_chave_pix.text()
+
+            dados_bancarios_preenchidos = banco and agencia and conta
+            chave_pix_preenchida = chave_pix.strip() != ""
 
             if fornecedor_id is None:
                 QMessageBox.warning(self, 'Erro', 'Fornecedor inválido.')
                 return
 
-            self.db.atualizar_dado_bancario(self.dado_selecionado, fornecedor_id, banco, cpf_cnpj, agencia, conta, padrao, nome_conta)
+            if not (chave_pix_preenchida or dados_bancarios_preenchidos):
+                QMessageBox.warning(self, 'Campos obrigatórios', 'Preencha pelo menos a chave PIX ou os dados bancários (Banco, Agência, Conta).')
+                return
+
+            self.db.atualizar_dado_bancario(self.dado_selecionado, fornecedor_id, banco, cpf_cnpj, agencia, conta, padrao, nome_conta, chave_pix)
             self.carregar_tabela()
             self.limpar()
         listar_contas_do_fornecedor_cached.cache_clear()
@@ -268,6 +309,7 @@ class DadosBancariosUI(QWidget):
         self.input_agencia.clear()
         self.input_conta.clear()
         self.input_padrao.setCurrentIndex(0)
+        self.input_chave_pix.clear()
         self.tabela.clearSelection()
         self.silenciar_sync = False
 
@@ -299,6 +341,12 @@ class DadosBancariosUI(QWidget):
         else:
             self.combo_fornecedor_nome.setCurrentIndex(-1)
         self.silenciar_sync = False
+
+    def closeEvent(self, event):
+        if hasattr(self, "worker") and self.worker.isRunning():
+            self.worker.quit()
+            self.worker.wait()
+        event.accept()
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)

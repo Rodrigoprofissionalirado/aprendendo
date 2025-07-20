@@ -1,14 +1,17 @@
 import sys
+from db_context import get_cursor
 from PySide6.QtWidgets import (
     QApplication, QWidget, QLabel, QPushButton, QVBoxLayout,
     QHBoxLayout, QGridLayout, QComboBox, QDateEdit, QLineEdit,
-    QTableWidget, QTableWidgetItem, QMessageBox, QTabWidget, QDialog, QCheckBox
+    QTableWidget, QTableWidgetItem, QMessageBox, QTabWidget, QDialog, QCheckBox,
+    QSizePolicy, QHeaderView, QSplitter
 )
 from PySide6.QtGui import QIntValidator
 from PySide6.QtCore import Qt, QTimer, QDate, QLocale, QEvent
 from decimal import Decimal, InvalidOperation
 from status_delegate_combo import StatusComboDelegate
 from utils_permissoes import requer_permissao
+from threads_utils import WorkerThread
 
 # Importações dos submódulos
 from .compras_db import (
@@ -22,7 +25,7 @@ from .compras_db import (
     obter_fornecedor_id_por_numero_balanca, obter_primeira_categoria_do_fornecedor,
     obter_dados_bancarios_para_campo_copiavel, atualizar_conta_bancaria_da_compra,
     atualizar_status_compra as atualizar_status_compra_db, obter_totais_produtos_compras,
-    obter_valores_finais_compras, contar_compras
+    obter_valores_finais_compras, contar_compras, existe_transacao_saida_para_compra
 )
 from .compras_logic import (
     obter_total_produtos_lista, calcular_valor_com_abatimento_adiantamento, formatar_moeda
@@ -144,6 +147,8 @@ class ComprasUI(QWidget):
         )
 
         layout_principal.addLayout(layout_filtros)
+        #layout_principal.addStretch()  # espaço flexível
+
         # ---------------------- Fim dos filtros -----------------
 
         self.tabs = QTabWidget()
@@ -155,9 +160,10 @@ class ComprasUI(QWidget):
         self.tabs.addTab(self.tab_em_aberto, "Em aberto")
         self.tabs.addTab(self.tab_concluidas, "Concluídas")
 
-        # Layout Em Aberto
-        layout_em_aberto = QHBoxLayout()
-        self.tab_em_aberto.setLayout(layout_em_aberto)
+        # Layout Em Aberto com QSplitter
+        splitter = QSplitter(Qt.Horizontal)
+        self.tab_em_aberto.setLayout(QVBoxLayout())
+        self.tab_em_aberto.layout().addWidget(splitter)
 
         # ===================== TAB CONCLUÍDAS =====================
         layout_concluidas = QVBoxLayout()
@@ -171,6 +177,9 @@ class ComprasUI(QWidget):
         self.tabela_compras_concluidas.cellClicked.connect(
             lambda row, col: self.mostrar_itens_da_compra(row, col, tabela=self.tabela_compras_concluidas)
         )
+        # Responsividade: tabelas expansivas e colunas flexíveis
+        self.tabela_compras_concluidas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.tabela_compras_concluidas.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         layout_concluidas.addWidget(self.tabela_compras_concluidas)
 
         # Botões de paginação abaixo da tabela de compras concluídas
@@ -184,8 +193,11 @@ class ComprasUI(QWidget):
         layout_concluidas.addLayout(paginacao_concluida_layout)
 
         # ===================== ENTRADA DE DADOS - ESQUERDA =====================
-        layout_entrada = QVBoxLayout()
+        widget_esquerda = QWidget()
+        layout_entrada = QVBoxLayout(widget_esquerda)
         layout_dados = QGridLayout()
+
+        # ... [o restante dos widgets de entrada permanece igual] ...
 
         # Número da balança
         self.combo_fornecedor = QComboBox()
@@ -249,7 +261,7 @@ class ComprasUI(QWidget):
 
         # Checkbox para dizer se considera ou não essa compra no saldo
         self.checkbox_considerar_no_saldo = QCheckBox("Considerar esta compra no saldo geral de movimentações")
-        self.checkbox_considerar_no_saldo.setChecked(False)
+        self.checkbox_considerar_no_saldo.setChecked(True)
         layout_dados.addWidget(self.checkbox_considerar_no_saldo, 7, 0, 1, 2)
 
         layout_entrada.addLayout(layout_dados)
@@ -281,6 +293,8 @@ class ComprasUI(QWidget):
         self.tabela_itens_adicionados.setEditTriggers(QTableWidget.DoubleClicked | QTableWidget.SelectedClicked)
         self.tabela_itens_adicionados.cellChanged.connect(self.atualizar_item_editado)
         self.tabela_itens_adicionados.setSelectionBehavior(QTableWidget.SelectRows)
+        self.tabela_itens_adicionados.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.tabela_itens_adicionados.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
 
         layout_entrada.addWidget(QLabel("Itens da Compra (antes de finalizar):"))
         layout_entrada.addWidget(self.tabela_itens_adicionados)
@@ -317,13 +331,10 @@ class ComprasUI(QWidget):
         self.btn_alterar_status.clicked.connect(self.alterar_status_compra)
         layout_entrada.addWidget(self.btn_alterar_status)
 
-        layout_em_aberto.addLayout(layout_entrada, 3)
+        # ===================== Filtros e tabela - meio =====================
+        widget_central = QWidget()
+        layout_compras_com_filtros = QVBoxLayout(widget_central)
 
-        # Filtros e tabela - meio
-        layout_compras_com_filtros = QVBoxLayout()
-        layout_em_aberto.addLayout(layout_compras_com_filtros, 5)
-
-        # Tabela principal de compras em aberto
         self.tabela_compras_aberto = QTableWidget()
         self.tabela_compras_aberto.setColumnCount(6)
         self.tabela_compras_aberto.setHorizontalHeaderLabels([
@@ -333,6 +344,8 @@ class ComprasUI(QWidget):
         self.tabela_compras_aberto.cellClicked.connect(
             lambda row, col: self.mostrar_itens_da_compra(row, col, tabela=self.tabela_compras_aberto))
         self.tabela_compras_aberto.itemSelectionChanged.connect(self.atualizar_campo_texto_copiavel)
+        self.tabela_compras_aberto.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.tabela_compras_aberto.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         layout_compras_com_filtros.addWidget(self.tabela_compras_aberto)
 
         # Botões de paginação abaixo da tabela de compras em aberto
@@ -345,13 +358,15 @@ class ComprasUI(QWidget):
         paginacao_aberto_layout.addWidget(self.btn_pagina_proxima_aberto)
         layout_compras_com_filtros.addLayout(paginacao_aberto_layout)
 
-        # Área direita
-        layout_direita = QVBoxLayout()
-        layout_em_aberto.addLayout(layout_direita, 3)
+        # ===================== Área direita =====================
+        widget_direita = QWidget()
+        layout_direita = QVBoxLayout(widget_direita)
         self.tabela_itens_compra = QTableWidget()
         self.tabela_itens_compra.setColumnCount(4)
         self.tabela_itens_compra.setHorizontalHeaderLabels(["Produto", "Qtd", "Preço Unit.", "Total"])
         self.tabela_itens_compra.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.tabela_itens_compra.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.tabela_itens_compra.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         layout_direita.addWidget(self.tabela_itens_compra)
 
         self.label_total_com_abatimento = QLabel("Total com Abatimento: R$ 0,00")
@@ -377,6 +392,12 @@ class ComprasUI(QWidget):
         self.btn_exportar_jpg = QPushButton("Exportar JPG")
         self.btn_exportar_jpg.clicked.connect(self.exportar_compra_jpg)
         layout_direita.addWidget(self.btn_exportar_jpg)
+
+        # Adiciona widgets ao splitter para layout flexível
+        splitter.addWidget(widget_esquerda)
+        splitter.addWidget(widget_central)
+        splitter.addWidget(widget_direita)
+        splitter.setSizes([300, 600, 300])  # proporção inicial das áreas
 
         self.setLayout(layout_principal)
         self.itens_compra = []
@@ -489,13 +510,20 @@ class ComprasUI(QWidget):
         dialog.setWindowTitle("Escolher conta do fornecedor para esta compra")
 
         layout = QVBoxLayout(dialog)
-        layout.addWidget(QLabel("Selecione a conta bancária:"))
+        layout.addWidget(QLabel("Selecione a conta bancária ou chave PIX:"))
 
         combo_contas = QComboBox(dialog)
         for conta in contas_do_fornecedor:
-            texto = f"{conta['apelido']} - {conta['banco']} Ag:{conta['agencia']} Conta:{conta['conta']}"
+            texto = f"{conta['apelido']}"
+            detalhes = []
+            if conta.get('banco'):
+                detalhes.append(f"{conta['banco']} Ag:{conta['agencia']} Conta:{conta['conta']}")
+            if conta.get('chave_pix'):
+                detalhes.append(f"PIX: {conta['chave_pix']}")
             if conta.get('padrao'):
-                texto += " (padrão)"
+                detalhes.append("(padrão)")
+            if detalhes:
+                texto += " - " + " | ".join(detalhes)
             combo_contas.addItem(texto, conta['id'])
 
         layout.addWidget(combo_contas)
@@ -520,60 +548,77 @@ class ComprasUI(QWidget):
         dialog.exec()
 
     def atualizar_tabelas(self):
+        if hasattr(self, "worker") and self.worker.isRunning():
+            self.worker.quit()
+            self.worker.wait()
         status_filtro = self.filtro_combo_status.currentData()
         fornecedor_id = self.filtro_combo_fornecedor.currentData()
         data_de = self.filtro_data_de.date().toPython()
         data_ate = self.filtro_data_ate.date().toPython()
+        qtd_por_pagina = self.qtd_por_pagina
+        pagina_atual_aberto = self.pagina_atual_aberto
+        pagina_atual_concluida = self.pagina_atual_concluida
 
-        # Paginação - em aberto
-        offset_aberto = (self.pagina_atual_aberto - 1) * self.qtd_por_pagina
-        compras_aberto = listar_compras(
-            status=None if status_filtro == "Concluída" else status_filtro,
-            status_not="Concluída",
-            data_de=data_de,
-            data_ate=data_ate,
-            fornecedor_id=fornecedor_id,
-            origem='compras',
-            limit=self.qtd_por_pagina,
-            offset=offset_aberto
-        )
-        total_aberto = contar_compras(
-            status=None if status_filtro == "Concluída" else status_filtro,
-            status_not="Concluída",
-            data_de=data_de,
-            data_ate=data_ate,
-            fornecedor_id=fornecedor_id,
-            origem='compras'
-        )
-        self.total_paginas_aberto = max(1, ((total_aberto + self.qtd_por_pagina - 1) // self.qtd_por_pagina))
+        def tarefa_db():
+            offset_aberto = (pagina_atual_aberto - 1) * qtd_por_pagina
+            compras_aberto = listar_compras(
+                status=None if status_filtro == "Concluída" else status_filtro,
+                status_not="Concluída",
+                data_de=data_de,
+                data_ate=data_ate,
+                fornecedor_id=fornecedor_id,
+                origem='compras',
+                limit=qtd_por_pagina,
+                offset=offset_aberto
+            )
+            total_aberto = contar_compras(
+                status=None if status_filtro == "Concluída" else status_filtro,
+                status_not="Concluída",
+                data_de=data_de,
+                data_ate=data_ate,
+                fornecedor_id=fornecedor_id,
+                origem='compras'
+            )
+            offset_concluida = (pagina_atual_concluida - 1) * qtd_por_pagina
+            compras_concluidas = listar_compras(
+                status="Concluída",
+                data_de=data_de,
+                data_ate=data_ate,
+                fornecedor_id=fornecedor_id,
+                origem='compras',
+                limit=qtd_por_pagina,
+                offset=offset_concluida
+            )
+            total_concluida = contar_compras(
+                status="Concluída",
+                data_de=data_de,
+                data_ate=data_ate,
+                fornecedor_id=fornecedor_id,
+                origem='compras'
+            )
+            todos_ids = [c['id'] for c in compras_aberto] + [c['id'] for c in compras_concluidas]
+            itens_por_compra = listar_itens_compra(todos_ids)
+            return (compras_aberto, total_aberto, compras_concluidas, total_concluida, itens_por_compra)
 
-        # Paginação - concluídas
-        offset_concluida = (self.pagina_atual_concluida - 1) * self.qtd_por_pagina
-        compras_concluidas = listar_compras(
-            status="Concluída",
-            data_de=data_de,
-            data_ate=data_ate,
-            fornecedor_id=fornecedor_id,
-            origem='compras',
-            limit=self.qtd_por_pagina,
-            offset=offset_concluida
-        )
-        total_concluida = contar_compras(
-            status="Concluída",
-            data_de=data_de,
-            data_ate=data_ate,
-            fornecedor_id=fornecedor_id,
-            origem='compras'
-        )
-        self.total_paginas_concluida = max(1, ((total_concluida + self.qtd_por_pagina - 1) // self.qtd_por_pagina))
+        self.worker = WorkerThread(tarefa_db)
+        self.worker.finished.connect(self._atualizar_tabelas_ui)
+        self.worker.erro.connect(self._mostrar_erro_thread)
+        self.worker.start()
 
-        todos_ids = [c['id'] for c in compras_aberto] + [c['id'] for c in compras_concluidas]
-        self.itens_por_compra = listar_itens_compra(todos_ids)
+    def _atualizar_tabelas_ui(self, resultado):
+        compras_aberto, total_aberto, compras_concluidas, total_concluida, itens_por_compra = resultado
+        self.itens_por_compra = itens_por_compra
         self.preencher_tabela_compras(self.tabela_compras_aberto, compras_aberto)
         self.preencher_tabela_compras(self.tabela_compras_concluidas, compras_concluidas)
 
         self.label_paginacao_aberto.setText(f"Página {self.pagina_atual_aberto} de {self.total_paginas_aberto}")
-        self.label_paginacao_concluida.setText(f"Página {self.pagina_atual_concluida} de {self.total_paginas_concluida}")
+        self.label_paginacao_concluida.setText(
+            f"Página {self.pagina_atual_concluida} de {self.total_paginas_concluida}")
+        # Atualize as tabelas da UI normalmente a partir dos dados recebidos
+
+    def _mostrar_erro_thread(self, mensagem):
+        from PySide6.QtWidgets import QMessageBox
+        QMessageBox.critical(self, "Erro", mensagem)
 
     def ir_para_pagina_anterior_aberto(self):
         if self.pagina_atual_aberto > 1:
@@ -620,13 +665,103 @@ class ComprasUI(QWidget):
             tabela.blockSignals(False)
 
     def on_status_item_changed(self, item):
+        from .compras_dialogs import ConfirmTransacaoDialog
         if item.column() == 5:
             row = item.row()
             tabela = item.tableWidget()
             compra_id = int(tabela.item(row, 0).text())
             novo_status = item.text()
+            considerar_no_saldo = self.checkbox_considerar_no_saldo.isChecked() if hasattr(self, 'checkbox_considerar_no_saldo') else False
+
+            # Busca status anterior do banco ANTES de atualizar!
+            compra, _ = obter_detalhes_compra(compra_id)
+            status_anterior = compra.get('status') if compra else None
+
+            # Atualiza status no banco
             self.atualizar_status_compra(compra_id, novo_status)
+
+            if considerar_no_saldo:
+                if novo_status == "Concluída" and status_anterior != "Concluída":
+                    # Pergunta sobre lançar transação
+                    dialog = ConfirmTransacaoDialog(
+                        "Deseja lançar uma transação de saída no mesmo valor desta compra concluída?",
+                        self
+                    )
+                    if dialog.exec() and dialog.resultado:
+                        if not existe_transacao_saida_para_compra(compra_id):
+                            self.lancar_transacao_saida_para_compra(compra_id)
+                        else:
+                            QMessageBox.information(self, "Atenção",
+                                                    "Já existe uma transação de saída para esta compra!")
+                elif status_anterior == "Concluída" and novo_status != "Concluída":
+                    dialog = ConfirmTransacaoDialog(
+                        "Deseja excluir a transação de saída correspondente lançada na conclusão desta compra?",
+                        self
+                    )
+                    if dialog.exec() and dialog.resultado:
+                        self.excluir_transacao_saida_para_compra(compra_id)
+
             self.atualizar_tabelas()
+
+    def lancar_transacao_saida_para_compra(self, compra_id):
+        from movimentacoes_db import inserir_movimentacao, inserir_item_compra
+        compra, itens = obter_detalhes_compra(compra_id)
+        fornecedor_id = compra['fornecedor_id']
+        data_compra = compra['data_compra']
+        descricao = obter_dados_bancarios_para_campo_copiavel(compra_id) + f" - CompraID:{compra_id}"
+
+        # PATCH: Usa função que considera adiantamento e abatimento corretamente!
+        valor_final = obter_valor_com_abatimento_adiantamento(compra_id)
+
+        mov_id = inserir_movimentacao(
+            fornecedor_id=fornecedor_id,
+            data=data_compra,
+            tipo="Transação",
+            direcao="Saída",
+            descricao=descricao,
+            valor_abatimento=Decimal("0.00"),
+            valor_operacao=valor_final,
+            status="Concluída",
+            origem="movimentacao",
+            considerar_no_saldo=True
+        )
+
+        # Insere os itens normalmente
+        itens_mov = [
+            {
+                "produto_id": item["produto_id"],
+                "quantidade": item["quantidade"],
+                "preco_unitario": item["preco_unitario"]
+            }
+            for item in itens
+        ]
+        if itens_mov:
+            inserir_item_compra(mov_id, itens_mov)
+
+        # Não precisa inserir item virtual; exiba adiantamento/abatimento na UI usando obter_itens_e_lancamentos_da_compra
+
+        return mov_id
+
+    def excluir_transacao_saida_para_compra(self, compra_id):
+        from movimentacoes_db import excluir_movimentacao, buscar_fornecedor_id_por_numero_balanca
+
+        # Busca a transação vinculada por descrição terminando com CompraID:{compra_id}
+        descricao_chave = f"CompraID:{compra_id}"
+        transacao_id = None
+        with get_cursor() as cursor:
+            cursor.execute("""
+                    SELECT id FROM compras
+                    WHERE tipo = 'Transação'
+                      AND direcao = 'Saída'
+                      AND origem = 'movimentacao'
+                      AND descricao LIKE %s
+                """, (f"%{descricao_chave}",))
+            row = cursor.fetchone()
+            if row:
+                transacao_id = row["id"]
+
+        if transacao_id:
+            excluir_movimentacao(transacao_id)
 
     def atualizar_status_compra(self, compra_id, novo_status):
         atualizar_status_compra_db(compra_id, novo_status)
@@ -793,7 +928,9 @@ class ComprasUI(QWidget):
         fornecedor_id = self.combo_fornecedor.currentData()
         data_compra = self.input_data.date().toPython()
         try:
-            valor_lancamento = Decimal(self.input_valor_lancamento.text().replace(',', '.')) if self.input_valor_lancamento.text() else Decimal('0.00')
+            valor_lancamento = Decimal(self.input_valor_lancamento.text().replace(',',
+                                                                                  '.')) if self.input_valor_lancamento.text() else Decimal(
+                '0.00')
         except (ValueError, InvalidOperation):
             QMessageBox.warning(self, "Erro", "Valor de abatimento/adiantamento inválido.")
             return
@@ -801,15 +938,64 @@ class ComprasUI(QWidget):
         status = self.combo_status.currentText()
         valor_abatimento = valor_lancamento if tipo_lancamento == "abatimento" else Decimal('0.00')
         valor_inclusao = valor_lancamento if tipo_lancamento == "adiantamento" else Decimal('0.00')
-        considerar_no_saldo = self.checkbox_considerar_no_saldo.isChecked()  # <--- NOVO
+        considerar_no_saldo = self.checkbox_considerar_no_saldo.isChecked()
+
+        # PATCH INICIO: Verifica diferença de produtos antes de salvar edição
+        if self.compra_edit_id is not None:
+            compra_antiga, itens_antigos, _ = obter_dados_para_editar_compra(self.compra_edit_id)
+            total_antigo = sum(float(item['total']) for item in itens_antigos)
+            total_novo = float(obter_total_produtos_lista(self.itens_compra))
+
+            diferenca = total_novo - total_antigo
+            # Só mostra o popup se mudou o total dos produtos (não apenas abate/adiantamento)
+            if abs(diferenca) > 0.01:
+                resultado = self.mostrar_dialog_diferenca(diferenca)
+                if resultado == "converter_abate":
+                    valor_atual = Decimal(self.input_valor_lancamento.text().replace(',',
+                                                                                     '.')) if self.input_valor_lancamento.text() else Decimal(
+                        '0.00')
+                    tipo_atual = self.combo_tipo_lancamento.currentData()
+                    tipo_diferenca = "adiantamento" if diferenca < 0 else "abatimento"
+                    valor_diferenca = Decimal(abs(diferenca))
+
+                    if tipo_atual == tipo_diferenca:
+                        # Mesmos tipos: soma
+                        novo_valor = valor_atual + valor_diferenca
+                        idx_tipo = 1 if tipo_diferenca == "adiantamento" else 0
+                        self.combo_tipo_lancamento.setCurrentIndex(idx_tipo)
+                        self.input_valor_lancamento.setText(str(novo_valor))
+                    else:
+                        saldo = valor_atual - valor_diferenca
+                        if saldo > 0:
+                            # Sinal positivo: abatimento
+                            self.input_valor_lancamento.setText(str(abs(saldo)))
+                            self.combo_tipo_lancamento.setCurrentIndex(0)  # 0 = abatimento
+                        elif saldo < 0:
+                            # Sinal negativo: adiantamento
+                            self.input_valor_lancamento.setText(str(abs(saldo)))
+                            self.combo_tipo_lancamento.setCurrentIndex(1)  # 1 = adiantamento
+                        else:
+                            self.input_valor_lancamento.setText("0.00")
+                            # Você pode manter o tipo anterior ou escolher um padrão aqui
+
+                    # Recalcula as variáveis para salvar corretamente
+                    valor_lancamento = Decimal(self.input_valor_lancamento.text().replace(',',
+                                                                                          '.')) if self.input_valor_lancamento.text() else Decimal(
+                        '0.00')
+                    tipo_lancamento = self.combo_tipo_lancamento.currentData()
+                    valor_abatimento = valor_lancamento if tipo_lancamento == "abatimento" else Decimal('0.00')
+                    valor_inclusao = valor_lancamento if tipo_lancamento == "adiantamento" else Decimal('0.00')
+                # Se resultado for "somente_alterar", segue normalmente
+        # PATCH FIM
 
         if self.compra_edit_id is None:
             compra_id = adicionar_compra(
                 fornecedor_id, data_compra, valor_abatimento, self.itens_compra, status,
-                origem='compras', considerar_no_saldo_movimentacao=considerar_no_saldo  # <--- NOVO
+                origem='compras', considerar_no_saldo_movimentacao=considerar_no_saldo
             )
             if tipo_lancamento == "adiantamento" and valor_inclusao > 0:
                 inserir_adiantamento(fornecedor_id, compra_id, data_compra, valor_inclusao)
+            # Não chama inserir_abatimento manualmente!
             QMessageBox.information(self, "Sucesso", "Compra cadastrada com sucesso.")
         else:
             remover_lancamentos_antigos(self.compra_edit_id)
@@ -824,7 +1010,7 @@ class ComprasUI(QWidget):
                 valor_abatimento,
                 self.itens_compra,
                 status,
-                considerar_no_saldo_movimentacao=considerar_no_saldo  # <--- NOVO
+                considerar_no_saldo_movimentacao=considerar_no_saldo
             )
             QMessageBox.information(self, "Sucesso", "Compra editada com sucesso.")
 
@@ -834,7 +1020,7 @@ class ComprasUI(QWidget):
         self.limpar_itens()
         self.carregar_fornecedores()
         self.carregar_produtos()
-        self.checkbox_considerar_no_saldo.setChecked(False)
+        self.checkbox_considerar_no_saldo.setChecked(True)
         if hasattr(self, 'janela_debitos'):
             self.janela_debitos.atualizar()
 
@@ -849,7 +1035,17 @@ class ComprasUI(QWidget):
             return
         compra_id = int(compra_id_item.text())
 
-        compra, itens, valor_adiantamento = obter_dados_para_editar_compra(compra_id)
+        def tarefa_db():
+            from .compras_db import obter_dados_para_editar_compra
+            return obter_dados_para_editar_compra(compra_id)
+
+        self.worker_edit = WorkerThread(tarefa_db)
+        self.worker_edit.finished.connect(lambda dados: self._preencher_edicao_compra(compra_id, dados))
+        self.worker_edit.erro.connect(self._mostrar_erro_thread)
+        self.worker_edit.start()
+
+    def _preencher_edicao_compra(self, compra_id, resultado):
+        compra, itens, valor_adiantamento = resultado
 
         if compra is None:
             QMessageBox.warning(self, "Erro", "Compra não encontrada.")
@@ -857,7 +1053,16 @@ class ComprasUI(QWidget):
 
         idx_fornecedor = self.combo_fornecedor.findData(compra['fornecedor_id'])
         self.combo_fornecedor.setCurrentIndex(idx_fornecedor if idx_fornecedor >= 0 else 0)
-        self.input_data.setDate(QDate(compra['data_compra']))
+
+        # Data pode precisar ser convertida para QDate corretamente
+        if isinstance(compra['data_compra'], QDate):
+            self.input_data.setDate(compra['data_compra'])
+        else:
+            # Tenta converter de str para QDate
+            try:
+                self.input_data.setDate(QDate.fromString(str(compra['data_compra']), "yyyy-MM-dd"))
+            except Exception:
+                self.input_data.setDate(QDate.currentDate())
 
         # Atualiza combo e campo de valor conforme o tipo de lançamento
         if valor_adiantamento > 0:
@@ -865,7 +1070,7 @@ class ComprasUI(QWidget):
             self.input_valor_lancamento.setText(str(valor_adiantamento))
         else:
             self.combo_tipo_lancamento.setCurrentIndex(0)  # Abatimento
-            self.input_valor_lancamento.setText(str(compra['valor_abatimento']))
+            self.input_valor_lancamento.setText(str(compra.get('valor_abatimento', 0)))
 
         idx_status = self.combo_status.findText(compra['status'])
         self.combo_status.setCurrentIndex(idx_status if idx_status >= 0 else 0)
@@ -1075,29 +1280,71 @@ class ComprasUI(QWidget):
 
     @requer_permissao(['admin', 'gerente', 'operador', 'consulta'])
     def exportar_compra_pdf(self):
+        if hasattr(self, "worker") and self.worker.isRunning():
+            self.worker.quit()
+            self.worker.wait()
         compra_id = self.obter_compra_id_selecionado()
         if compra_id is None:
             QMessageBox.warning(self, "Exportar PDF", "Selecione uma compra para exportar.")
             return
-        compra, itens = obter_detalhes_compra(compra_id)
-        saldo = obter_saldo_devedor_fornecedor(compra['fornecedor_id'])
-        filename = f"compra_{compra_id}.pdf"
-        exportar_compra_pdf(compra, itens, saldo, filename,
-                            marca_dagua_texto=str(compra.get('fornecedores_numerobalanca', '')))
+
+        def tarefa_pdf():
+            from .compras_db import obter_detalhes_compra, obter_saldo_devedor_fornecedor
+            from .compras_export import exportar_compra_pdf
+            compra, itens = obter_detalhes_compra(compra_id)
+            saldo = obter_saldo_devedor_fornecedor(compra['fornecedor_id'])
+            filename = f"compra_{compra_id}.pdf"
+            exportar_compra_pdf(compra, itens, saldo, filename,
+                                marca_dagua_texto=str(compra.get('fornecedores_numerobalanca', '')))
+            return filename
+
+        self.worker_pdf = WorkerThread(tarefa_pdf)
+        self.worker_pdf.finished.connect(
+            lambda filename: QMessageBox.information(self, "PDF gerado", f"Arquivo: {filename}"))
+        self.worker_pdf.erro.connect(self._mostrar_erro_thread)
+        self.worker_pdf.start()
 
     @requer_permissao(['admin', 'gerente', 'operador', 'consulta'])
     def exportar_compra_jpg(self):
+        if hasattr(self, "worker") and self.worker.isRunning():
+            self.worker.quit()
+            self.worker.wait()
         compra_id = self.obter_compra_id_selecionado()
         if compra_id is None:
             QMessageBox.warning(self, "Exportar JPG", "Selecione uma compra para exportar.")
             return
-        compra, itens = obter_detalhes_compra(compra_id)
-        saldo = obter_saldo_devedor_fornecedor(compra['fornecedor_id'])
-        filename = f"compra_{compra_id}.jpg"
-        exportar_compra_jpg(compra, itens, saldo, filename, marca_dagua_texto=str(compra.get('fornecedores_numerobalanca', '')))
+
+        def tarefa_jpg():
+            from .compras_db import obter_detalhes_compra, obter_saldo_devedor_fornecedor
+            from .compras_export import exportar_compra_jpg
+            compra, itens = obter_detalhes_compra(compra_id)
+            saldo = obter_saldo_devedor_fornecedor(compra['fornecedor_id'])
+            filename = f"compra_{compra_id}.jpg"
+            exportar_compra_jpg(compra, itens, saldo, filename,
+                                marca_dagua_texto=str(compra.get('fornecedores_numerobalanca', '')))
+            return filename
+
+        self.worker_jpg = WorkerThread(tarefa_jpg)
+        self.worker_jpg.finished.connect(
+            lambda filename: QMessageBox.information(self, "JPG gerado", f"Arquivo: {filename}"))
+        self.worker_jpg.erro.connect(self._mostrar_erro_thread)
+        self.worker_jpg.start()
+
+    def closeEvent(self, event):
+        if hasattr(self, "worker") and self.worker.isRunning():
+            self.worker.quit()
+            self.worker.wait()
+        if hasattr(self, "worker_pdf") and self.worker_pdf.isRunning():
+            self.worker_pdf.quit()
+            self.worker_pdf.wait()
+        if hasattr(self, "worker_jpg") and self.worker_jpg.isRunning():
+            self.worker_jpg.quit()
+            self.worker_jpg.wait()
+        event.accept()
 
     def showEvent(self, event):
         super().showEvent(event)
+        self.atualizar_tabelas()
         fornecedor_id = self.combo_fornecedor.currentData()
         if fornecedor_id is not None:
             self.carregar_categorias_para_fornecedor(fornecedor_id)

@@ -1,10 +1,12 @@
 import sys
 import os, platform
 import unicodedata
+import re
 from PySide6.QtWidgets import (
     QApplication, QWidget, QLabel, QPushButton, QVBoxLayout, QHBoxLayout,
     QGridLayout, QComboBox, QDateEdit, QLineEdit, QTableWidget,
-    QTableWidgetItem, QMessageBox, QSizePolicy, QTabWidget, QDialog
+    QTableWidgetItem, QMessageBox, QSizePolicy, QTabWidget, QDialog,
+    QSizePolicy, QHeaderView, QSplitter
 )
 from PySide6.QtGui import QIntValidator
 from PySide6.QtCore import Qt, QDate, QLocale, QEvent, QTimer
@@ -18,10 +20,14 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from PIL import Image, ImageDraw, ImageFont
 from datetime import datetime
+
+from threads_utils import WorkerThread
 from compras.compras_db import (
     listar_produtos,
     listar_fornecedores,
     obter_ajuste_fixo,
+    obter_itens_e_lancamentos_da_compra,
+    obter_valor_com_abatimento_adiantamento
 )
 from movimentacoes_db import (
     listar_movimentacoes,
@@ -36,7 +42,8 @@ from movimentacoes_db import (
     inserir_movimentacao,
     inserir_item_compra,
     buscar_fornecedor_id_por_numero_balanca,
-    contar_movimentacoes
+    contar_movimentacoes,
+    obter_saldo_anterior
 )
 
 # ---- CACHE PRODUTOS ----
@@ -104,6 +111,10 @@ def remove_acento(txt):
         if not unicodedata.combining(c)
     ).lower().strip()
 
+def limpar_numero_nome_produto(nome):
+    # Remove todos os números do nome do produto
+    return re.sub(r'\d+', '', nome).strip()
+
 class MovimentacaoTabUI(QWidget):
     STATUS_LIST = [
         "Compra", "Venda", "Transação"
@@ -119,17 +130,17 @@ class MovimentacaoTabUI(QWidget):
         self.produtos = listar_produtos()
         self.itens_movimentacao = []
         self.movimentacao_edit_id = None
-
-        # Paginação
         self.pagina_atual = 1
         self.qtd_por_pagina = 50
         self.total_paginas = 1
-
         self.init_ui()
         self.carregar_produtos()
         self.atualizar_tabela()
 
     def editar_movimentacao_finalizada(self):
+        if hasattr(self, "worker") and self.worker.isRunning():
+            self.worker.quit()
+            self.worker.wait()
         linha = self.tabela_movimentacoes.currentRow()
         if linha < 0:
             QMessageBox.information(self, "Editar Movimentação", "Selecione uma movimentação para editar.")
@@ -139,8 +150,31 @@ class MovimentacaoTabUI(QWidget):
             return
         compra_id = int(compra_id_item.text())
 
-        compra = obter_compra_por_id(compra_id)
-        itens = listar_itens_movimentacao(compra_id)
+        def tarefa_db():
+            compra = obter_compra_por_id(compra_id)
+            itens = listar_itens_movimentacao(compra_id)
+            return compra, itens
+
+        self.worker_edit = WorkerThread(tarefa_db)
+        self.worker_edit.finished.connect(lambda dados: self._preencher_edicao_movimentacao(compra_id, dados))
+        self.worker_edit.erro.connect(self._mostrar_erro_thread)
+        self.worker_edit.start()
+
+    def _preencher_edicao_movimentacao(self, compra_id, resultado):
+        compra, itens = resultado
+        # Se itens vier como dicionário agrupado por compra_id
+        if isinstance(itens, dict):
+            itens = itens.get(compra_id, [])
+        self.itens_movimentacao = []
+        for item in itens:
+            self.itens_movimentacao.append({
+                "produto_id": item['produto_id'],
+                "nome": item['produto_nome'],
+                "quantidade": item['quantidade'],
+                "preco": item['preco_unitario'],
+                "total": item['total']
+            })
+        self.atualizar_tabela_itens_adicionados()
 
         if compra is None:
             QMessageBox.warning(self, "Erro", "Movimentação não encontrada.")
@@ -148,23 +182,28 @@ class MovimentacaoTabUI(QWidget):
 
         self.limpar_campos()
         self.itens_movimentacao = []
+        # Data
+        if isinstance(compra['data_compra'], QDate):
+            self.input_data.setDate(compra['data_compra'])
+        else:
+            try:
+                self.input_data.setDate(QDate.fromString(str(compra['data_compra']), "yyyy-MM-dd"))
+            except Exception:
+                self.input_data.setDate(QDate.currentDate())
 
-        # Preenche a data
-        self.input_data.setDate(QDate(compra['data_compra']))
-
-        # Preenche o tipo e garante visibilidade dos campos
+        # Tipo
         tipo_mov = remove_acento(compra['tipo'])
         idx_tipo = -1
         for i in range(self.combo_tipo.count()):
             if remove_acento(self.combo_tipo.itemText(i)) == tipo_mov:
                 idx_tipo = i
                 break
-        # Defina o tipo (bloqueando sinais)
         self.combo_tipo.blockSignals(True)
         self.combo_tipo.setCurrentIndex(idx_tipo if idx_tipo >= 0 else 0)
         self.combo_tipo.blockSignals(False)
-        self.tipo_changed()  # agora os widgets corretos estão visíveis
+        self.tipo_changed()
 
+        # Direção (se for transação)
         if remove_acento(compra['tipo']).lower() == "transacao":
             direcao_db = remove_acento(compra['direcao'] or "").capitalize()
             idx_direcao = -1
@@ -188,18 +227,34 @@ class MovimentacaoTabUI(QWidget):
                     "total": item['total']
                 })
             self.atualizar_tabela_itens_adicionados()
-            valor_abatimento = compra.get('valor_abatimento')
-            if valor_abatimento is not None and float(valor_abatimento) > 0:
-                self.input_valor_abatimento.setText(str(valor_abatimento))
-            else:
-                abat = obter_abatimento_automatico(compra_id)
-                if abat:
-                    self.input_valor_abatimento.setText(str(abat['total']))
-                else:
-                    self.input_valor_abatimento.setText("")
 
+        # Pega valor de adiantamento (debitos_fornecedores, tipo='inclusao')
+        from db_context import get_cursor
+        with get_cursor() as cursor:
+            cursor.execute("""
+                SELECT COALESCE(SUM(valor),0) AS valor_adiantamento
+                FROM debitos_fornecedores
+                WHERE compra_id = %s AND tipo = 'inclusao'
+            """, (compra_id,))
+            row = cursor.fetchone()
+            valor_adiantamento = float(row['valor_adiantamento']) if row else 0.0
+
+        # Define tipo e valor do lançamento conforme o que existe
+        if valor_adiantamento > 0:
+            self.combo_tipo_lancamento.setCurrentIndex(1)  # Adiantamento
+            self.input_valor_lancamento.setText(str(valor_adiantamento))
+        else:
+            self.combo_tipo_lancamento.setCurrentIndex(0)  # Abatimento
+            valor_abatimento = compra.get('valor_abatimento')
+            self.input_valor_lancamento.setText(str(valor_abatimento) if valor_abatimento else "")
+
+        # Descrição
         self.input_descricao.setText(str(compra['descricao']) if compra['descricao'] else "")
         self.movimentacao_edit_id = compra_id
+
+    def _mostrar_erro_thread(self, mensagem):
+        from PySide6.QtWidgets import QMessageBox
+        QMessageBox.critical(self, "Erro", mensagem)
 
     def excluir_movimentacao_finalizada(self):
         selected_ranges = self.tabela_movimentacoes.selectedRanges()
@@ -228,6 +283,7 @@ class MovimentacaoTabUI(QWidget):
             QMessageBox.information(self, "Sucesso", "Movimentação excluída com sucesso.")
             self.atualizar_tabela()
             self.tabela_itens.setRowCount(0)
+            self.atualiza_saldo_total()
         except Exception as e:
             QMessageBox.critical(self, "Erro", f"Erro ao excluir movimentação: {e}")
 
@@ -240,7 +296,8 @@ class MovimentacaoTabUI(QWidget):
 
     def limpar_campos(self):
         self.input_data.setDate(QDate.currentDate())
-        self.input_valor_abatimento.clear()
+        self.input_valor_lancamento.clear()
+        self.combo_tipo_lancamento.setCurrentIndex(0)
         self.combo_tipo.setCurrentIndex(0)
         self.combo_direcao.setCurrentIndex(0)
         self.input_descricao.clear()
@@ -297,147 +354,165 @@ class MovimentacaoTabUI(QWidget):
             self.tabela_itens_adicionados.blockSignals(False)
 
     def exportar_movimentacoes_pdf(self):
+        if hasattr(self, "worker") and self.worker.isRunning():
+            self.worker.quit()
+            self.worker.wait()
         dialog = DialogFiltroData(self.filtro_data_de.date(), self.filtro_data_ate.date(), self)
         if not dialog.exec():
             return
         data_de, data_ate = dialog.get_datas()
         data_de = data_de.toPython()
         data_ate = data_ate.toPython()
-
         fornecedor_id = self.fornecedor['id']
 
-        movimentacoes = listar_movimentacoes(fornecedor_id, data_de, data_ate)
-        if not movimentacoes:
-            QMessageBox.warning(self, "Exportar PDF", "Nenhuma movimentação encontrada no período selecionado.")
-            return
+        def tarefa_pdf():
+            movimentacoes = listar_movimentacoes(fornecedor_id, data_de, data_ate)
+            if not movimentacoes:
+                return None
+            saldo_por_id = obter_saldos_acumulados(fornecedor_id, data_de, data_ate, remove_acento)
+            mov_ids = [mov['id'] for mov in movimentacoes]
+            itens_por_mov = listar_itens_movimentacao(mov_ids)
 
-        saldo_por_id = obter_saldos_acumulados(fornecedor_id, data_de, data_ate, remove_acento)
+            # Parâmetros do PDF
+            largura, _ = A4
+            margem = 20 * mm
+            espacamento_blocos = 10 * mm
 
-        # --- OTIMIZAÇÃO: Busque todos os itens de uma vez só ---
-        mov_ids = [mov['id'] for mov in movimentacoes]
-        itens_por_mov = listar_itens_movimentacao(mov_ids)
-        # --------------------------------------------------------
+            # NOVO: saldo anterior ao período
+            saldo_anterior = obter_saldo_anterior(fornecedor_id, data_de, remove_acento)
 
-        largura, _ = A4
-        margem = 20 * mm
-        espacamento_blocos = 10 * mm
+            altura_total = margem + 40  # espaço extra para saldo anterior
+            blocos = []
+            for mov in movimentacoes:
+                bloco = {}
+                bloco['mov'] = mov
+                bloco['itens'] = itens_por_mov.get(mov['id'], []) if mov['tipo'].lower() in ("compra", "venda") else []
+                bloco['altura'] = 250 + 28 * (len(bloco['itens']) if bloco['itens'] else 1)
+                altura_total += bloco['altura'] + espacamento_blocos
+                blocos.append(bloco)
 
-        altura_total = margem
-        blocos = []
-        for mov in movimentacoes:
-            bloco = {}
-            bloco['mov'] = mov
-            bloco['itens'] = itens_por_mov.get(mov['id'], []) if mov['tipo'].lower() in ("compra", "venda") else []
-            bloco['altura'] = 250 + 28 * (len(bloco['itens']) if bloco['itens'] else 1)
-            altura_total += bloco['altura'] + espacamento_blocos
-            blocos.append(bloco)
+            filename = f"movimentacoes_{data_de.strftime('%Y%m%d')}_{data_ate.strftime('%Y%m%d')}_extrato.pdf"
+            c = canvas.Canvas(filename, pagesize=(largura, altura_total))
+            y = altura_total - margem
 
-        filename = f"movimentacoes_{data_de.strftime('%Y%m%d')}_{data_ate.strftime('%Y%m%d')}_extrato.pdf"
-        c = canvas.Canvas(filename, pagesize=(largura, altura_total))
-        y = altura_total - margem
-
-        for bloco in blocos:
-            mov = bloco['mov']
-            itens = bloco['itens']
-            tipo = mov['tipo'].capitalize()
-            direcao = (mov.get('direcao') or "").capitalize()
-            descricao = mov['descricao'] or ""
-            valor_operacao = float(mov['valor_operacao'] or 0)
-            saldo_atual = saldo_por_id.get(mov['id'], 0)
-
-            c.setFont("Helvetica-Bold", 13)
+            # NOVO: saldo anterior no topo
+            c.setFont("Helvetica-Bold", 14)
+            c.setFillColorRGB(0, 0.39, 0) if saldo_anterior >= 0 else c.setFillColorRGB(1, 0, 0)
+            c.drawString(margem, y, f"SALDO ANTERIOR AO PERÍODO: R$ {float(saldo_anterior):,.2f}")
             c.setFillColorRGB(0, 0, 0)
-            c.drawString(margem, y, f"Movimentação ID: {mov['id']} | Tipo: {tipo}")
-            y -= 16
-            c.setFont("Helvetica", 11)
-            c.drawString(margem, y, f"Fornecedor: {mov['fornecedor']}")
-            y -= 13
-            c.drawString(margem, y, f"Nº Balança: {mov['fornecedores_numerobalanca']}")
-            y -= 13
-            c.drawString(margem, y, f"Data: {mov['data'].strftime('%d/%m/%Y')}")
-            y -= 13
-            if direcao:
-                c.drawString(margem, y, f"Direção: {direcao}")
-                y -= 13
-            if descricao:
-                c.drawString(margem, y, f"Descrição: {descricao}")
-                y -= 13
+            y -= 30
 
-            # Marca d'água para o bloco
-            self.adicionar_marca_dagua_pdf_area(
-                c,
-                texto=str(mov['fornecedores_numerobalanca']),
-                x_inicio=margem,
-                x_fim=largura - margem,
-                y_topo=y + 73,  # topo do bloco (ajustar se desejar)
-                altura=bloco['altura'] - 18,
-                tamanho_fonte=24,  # menor
-                cor=(0.8, 0.8, 0.8),
-                angulo=25
-            )
+            for bloco in blocos:
+                mov = bloco['mov']
+                itens = bloco['itens']
+                tipo = mov['tipo'].capitalize()
+                direcao = (mov.get('direcao') or "").capitalize()
+                descricao = mov['descricao'] or ""
+                valor_operacao = float(mov['valor_operacao'] or 0)
+                saldo_atual = saldo_por_id.get(mov['id'], 0)
 
-            if itens:
-                y -= 8
-                c.setFont("Helvetica-Bold", 11)
+                c.setFont("Helvetica-Bold", 13)
                 c.setFillColorRGB(0, 0, 0)
-                c.drawString(margem, y, "Produtos")
-                y -= 12
-                c.setFont("Helvetica-Bold", 10)
-                c.drawString(margem, y, "Produto")
-                c.drawString(margem + 180, y, "Qtd")
-                c.drawString(margem + 240, y, "Unitário")
-                c.drawString(margem + 330, y, "Total")
-                y -= 8
-                c.line(margem, y, largura - margem, y)
-                y -= 8
-                c.setFont("Helvetica", 10)
-                total = 0
-                for item in itens:
-                    c.drawString(margem, y, item['produto_nome'])
-                    c.drawString(margem + 180, y, str(item['quantidade']))
-                    c.drawString(margem + 240, y, f"R$ {item['preco_unitario']:.2f}")
-                    c.drawString(margem + 330, y, f"R$ {item['total']:.2f}")
-                    total += float(item['total'])
+                c.drawString(margem, y, f"Movimentação ID: {mov['id']} | Tipo: {tipo}")
+                y -= 16
+                c.setFont("Helvetica", 11)
+                c.drawString(margem, y, f"Fornecedor: {mov['fornecedor']}")
+                y -= 13
+                c.drawString(margem, y, f"Nº Balança: {mov['fornecedores_numerobalanca']}")
+                y -= 13
+                c.drawString(margem, y, f"Data: {mov['data'].strftime('%d/%m/%Y')}")
+                y -= 13
+                if direcao:
+                    c.drawString(margem, y, f"Direção: {direcao}")
                     y -= 13
-                y -= 8
-                c.line(margem, y, largura - margem, y)
-                y -= 10
-                c.setFont("Helvetica-Bold", 11)
+                if descricao:
+                    c.drawString(margem, y, f"Descrição: {descricao}")
+                    y -= 13
+
+                self.adicionar_marca_dagua_pdf_area(
+                    c,
+                    texto=str(mov['fornecedores_numerobalanca']),
+                    x_inicio=margem,
+                    x_fim=largura - margem,
+                    y_topo=y + 73,
+                    altura=bloco['altura'] - 18,
+                    tamanho_fonte=24,
+                    cor=(0.8, 0.8, 0.8),
+                    angulo=25
+                )
+
+                if itens:
+                    y -= 8
+                    c.setFont("Helvetica-Bold", 11)
+                    c.setFillColorRGB(0, 0, 0)
+                    c.drawString(margem, y, "Produtos")
+                    y -= 12
+                    c.setFont("Helvetica-Bold", 10)
+                    c.drawString(margem, y, "Produto")
+                    c.drawString(margem + 180, y, "Qtd")
+                    c.drawString(margem + 240, y, "Unitário")
+                    c.drawString(margem + 330, y, "Total")
+                    y -= 8
+                    c.line(margem, y, largura - margem, y)
+                    y -= 8
+                    c.setFont("Helvetica", 10)
+                    total = 0
+                    for item in itens:
+                        c.drawString(margem, y, limpar_numero_nome_produto(item['produto_nome']))
+                        c.drawString(margem + 180, y, str(item['quantidade']))
+                        c.drawString(margem + 240, y, f"R$ {item['preco_unitario']:.2f}")
+                        c.drawString(margem + 330, y, f"R$ {item['total']:.2f}")
+                        total += float(item['total'])
+                        y -= 13
+                    y -= 8
+                    c.line(margem, y, largura - margem, y)
+                    y -= 10
+                    c.setFont("Helvetica-Bold", 11)
+                    c.setFillColorRGB(0, 0, 0)
+                    c.drawString(margem, y, f"Subtotal: R$ {total:.2f}")
+                    y -= 12
+                    c.drawString(margem, y, f"Total Final (com abatimento): R$ {valor_operacao:.2f}")
+                    y -= 13
+                else:
+                    y -= 13
+                    c.setFont("Helvetica-Bold", 11)
+                    c.setFillColorRGB(0, 0, 0)
+                    c.drawString(margem, y, f"Valor da Operação: R$ {valor_operacao:.2f}")
+                    y -= 13
+
+                # SALDO TOTAL APÓS ESTA MOVIMENTAÇÃO (cor e fonte menor)
+                c.setFont("Helvetica-Bold", 10)
+                if saldo_atual < 0:
+                    c.setFillColorRGB(1, 0, 0)
+                else:
+                    c.setFillColorRGB(0, 0.39, 0)
+                c.drawString(margem, y, f"SALDO TOTAL APÓS ESTA MOVIMENTAÇÃO: R$ {float(saldo_atual):,.2f}")
                 c.setFillColorRGB(0, 0, 0)
-                c.drawString(margem, y, f"Subtotal: R$ {total:.2f}")
-                y -= 12
-                c.drawString(margem, y, f"Total Final (com abatimento): R$ {valor_operacao:.2f}")
-                y -= 13
+                y -= 14
+
+                c.setFont("Helvetica-Oblique", 8)
+                c.drawString(margem, y, f"Gerado em: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}")
+                y -= espacamento_blocos
+
+            c.save()
+            return filename
+
+        def on_pdf_ready(filename):
+            if not filename:
+                QMessageBox.warning(self, "Exportar PDF", "Nenhuma movimentação encontrada no período selecionado.")
+                return
+            QMessageBox.information(self, "Exportar PDF", f"PDF gerado com sucesso:\n{filename}")
+            if platform.system() == "Windows":
+                os.startfile(filename)
+            elif platform.system() == "Darwin":
+                os.system(f"open '{filename}'")
             else:
-                y -= 13
-                c.setFont("Helvetica-Bold", 11)
-                c.setFillColorRGB(0, 0, 0)
-                c.drawString(margem, y, f"Valor da Operação: R$ {valor_operacao:.2f}")
-                y -= 13
+                os.system(f"xdg-open '{filename}'")
 
-            # SALDO TOTAL APÓS ESTA MOVIMENTAÇÃO (cor e fonte menor)
-            c.setFont("Helvetica-Bold", 10)
-            if saldo_atual < 0:
-                c.setFillColorRGB(1, 0, 0)  # vermelho
-            else:
-                c.setFillColorRGB(0, 0.39, 0)  # verde escuro (aprox. #006400)
-            c.drawString(margem, y, f"SALDO TOTAL APÓS ESTA MOVIMENTAÇÃO: R$ {float(saldo_atual):,.2f}")
-            c.setFillColorRGB(0, 0, 0)
-            y -= 14
-
-            c.setFont("Helvetica-Oblique", 8)
-            c.drawString(margem, y, f"Gerado em: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}")
-            y -= espacamento_blocos
-
-        c.save()
-        QMessageBox.information(self, "Exportar PDF", f"PDF gerado com sucesso:\n{filename}")
-
-        if platform.system() == "Windows":
-            os.startfile(filename)
-        elif platform.system() == "Darwin":
-            os.system(f"open '{filename}'")
-        else:
-            os.system(f"xdg-open '{filename}'")
+        self.worker_export_pdf = WorkerThread(tarefa_pdf)
+        self.worker_export_pdf.finished.connect(on_pdf_ready)
+        self.worker_export_pdf.erro.connect(self._mostrar_erro_thread)
+        self.worker_export_pdf.start()
 
     def adicionar_marca_dagua_pdf_area(self, c, texto, x_inicio, x_fim, y_topo, altura, tamanho_fonte=30,
                                        cor=(0.8, 0.8, 0.8), angulo=25):
@@ -468,6 +543,9 @@ class MovimentacaoTabUI(QWidget):
         c.restoreState()
 
     def exportar_movimentacoes_jpg(self):
+        if hasattr(self, "worker") and self.worker.isRunning():
+            self.worker.quit()
+            self.worker.wait()
         dialog = DialogFiltroData(self.filtro_data_de.date(), self.filtro_data_ate.date(), self)
         if not dialog.exec():
             return
@@ -475,154 +553,169 @@ class MovimentacaoTabUI(QWidget):
         data_de, data_ate = dialog.get_datas()
         data_de = data_de.toPython()
         data_ate = data_ate.toPython()
-
         fornecedor_id = self.fornecedor['id']
 
-        compras = listar_movimentacoes(fornecedor_id, data_de, data_ate)
-        if not compras:
-            QMessageBox.warning(self, "Exportar JPG", "Nenhuma movimentação encontrada no período selecionado.")
-            return
+        def tarefa_jpg():
+            compras = listar_movimentacoes(fornecedor_id, data_de, data_ate)
+            if not compras:
+                return None
+            saldo_por_id = obter_saldos_acumulados(fornecedor_id, data_de, data_ate, remove_acento)
+            mov_ids = [mov['id'] for mov in compras]
+            itens_por_mov = listar_itens_movimentacao(mov_ids)
 
-        saldo_por_id = obter_saldos_acumulados(fornecedor_id, data_de, data_ate, remove_acento)
+            saldo_anterior = obter_saldo_anterior(fornecedor_id, data_de, remove_acento)
 
-        # --- OTIMIZAÇÃO: Busque todos os itens de uma vez só ---
-        mov_ids = [mov['id'] for mov in compras]
-        itens_por_mov = listar_itens_movimentacao(mov_ids)
-        # --------------------------------------------------------
+            largura_img = 1200
+            margem = 20 * mm
+            espacamento_blocos = 10 * mm
 
-        largura_img = 1200
-        margem = 20 * mm
-        espacamento_blocos = 10 * mm
+            altura_total = margem + 40
+            blocos = []
+            for mov in compras:
+                bloco = {}
+                bloco['mov'] = mov
+                bloco['itens'] = itens_por_mov.get(mov['id'], []) if mov['tipo'].lower() in ("compra", "venda") else []
+                bloco['altura'] = 250 + 28 * (len(bloco['itens']) if bloco['itens'] else 1)
+                altura_total += bloco['altura'] + espacamento_blocos
+                blocos.append(bloco)
 
-        altura_total = margem
-        blocos = []
-        for mov in compras:
-            bloco = {}
-            bloco['mov'] = mov
-            bloco['itens'] = itens_por_mov.get(mov['id'], []) if mov['tipo'].lower() in ("compra", "venda") else []
-            bloco['altura'] = 250 + 28 * (len(bloco['itens']) if bloco['itens'] else 1)
-            altura_total += bloco['altura'] + espacamento_blocos
-            blocos.append(bloco)
+            # Parâmetros do JPG
+            imagem = Image.new("RGB", (int(largura_img), int(altura_total)), "white")
+            draw = ImageDraw.Draw(imagem)
+            y_base = margem
+            marca_dagua_blocos = []
 
-        imagem = Image.new("RGB", (int(largura_img), int(altura_total)), "white")
-        draw = ImageDraw.Draw(imagem)
-        y_base = margem
-        marca_dagua_blocos = []
+            try:
+                fonte = ImageFont.truetype("arial.ttf", 18)
+                fonte_bold = ImageFont.truetype("arialbd.ttf", 24)
+                fonte_mono = ImageFont.truetype("arial.ttf", 16)
+                fonte_menor = ImageFont.truetype("arial.ttf", 15)
+                fonte_saldo = ImageFont.truetype("arialbd.ttf", 17)
+            except IOError:
+                fonte = fonte_bold = fonte_mono = fonte_menor = fonte_saldo = ImageFont.load_default()
 
-        try:
-            fonte = ImageFont.truetype("arial.ttf", 18)
-            fonte_bold = ImageFont.truetype("arialbd.ttf", 24)
-            fonte_mono = ImageFont.truetype("arial.ttf", 16)
-            fonte_menor = ImageFont.truetype("arial.ttf", 15)
-            fonte_saldo = ImageFont.truetype("arialbd.ttf", 17)
-        except IOError:
-            fonte = fonte_bold = fonte_mono = fonte_menor = fonte_saldo = ImageFont.load_default()
+            # NOVO: saldo anterior no topo
+            cor_saldo = (0, 70, 0) if saldo_anterior >= 0 else (220, 0, 0)
+            draw.text((margem, y_base), f"SALDO ANTERIOR AO PERÍODO: R$ {float(saldo_anterior):,.2f}",
+                        fill=cor_saldo, font=fonte_bold)
+            y_base += 30
 
-        for bloco in blocos:
-            mov = bloco['mov']
-            itens = bloco['itens']
-            tipo = mov['tipo'].capitalize()
-            direcao = (mov.get('direcao') or "").capitalize()
-            descricao = mov['descricao'] or ""
-            valor_operacao = float(mov['valor_operacao'] or 0)
-            saldo_atual = saldo_por_id.get(mov['id'], 0)
-            y = y_base
+            for bloco in blocos:
+                mov = bloco['mov']
+                itens = bloco['itens']
+                tipo = mov['tipo'].capitalize()
+                direcao = (mov.get('direcao') or "").capitalize()
+                descricao = mov['descricao'] or ""
+                valor_operacao = float(mov['valor_operacao'] or 0)
+                saldo_atual = saldo_por_id.get(mov['id'], 0)
+                y = y_base
 
-            draw.text((margem, y), f"Movimentação ID: {mov['id']} | Tipo: {tipo}", fill="black", font=fonte_bold)
-            y += 36
-            draw.text((margem, y), f"Fornecedor: {mov['fornecedor']}", fill="black", font=fonte)
-            y += 24
-            draw.text((margem, y), f"Nº Balança: {mov['fornecedores_numerobalanca']}", fill="black", font=fonte)
-            y += 24
-            draw.text((margem, y), f"Data: {mov['data'].strftime('%d/%m/%Y')}", fill="black", font=fonte)
-            y += 24
-            if direcao:
-                draw.text((margem, y), f"Direção: {direcao}", fill="black", font=fonte)
+                draw.text((margem, y), f"Movimentação ID: {mov['id']} | Tipo: {tipo}", fill="black", font=fonte_bold)
+                y += 36
+                draw.text((margem, y), f"Fornecedor: {mov['fornecedor']}", fill="black", font=fonte)
                 y += 24
-            if descricao:
-                draw.text((margem, y), f"Descrição: {descricao}", fill="black", font=fonte)
+                draw.text((margem, y), f"Nº Balança: {mov['fornecedores_numerobalanca']}", fill="black", font=fonte)
                 y += 24
+                draw.text((margem, y), f"Data: {mov['data'].strftime('%d/%m/%Y')}", fill="black", font=fonte)
+                y += 24
+                if direcao:
+                    draw.text((margem, y), f"Direção: {direcao}", fill="black", font=fonte)
+                    y += 24
+                if descricao:
+                    draw.text((margem, y), f"Descrição: {descricao}", fill="black", font=fonte)
+                    y += 24
 
-            if itens:
-                y += 6
-                draw.text((margem, y), "Produtos", fill="black", font=fonte_bold)
-                y += 26
-                draw.text((margem, y), "Produto", fill="black", font=fonte_menor)
-                draw.text((margem + 500, y), "Qtd", fill="black", font=fonte_menor)
-                draw.text((margem + 650, y), "Unitário", fill="black", font=fonte_menor)
-                draw.text((margem + 800, y), "Total", fill="black", font=fonte_menor)
-                y += 5
-                draw.line((margem, y + 20, largura_img - margem, y + 20), fill="black", width=1)
-                y += 22
+                if itens:
+                    y += 6
+                    draw.text((margem, y), "Produtos", fill="black", font=fonte_bold)
+                    y += 26
+                    draw.text((margem, y), "Produto", fill="black", font=fonte_menor)
+                    draw.text((margem + 500, y), "Qtd", fill="black", font=fonte_menor)
+                    draw.text((margem + 650, y), "Unitário", fill="black", font=fonte_menor)
+                    draw.text((margem + 800, y), "Total", fill="black", font=fonte_menor)
+                    y += 5
+                    draw.line((margem, y + 20, largura_img - margem, y + 20), fill="black", width=1)
+                    y += 22
 
-                total = 0
-                for item in itens:
-                    draw.text((margem, y), item['produto_nome'], fill="black", font=fonte_mono)
-                    draw.text((margem + 500, y), str(item['quantidade']), fill="black", font=fonte_mono)
-                    draw.text((margem + 650, y), f"R$ {item['preco_unitario']:.2f}", fill="black", font=fonte_mono)
-                    draw.text((margem + 800, y), f"R$ {item['total']:.2f}", fill="black", font=fonte_mono)
-                    total += float(item['total'])
-                    y += 28
-                y += 5
-                draw.line((margem, y, largura_img - margem, y), fill="black", width=1)
-                y += 7
-                draw.text((margem, y), f"Subtotal: R$ {total:.2f}", fill="black", font=fonte_menor)
-                y += 19
-                draw.text((margem, y), f"Total Final (com abatimento): R$ {valor_operacao:.2f}", fill="black",
+                    total = 0
+                    for item in itens:
+                        draw.text((margem, y), limpar_numero_nome_produto(item['produto_nome']), fill="black", font=fonte_mono)
+                        draw.text((margem + 500, y), str(item['quantidade']), fill="black", font=fonte_mono)
+                        draw.text((margem + 650, y), f"R$ {item['preco_unitario']:.2f}", fill="black", font=fonte_mono)
+                        draw.text((margem + 800, y), f"R$ {item['total']:.2f}", fill="black", font=fonte_mono)
+                        total += float(item['total'])
+                        y += 28
+                    y += 5
+                    draw.line((margem, y, largura_img - margem, y), fill="black", width=1)
+                    y += 7
+                    draw.text((margem, y), f"Subtotal: R$ {total:.2f}", fill="black", font=fonte_menor)
+                    y += 19
+                    draw.text((margem, y), f"Total Final (com abatimento): R$ {valor_operacao:.2f}", fill="black",
+                              font=fonte_menor)
+                    y += 19
+                else:
+                    y += 8
+                    draw.text((margem, y), f"Valor da Operação: R$ {valor_operacao:.2f}", fill="black",
+                              font=fonte_menor)
+                    y += 19
+
+                # S A L D O   (com cor)
+                saldo_str = f"SALDO TOTAL APÓS ESTA MOVIMENTAÇÃO: R$ {float(saldo_atual):,.2f}"
+                if saldo_atual < 0:
+                    cor_saldo = (220, 0, 0)  # vermelho
+                else:
+                    cor_saldo = (0, 70, 0)  # verde escuro (aprox. #006400)
+                draw.text((margem, y), saldo_str, fill=cor_saldo, font=fonte_saldo)
+                y += 21
+
+                draw.text((margem, y), f"Gerado em: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}", fill="gray",
                           font=fonte_menor)
-                y += 19
+
+                marca_dagua_blocos.append({
+                    "texto": str(mov['fornecedores_numerobalanca']),
+                    "x_inicio": margem,
+                    "x_fim": largura_img - margem,
+                    "y_inicio": y_base + 70,
+                    "altura": bloco['altura'] - 70
+                })
+
+                y_base += bloco['altura'] + 25
+
+            # Aplica as marcas d'água reatribuindo imagem
+            for md in marca_dagua_blocos:
+                imagem = self.adicionar_marca_dagua_area(
+                    imagem,
+                    texto=md["texto"],
+                    x_inicio=md["x_inicio"],
+                    x_fim=md["x_fim"],
+                    y_inicio=md["y_inicio"],
+                    altura=md["altura"],
+                    fonte_path="arial.ttf",
+                    tamanho_fonte=36,
+                    opacidade=80,
+                    angulo=25
+                )
+
+            nome_arquivo = f"movimentacoes_{data_de.strftime('%Y%m%d')}_{data_ate.strftime('%Y%m%d')}_extrato.jpg"
+            imagem.save(nome_arquivo)
+            return nome_arquivo
+
+        def on_jpg_ready(nome_arquivo):
+            if not nome_arquivo:
+                QMessageBox.warning(self, "Exportar JPG", "Nenhuma movimentação encontrada no período selecionado.")
+                return
+            QMessageBox.information(self, "Exportar JPG", f"Arquivo gerado com sucesso: {nome_arquivo}")
+            if platform.system() == "Windows":
+                os.startfile(nome_arquivo)
+            elif platform.system() == "Darwin":
+                os.system(f"open '{nome_arquivo}'")
             else:
-                y += 8
-                draw.text((margem, y), f"Valor da Operação: R$ {valor_operacao:.2f}", fill="black", font=fonte_menor)
-                y += 19
+                os.system(f"xdg-open '{nome_arquivo}'")
 
-            # S A L D O   (com cor)
-            saldo_str = f"SALDO TOTAL APÓS ESTA MOVIMENTAÇÃO: R$ {float(saldo_atual):,.2f}"
-            if saldo_atual < 0:
-                cor_saldo = (220, 0, 0)  # vermelho
-            else:
-                cor_saldo = (0, 70, 0)  # verde escuro (aprox. #006400)
-            draw.text((margem, y), saldo_str, fill=cor_saldo, font=fonte_saldo)
-            y += 21
-
-            draw.text((margem, y), f"Gerado em: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}", fill="gray",
-                      font=fonte_menor)
-
-            marca_dagua_blocos.append({
-                "texto": str(mov['fornecedores_numerobalanca']),
-                "x_inicio": margem,
-                "x_fim": largura_img - margem,
-                "y_inicio": y_base + 70,
-                "altura": bloco['altura'] - 70
-            })
-
-            y_base += bloco['altura'] + 25
-
-        # Aplica as marcas d'água reatribuindo imagem
-        for md in marca_dagua_blocos:
-            imagem = self.adicionar_marca_dagua_area(
-                imagem,
-                texto=md["texto"],
-                x_inicio=md["x_inicio"],
-                x_fim=md["x_fim"],
-                y_inicio=md["y_inicio"],
-                altura=md["altura"],
-                fonte_path="arial.ttf",
-                tamanho_fonte=36,
-                opacidade=80,
-                angulo=25
-            )
-
-        nome_arquivo = f"movimentacoes_{data_de.strftime('%Y%m%d')}_{data_ate.strftime('%Y%m%d')}_extrato.jpg"
-        imagem.save(nome_arquivo)
-        QMessageBox.information(self, "Exportar JPG", f"Arquivo gerado com sucesso: {nome_arquivo}")
-
-        if platform.system() == "Windows":
-            os.startfile(nome_arquivo)
-        elif platform.system() == "Darwin":
-            os.system(f"open '{nome_arquivo}'")
-        else:
-            os.system(f"xdg-open '{nome_arquivo}'")
+        self.worker_export_jpg = WorkerThread(tarefa_jpg)
+        self.worker_export_jpg.finished.connect(on_jpg_ready)
+        self.worker_export_jpg.erro.connect(self._mostrar_erro_thread)
+        self.worker_export_jpg.start()
 
     def adicionar_marca_dagua_area(self, imagem, texto, x_inicio, x_fim, y_inicio, altura, fonte_path="arial.ttf", tamanho_fonte=30, opacidade=80, angulo=25):
         try:
@@ -653,6 +746,8 @@ class MovimentacaoTabUI(QWidget):
 
     def init_ui(self):
         layout_root = QHBoxLayout(self)
+
+        # ESQUERDA
         layout_esq = QVBoxLayout()
         form_grid = QGridLayout()
 
@@ -678,12 +773,23 @@ class MovimentacaoTabUI(QWidget):
         form_grid.addWidget(QLabel("Categoria"), 2, 0)
         form_grid.addWidget(self.combo_categoria, 2, 1)
 
-        # Abatimento
-        self.input_valor_abatimento = QLineEdit()
-        self.input_valor_abatimento.setPlaceholderText("Valor do abatimento")
-        self.input_valor_abatimento.textChanged.connect(self.atualizar_total_movimentacao)
-        form_grid.addWidget(QLabel("Abatimento"), 3, 0)
-        form_grid.addWidget(self.input_valor_abatimento, 3, 1)
+        # ========== ComboBox + QLineEdit para Abatimento/Adiantamento ==========
+        self.combo_tipo_lancamento = QComboBox()
+        self.combo_tipo_lancamento.addItem("Abatimento", "abatimento")
+        self.combo_tipo_lancamento.addItem("Adiantamento", "adiantamento")
+        self.combo_tipo_lancamento.setCurrentIndex(0)
+        self.combo_tipo_lancamento.currentIndexChanged.connect(self.atualizar_total_movimentacao)
+
+        self.input_valor_lancamento = QLineEdit()
+        self.input_valor_lancamento.setPlaceholderText("Valor")
+        self.input_valor_lancamento.textChanged.connect(self.atualizar_total_movimentacao)
+
+        layout_lancamento = QHBoxLayout()
+        layout_lancamento.addWidget(self.combo_tipo_lancamento)
+        layout_lancamento.addWidget(self.input_valor_lancamento)
+
+        form_grid.addWidget(QLabel("Abatimento/Adiantamento"), 3, 0)
+        form_grid.addLayout(layout_lancamento, 3, 1)
 
         # Tipo da movimentação
         self.combo_tipo = QComboBox()
@@ -779,14 +885,13 @@ class MovimentacaoTabUI(QWidget):
 
         layout_esq.addLayout(form_grid)
         layout_esq.addStretch()
-        layout_root.addLayout(layout_esq, 3)
 
-        # ----------- MEIO: Tabela movimentações (sem coluna de fornecedor) -----------
+        # MEIO
         layout_meio = QVBoxLayout()
         layout_filtros = QHBoxLayout()
         self.filtro_data_de = QDateEdit()
         self.filtro_data_de.setCalendarPopup(True)
-        self.filtro_data_de.setDate(QDate.currentDate().addMonths(-1))
+        self.filtro_data_de.setDate(QDate.currentDate().addDays(-7))
         layout_filtros.addWidget(QLabel("De:"))
         layout_filtros.addWidget(self.filtro_data_de)
         self.filtro_data_ate = QDateEdit()
@@ -797,6 +902,7 @@ class MovimentacaoTabUI(QWidget):
         btn_filtrar = QPushButton("Filtrar")
         btn_filtrar.clicked.connect(self.resetar_e_filtrar)
         layout_filtros.addWidget(btn_filtrar)
+        layout_filtros.addStretch()
         layout_meio.addLayout(layout_filtros)
 
         self.tabela_movimentacoes = QTableWidget()
@@ -807,6 +913,7 @@ class MovimentacaoTabUI(QWidget):
         self.tabela_movimentacoes.setEditTriggers(QTableWidget.NoEditTriggers)
         self.tabela_movimentacoes.cellClicked.connect(self.mostrar_itens_movimentacao)
         self.tabela_movimentacoes.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.tabela_movimentacoes.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         layout_meio.addWidget(self.tabela_movimentacoes)
 
         # Paginação
@@ -817,24 +924,24 @@ class MovimentacaoTabUI(QWidget):
         paginacao_layout.addWidget(self.btn_pagina_anterior)
         paginacao_layout.addWidget(self.label_paginacao)
         paginacao_layout.addWidget(self.btn_pagina_proxima)
+        paginacao_layout.addStretch()
         layout_meio.addLayout(paginacao_layout)
+        layout_meio.addStretch()
 
         self.btn_pagina_anterior.clicked.connect(self.ir_para_pagina_anterior)
         self.btn_pagina_proxima.clicked.connect(self.ir_para_pagina_proxima)
 
-        layout_root.addLayout(layout_meio, 5)
-
-        # ----------- DIREITA: Tabela itens da movimentação selecionada -----------
+        # DIREITA
         layout_dir = QVBoxLayout()
         layout_dir.addWidget(QLabel("Itens da movimentação selecionada:"))
         self.tabela_itens = QTableWidget()
         self.tabela_itens.setColumnCount(4)
         self.tabela_itens.setHorizontalHeaderLabels(["Produto", "Qtd", "Preço", "Total"])
         self.tabela_itens.setEditTriggers(QTableWidget.NoEditTriggers)
-        self.tabela_itens.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        self.tabela_itens.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.tabela_itens.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         layout_dir.addWidget(self.tabela_itens)
-        layout_root.addLayout(layout_dir, 3)
-        # Botões de exportação abaixo do layout da direita
+        layout_dir.addStretch()
         btn_exportar_pdf = QPushButton("Exportar Movimentações em PDF")
         btn_exportar_pdf.clicked.connect(self.exportar_movimentacoes_pdf)
         btn_exportar_jpg = QPushButton("Exportar Movimentações em JPG")
@@ -842,6 +949,22 @@ class MovimentacaoTabUI(QWidget):
 
         layout_dir.addWidget(btn_exportar_pdf)
         layout_dir.addWidget(btn_exportar_jpg)
+
+        # CRIAR WIDGETS PARA O SPLITTER
+        widget_esq = QWidget()
+        widget_esq.setLayout(layout_esq)
+        widget_meio = QWidget()
+        widget_meio.setLayout(layout_meio)
+        widget_dir = QWidget()
+        widget_dir.setLayout(layout_dir)
+
+        splitter = QSplitter(Qt.Horizontal)
+        splitter.addWidget(widget_esq)
+        splitter.addWidget(widget_meio)
+        splitter.addWidget(widget_dir)
+        splitter.setSizes([320, 720, 320])
+
+        layout_root.addWidget(splitter)
 
         self.atualizar_tabela()
         self.tipo_changed()
@@ -860,7 +983,7 @@ class MovimentacaoTabUI(QWidget):
                 widget.setVisible(not is_transacao)
         self.tabela_itens_adicionados.setVisible(not is_transacao)
         self.combo_categoria.setVisible(not is_transacao)
-        self.input_valor_abatimento.setVisible(not is_transacao)
+        self.input_valor_lancamento.setVisible(not is_transacao)
         self.label_total_movimentacao.setVisible(not is_transacao)
         self.atualizar_total_movimentacao()
 
@@ -982,9 +1105,16 @@ class MovimentacaoTabUI(QWidget):
         if self.combo_tipo.currentText() == "Transação":
             self.label_total_movimentacao.setText("Total: R$ 0,00")
             return
-        valor_abatimento = str_brasil_para_decimal(self.input_valor_abatimento.text())
+        valor_texto = self.input_valor_lancamento.text().replace(',', '.')
+        try:
+            valor = Decimal(valor_texto) if valor_texto else Decimal('0.00')
+        except Exception:
+            valor = Decimal('0.00')
+        tipo = self.combo_tipo_lancamento.currentData()
         total = sum(Decimal(str(item['total'])) for item in self.itens_movimentacao)
-        total_final = total - valor_abatimento
+        valor_abatimento = valor if tipo == "abatimento" else Decimal('0.00')
+        valor_adiantamento = valor if tipo == "adiantamento" else Decimal('0.00')
+        total_final = total + valor_adiantamento - valor_abatimento
         self.label_total_movimentacao.setText(f"Total: R$ {decimal_para_str_brasil(total_final, self.locale)}")
 
     def finalizar_movimentacao(self):
@@ -996,9 +1126,18 @@ class MovimentacaoTabUI(QWidget):
         data = self.input_data.date().toPython()
         direcao = self.combo_direcao.currentText().lower() if tipo == "transação" else None
         descricao = self.input_descricao.text().strip()
-        valor_abatimento = None
-        if tipo != "transação":
-            valor_abatimento = str_brasil_para_decimal(self.input_valor_abatimento.text())
+        compra_id = self.movimentacao_edit_id
+
+        valor_texto = self.input_valor_lancamento.text().replace(',', '.')
+        try:
+            valor_lancamento = Decimal(valor_texto) if valor_texto else Decimal('0.00')
+        except (ValueError, InvalidOperation):
+            QMessageBox.warning(self, "Erro", "Valor de abatimento/adiantamento inválido.")
+            return
+        tipo_lancamento = self.combo_tipo_lancamento.currentData()
+        valor_abatimento = valor_lancamento if tipo_lancamento == "abatimento" else Decimal('0.00')
+        valor_adiantamento = valor_lancamento if tipo_lancamento == "adiantamento" else Decimal('0.00')
+
         if tipo == "transação":
             try:
                 valor_operacao = Decimal(self.input_valor_operacao.text().replace(",", "."))
@@ -1009,24 +1148,43 @@ class MovimentacaoTabUI(QWidget):
             if not self.itens_movimentacao:
                 QMessageBox.warning(self, "Erro", "Adicione pelo menos um item antes de salvar.")
                 return
-            total = sum(Decimal(str(item['total'])) for item in self.itens_movimentacao)
-            valor_abatimento = Decimal(self.input_valor_abatimento.text().replace(',',
-                                                                                  '.')) if self.input_valor_abatimento.text() else Decimal(
-                '0.00')
-            valor_operacao = total - valor_abatimento
 
-        if self.movimentacao_edit_id is not None:
-            compra_id = self.movimentacao_edit_id
+            # Se estiver editando uma movimentação existente, use seu compra_id.
+            # Se for uma nova, só pega o valor normalmente.
+            if compra_id is not None:
+                valor_operacao = obter_valor_com_abatimento_adiantamento(compra_id)
+            else:
+                # Se for uma nova movimentação, simule o cálculo:
+                total = sum(Decimal(str(item['total'])) for item in self.itens_movimentacao)
+                valor_operacao = total + valor_adiantamento - valor_abatimento
+
+        # Prepara lista de itens para inserir_item_compra
+        itens = [
+            {
+                "produto_id": item["produto_id"],
+                "quantidade": item["quantidade"],
+                "preco_unitario": item["preco"]
+            }
+            for item in self.itens_movimentacao
+        ]
+
+        # Salva movimentação
+        if compra_id is not None:
             try:
                 atualizar_movimentacao(
-                    compra_id, data, tipo, direcao, descricao, valor_abatimento, valor_operacao
+                    compra_id, data, tipo, direcao, descricao, valor_abatimento, valor_operacao, tipo_lancamento, valor_lancamento
                 )
-                if tipo != "transação":
-                    # Remove itens antigos e adiciona os novos
-                    for item in self.itens_movimentacao:
-                        inserir_item_compra(
-                            compra_id, item["produto_id"], item["quantidade"], item["preco"]
-                        )
+                if tipo != "transação" and itens:
+                    inserir_item_compra(compra_id, itens)
+                # Remove lançamentos antigos de abate/adiantamento e insere o novo:
+                from db_context import get_cursor
+                with get_cursor(commit=True) as cursor:
+                    cursor.execute("DELETE FROM debitos_fornecedores WHERE compra_id = %s", (compra_id,))
+                    if valor_adiantamento > 0:
+                        cursor.execute("""
+                            INSERT INTO debitos_fornecedores (fornecedor_id, compra_id, valor, tipo)
+                            VALUES (%s, %s, %s, 'inclusao')
+                        """, (self.fornecedor['id'], compra_id, valor_adiantamento))
                 QMessageBox.information(self, "Sucesso", "Movimentação editada com sucesso.")
             except Exception as e:
                 QMessageBox.critical(self, "Erro", f"Erro ao editar movimentação: {e}")
@@ -1036,54 +1194,102 @@ class MovimentacaoTabUI(QWidget):
                 compra_id = inserir_movimentacao(
                     self.fornecedor['id'], data, tipo, direcao, descricao, valor_abatimento, valor_operacao
                 )
-                if tipo != "transação":
-                    for item in self.itens_movimentacao:
-                        inserir_item_compra(
-                            compra_id, item["produto_id"], item["quantidade"], item["preco"]
-                        )
+                if tipo != "transação" and itens:
+                    inserir_item_compra(compra_id, itens)
+                # Salva adiantamento se houver
+                if valor_adiantamento > 0:
+                    from db_context import get_cursor
+                    with get_cursor(commit=True) as cursor:
+                        cursor.execute("""
+                            INSERT INTO debitos_fornecedores (fornecedor_id, compra_id, valor, tipo)
+                            VALUES (%s, %s, %s, 'inclusao')
+                        """, (self.fornecedor['id'], compra_id, valor_adiantamento))
                 QMessageBox.information(self, "Sucesso", "Movimentação cadastrada com sucesso.")
             except Exception as e:
                 QMessageBox.critical(self, "Erro", f"Erro ao cadastrar movimentação: {e}")
         self.limpar_itens()
         self.limpar_campos()
         self.atualizar_tabela()
-        self.atualiza_saldo_total()
+        #self.atualiza_saldo_total()
 
     def atualizar_tabela(self):
+        if hasattr(self, "worker") and self.worker.isRunning():
+            self.worker.quit()
+            self.worker.wait()
         data_de = self.filtro_data_de.date().toPython()
         data_ate = self.filtro_data_ate.date().toPython()
         offset = (self.pagina_atual - 1) * self.qtd_por_pagina
-        # Busca paginada
-        movimentacoes = listar_movimentacoes(
-            self.fornecedor['id'], data_de, data_ate, limit=self.qtd_por_pagina, offset=offset
-        )
-        total_movs = contar_movimentacoes(self.fornecedor['id'], data_de, data_ate)
-        self.total_paginas = max(1, (total_movs + self.qtd_por_pagina - 1) // self.qtd_por_pagina)
+        fornecedor_id = self.fornecedor['id']
+        qtd_por_pagina = self.qtd_por_pagina
 
+        def tarefa_db():
+            import json
+            movimentacoes = listar_movimentacoes(fornecedor_id, data_de, data_ate, limit=qtd_por_pagina, offset=offset)
+            total_movs = contar_movimentacoes(fornecedor_id, data_de, data_ate)
+            mov_ids = [m["id"] for m in movimentacoes]
+            itens_por_mov = listar_itens_movimentacao(mov_ids)
+
+            import datetime
+
+            def sanitize(obj):
+                if isinstance(obj, dict):
+                    return {k: sanitize(v) for k, v in obj.items()}
+                elif isinstance(obj, list):
+                    return [sanitize(x) for x in obj]
+                elif isinstance(obj, Decimal):
+                    return float(obj)
+                elif isinstance(obj, (datetime.datetime, datetime.date, QDate)):
+                    try:
+                        return obj.strftime('%d/%m/%Y')
+                    except Exception:
+                        return str(obj)
+                elif obj is None:
+                    return ""
+                else:
+                    return obj
+
+            movimentacoes = [sanitize(m) for m in movimentacoes]
+            for k, v in itens_por_mov.items():
+                itens_por_mov[k] = [sanitize(item) for item in v]
+
+            result = [movimentacoes, int(total_movs), itens_por_mov]
+            result_json = json.dumps(result)
+            result_pure = json.loads(result_json)
+            return result_pure
+
+        self.worker = WorkerThread(tarefa_db)
+        self.worker.finished.connect(self._atualizar_tabela_ui)
+        self.worker.erro.connect(self._mostrar_erro_thread)
+        self.worker.start()
+
+    def _atualizar_tabela_ui(self, resultado):
+        movimentacoes, total_movs, itens_por_mov = resultado
         self.tabela_movimentacoes.setRowCount(len(movimentacoes))
+        for i, mov in enumerate(movimentacoes):
+            try:
+                compra_id = mov.get('id', "")
+                self.tabela_movimentacoes.setItem(i, 0, QTableWidgetItem(str(compra_id)))
+                self.tabela_movimentacoes.setItem(i, 1, QTableWidgetItem(mov.get('data', "")))
+                tipo = mov.get('tipo', "")
+                self.tabela_movimentacoes.setItem(i, 2, QTableWidgetItem(tipo))
+                self.tabela_movimentacoes.setItem(i, 3, QTableWidgetItem(str(mov.get('direcao', ""))))
+                self.tabela_movimentacoes.setItem(i, 4, QTableWidgetItem(mov.get('descricao', "")))
 
-        # --- NOVO: Busca todos os itens das movimentações em lote ---
-        mov_ids = [m["id"] for m in movimentacoes]
-        self.itens_por_mov = listar_itens_movimentacao(mov_ids)
-        # ------------------------------------------------------------
+                # PATCH: para transação, sempre use mov['valor_operacao'] do banco
+                if tipo.lower() == "transacao":
+                    valor_operacao = mov.get('valor_operacao')
+                    # Se vier None, tenta buscar 'total' (caso campo no dict seja diferente)
+                    if valor_operacao is None:
+                        valor_operacao = mov.get('total', 0.0)
+                    self.tabela_movimentacoes.setItem(i, 5, QTableWidgetItem(f"{float(valor_operacao):.2f}"))
+                else:
+                    valor_operacao = obter_valor_com_abatimento_adiantamento(compra_id)
+                    self.tabela_movimentacoes.setItem(i, 5, QTableWidgetItem(f"{float(valor_operacao):.2f}"))
+            except Exception as e:
+                print(f"Erro ao setar linha {i}: {e}, mov={mov}")
 
-        for i, m in enumerate(movimentacoes):
-            self.tabela_movimentacoes.setItem(i, 0, QTableWidgetItem(str(m["id"])))
-            self.tabela_movimentacoes.setItem(i, 1, QTableWidgetItem(str(m["data"])))
-            self.tabela_movimentacoes.setItem(i, 2, QTableWidgetItem(m["tipo"].capitalize()))
-            self.tabela_movimentacoes.setItem(i, 3, QTableWidgetItem(m["direcao"].capitalize() if m["direcao"] else ""))
-            self.tabela_movimentacoes.setItem(i, 4, QTableWidgetItem(m["descricao"] or ""))
-            valor_op = m.get("valor_operacao")
-            if valor_op is not None:
-                valor_op_str = decimal_para_str_brasil(valor_op, self.locale)
-            else:
-                valor_op_str = ""
-            self.tabela_movimentacoes.setItem(i, 5, QTableWidgetItem(valor_op_str))
-
-        # Atualiza label e estados dos botões de paginação
+        self.total_paginas = max(1, (total_movs + self.qtd_por_pagina - 1) // self.qtd_por_pagina)
         self.label_paginacao.setText(f"Página {self.pagina_atual} de {self.total_paginas}")
-        self.btn_pagina_anterior.setEnabled(self.pagina_atual > 1)
-        self.btn_pagina_proxima.setEnabled(self.pagina_atual < self.total_paginas)
         self.atualiza_saldo_total()
 
     def atualiza_saldo_total(self):
@@ -1099,8 +1305,12 @@ class MovimentacaoTabUI(QWidget):
         if tipo == "transação":
             self.tabela_itens.setRowCount(0)
             return
-        itens = listar_itens_movimentacao(compra_id)
-        self.tabela_itens.setRowCount(len(itens))
+
+        # PATCH: usar obter_itens_e_lancamentos_da_compra para mostrar produtos + abatimento + adiantamento
+        itens, valor_abatimento, valor_adiantamento = obter_itens_e_lancamentos_da_compra(compra_id)
+        linha_extra = int(valor_adiantamento > 0) + int(valor_abatimento > 0)
+        self.tabela_itens.setRowCount(len(itens) + linha_extra)
+
         for i, item in enumerate(itens):
             self.tabela_itens.setItem(i, 0, QTableWidgetItem(item["produto_nome"]))
             self.tabela_itens.setItem(i, 1, QTableWidgetItem(str(item["quantidade"])))
@@ -1109,6 +1319,22 @@ class MovimentacaoTabUI(QWidget):
             self.tabela_itens.setItem(i, 2, QTableWidgetItem(preco_formatado))
             total_formatado = self.locale.toString(preco_unitario * float(item['quantidade']), 'f', 2)
             self.tabela_itens.setItem(i, 3, QTableWidgetItem(total_formatado))
+
+        row = len(itens)
+        # Adiantamento
+        if valor_adiantamento > 0:
+            self.tabela_itens.setItem(row, 0, QTableWidgetItem("Adiantamento"))
+            self.tabela_itens.setItem(row, 1, QTableWidgetItem(""))
+            self.tabela_itens.setItem(row, 2, QTableWidgetItem(""))
+            self.tabela_itens.setItem(row, 3, QTableWidgetItem(f"+{self.locale.toString(valor_adiantamento, 'f', 2)}"))
+            row += 1
+        # Abatimento
+        if valor_abatimento > 0:
+            self.tabela_itens.setItem(row, 0, QTableWidgetItem("Abatimento"))
+            self.tabela_itens.setItem(row, 1, QTableWidgetItem(""))
+            self.tabela_itens.setItem(row, 2, QTableWidgetItem(""))
+            self.tabela_itens.setItem(row, 3, QTableWidgetItem(f"-{self.locale.toString(valor_abatimento, 'f', 2)}"))
+
 
 class MovimentacoesUI(QWidget):
     def __init__(self):
@@ -1183,7 +1409,13 @@ class MovimentacoesUI(QWidget):
             if hasattr(tab_widget, "fornecedor") and tab_widget.fornecedor['id'] == fornecedor['id']:
                 self.tabs.setCurrentIndex(i)
                 return
-        tab = MovimentacaoTabUI(fornecedor)
+        try:
+            tab = MovimentacaoTabUI(fornecedor)
+        except Exception as e:
+            print(f"Erro ao criar aba MovimentacaoTabUI: {e}")
+            import traceback;
+            traceback.print_exc()
+            return
         title = f"{fornecedor['nome']} - {fornecedor['fornecedores_numerobalanca']}"
         self.tabs.addTab(tab, title)
         self.tabs.setCurrentWidget(tab)
@@ -1211,6 +1443,15 @@ class MovimentacoesUI(QWidget):
             tab = self.tabs.currentWidget()
             if tab and hasattr(tab, "atualiza_saldo_total"):
                 tab.atualiza_saldo_total()
+
+    def closeEvent(self, event):
+        for attr in ["worker", "worker_edit", "worker_export_pdf", "worker_export_jpg"]:
+            if hasattr(self, attr):
+                worker = getattr(self, attr)
+                if worker.isRunning():
+                    worker.quit()
+                    worker.wait()
+        event.accept()
 
 if __name__ == "__main__":
     app = QApplication([])

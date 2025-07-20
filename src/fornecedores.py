@@ -4,17 +4,17 @@ import sys
 from PySide6.QtWidgets import (
     QApplication, QWidget, QLabel, QPushButton, QVBoxLayout,
     QLineEdit, QMessageBox, QTableWidget, QTableWidgetItem, QHBoxLayout,
-    QComboBox, QGridLayout, QInputDialog, QDialog, QDialogButtonBox, QFormLayout, QDoubleSpinBox
+    QComboBox, QGridLayout, QInputDialog, QDialog, QDialogButtonBox, QFormLayout,
+    QDoubleSpinBox, QSizePolicy, QHeaderView, QSplitter
 )
 from PySide6.QtCore import Qt, QLocale
 from PySide6.QtGui import QIntValidator
 from db_context import get_cursor
-from PySide6.QtGui import QPixmap
+from threads_utils import WorkerThread
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
 from reportlab.lib import colors
 from reportlab.lib.units import cm
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.platypus import Table, TableStyle, Paragraph
 from datetime import datetime
 from PIL import Image, ImageDraw, ImageFont, ImageEnhance
@@ -171,6 +171,8 @@ class FornecedoresUI(QWidget):
         self.fornecedores_exibidos = []
         self.categorias_do_fornecedor = []
         self.editando_ajuste = False  # Para bloquear recursão no slot de edição
+        self._em_linha_selecionada = False  # Flag para proteção
+        self._carregando_categorias = False  # Flag de carregamento
         self.init_ui()
 
     def init_ui(self):
@@ -182,7 +184,7 @@ class FornecedoresUI(QWidget):
         self.organizar_layouts()
 
         self.atualizar_tabela()
-        self.carregar_combo_fornecedores()
+        #self.carregar_combo_fornecedores()
         self.cancelar_edicao()
 
     def criar_widgets(self):
@@ -271,8 +273,9 @@ class FornecedoresUI(QWidget):
         filtro_layout = QHBoxLayout()
         filtro_layout.addLayout(linha_nome)
         filtro_layout.addLayout(linha_balanca)
+        filtro_layout.addStretch()  # Empurra os filtros para a esquerda
 
-        # Dados do fornecedor
+        # PAINEL ESQUERDA (cadastro/edição)
         layout_dados = QGridLayout()
         layout_dados.addWidget(self.label_dropdown, 0, 0, 1, 2)
         layout_dados.addWidget(self.combo_fornecedores, 1, 0, 1, 2)
@@ -286,64 +289,101 @@ class FornecedoresUI(QWidget):
         layout_dados.addWidget(self.combo_categoria, 5, 1)
         layout_dados.addWidget(self.btn_editar_categoria, 6, 0)
         layout_dados.addWidget(self.btn_add_categoria, 6, 1)
-        layout_dados.addWidget(self.btn_excluir_categoria, 7, 0, 1, 2)  # Botão abaixo da seleção de categoria
+        layout_dados.addWidget(self.btn_excluir_categoria, 7, 0, 1, 2)
 
-        # Botões CRUD
         layout_botoes = QHBoxLayout()
         layout_botoes.addWidget(self.btn_adicionar)
         layout_botoes.addWidget(self.btn_atualizar)
         layout_botoes.addWidget(self.btn_excluir)
         layout_botoes.addWidget(self.btn_cancelar)
-
-        layout_topo = QVBoxLayout()
-        layout_topo.addLayout(layout_dados)
-        layout_topo.addLayout(layout_botoes)
+        layout_botoes.addStretch()
 
         layout_esquerda = QVBoxLayout()
-        layout_esquerda.addLayout(layout_topo)
+        layout_esquerda.addLayout(layout_dados)
+        layout_esquerda.addLayout(layout_botoes)
+        layout_esquerda.addStretch()
+        widget_esquerda = QWidget()
+        widget_esquerda.setLayout(layout_esquerda)
 
-        # Tabelas
-        layout_tabelas = QHBoxLayout()
-        layout_tabelas.addWidget(self.tabela)
-        layout_tabelas.addWidget(self.tabela_precos)
+        # PAINEL CENTRAL (tabela de fornecedores + filtros)
+        self.tabela.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.tabela.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        layout_central = QVBoxLayout()
+        layout_central.addLayout(filtro_layout)
+        layout_central.addWidget(self.tabela)
+        layout_central.addStretch()
+        widget_central = QWidget()
+        widget_central.setLayout(layout_central)
 
-        # Exportações
+        # PAINEL DIREITA (tabela de preços + exportação)
+        self.tabela_precos.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.tabela_precos.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         layout_export = QHBoxLayout()
         layout_export.addWidget(self.btn_export_pdf)
         layout_export.addWidget(self.btn_export_jpg)
-
+        layout_export.addStretch()
         layout_direita = QVBoxLayout()
-        layout_direita.addLayout(filtro_layout)
-        layout_direita.addLayout(layout_tabelas)
+        layout_direita.addWidget(QLabel("Tabela de Preços da Categoria"))
+        layout_direita.addWidget(self.tabela_precos)
         layout_direita.addLayout(layout_export)
+        layout_direita.addStretch()
+        widget_direita = QWidget()
+        widget_direita.setLayout(layout_direita)
 
-        # Layout principal
+        # SPLITTER COM TRÊS PAINÉIS
+        splitter = QSplitter(Qt.Horizontal)
+        splitter.addWidget(widget_esquerda)
+        splitter.addWidget(widget_central)
+        splitter.addWidget(widget_direita)
+        splitter.setSizes([320, 600, 400])
+
         layout_principal = QHBoxLayout()
-        layout_principal.addLayout(layout_esquerda, 1)
-        layout_principal.addLayout(layout_direita, 2)
-
+        layout_principal.addWidget(splitter)
         self.setLayout(layout_principal)
 
     def aplicar_filtro(self):
         nome_filtro = self.input_filtro_nome.text().lower()
         balanca_filtro = self.input_filtro_balanca.text()
-        filtrados = []
 
-        for f in self.fornecedores:
-            nome_ok = nome_filtro in f['nome'].lower()
-            balanca_ok = balanca_filtro == '' or str(f.get('fornecedores_numerobalanca', '') or f.get('numerobalanca', '')).startswith(balanca_filtro)
-            if nome_ok and balanca_ok:
-                filtrados.append(f)
+        # Sempre filtra sobre self.fornecedores!
+        if not nome_filtro and not balanca_filtro:
+            filtrados = self.fornecedores
+        else:
+            filtrados = []
+            for f in self.fornecedores:
+                nome_ok = nome_filtro in f['nome'].lower()
+                balanca_ok = balanca_filtro == '' or str(
+                    f.get('fornecedores_numerobalanca', '') or f.get('numerobalanca', '')).startswith(balanca_filtro)
+                if nome_ok and balanca_ok:
+                    filtrados.append(f)
 
-        self.atualizar_tabela(filtrados)
+        self.fornecedores_exibidos = filtrados
+        self.tabela.setRowCount(len(filtrados))
+        for i, row in enumerate(filtrados):
+            self.tabela.setItem(i, 0, QTableWidgetItem(
+                str(row.get('fornecedores_numerobalanca', '') or row.get('numerobalanca', ''))))
+            self.tabela.setItem(i, 1, QTableWidgetItem(row['nome']))
+            self.tabela.setItem(i, 2, QTableWidgetItem(row.get('fornecedores_endereco', '') or row.get('endereco', '')))
+        self.carregar_combo_fornecedores(filtrados)
 
     def atualizar_tabela(self, dados=None):
-        if dados is None:
-            self.fornecedores = self.db.listar_fornecedores()
-            dados = self.fornecedores
+        if dados is not None:
+            # Se os dados já foram fornecidos (ex: filtrados), atualiza direto na UI
+            self._atualizar_tabela_ui(dados)
+            return
 
+        def tarefa_db():
+            # Chama o méodo da camada DB que faz a consulta
+            return self.db.listar_fornecedores()
+
+        self.worker_tabela = WorkerThread(tarefa_db)
+        self.worker_tabela.finished.connect(self._atualizar_tabela_ui)
+        self.worker_tabela.erro.connect(self._mostrar_erro_thread)
+        self.worker_tabela.start()
+
+    def _atualizar_tabela_ui(self, dados):
+        self.fornecedores = list(dados)
         self.fornecedores_exibidos = list(dados)
-
         self.tabela.setRowCount(len(dados))
         for i, row in enumerate(dados):
             self.tabela.setItem(i, 0, QTableWidgetItem(
@@ -351,10 +391,20 @@ class FornecedoresUI(QWidget):
             self.tabela.setItem(i, 1, QTableWidgetItem(row['nome']))
             self.tabela.setItem(i, 2, QTableWidgetItem(row.get('fornecedores_endereco', '') or row.get('endereco', '')))
 
-    def carregar_combo_fornecedores(self):
+        # Chama aplicar_filtro para garantir sincronismo após atualização da tabela
+        self.aplicar_filtro()
+
+    def _mostrar_erro_thread(self, mensagem):
+        from PySide6.QtWidgets import QMessageBox
+        QMessageBox.critical(self, "Erro", mensagem)
+
+    def carregar_combo_fornecedores(self, lista=None):
         self.combo_fornecedores.clear()
-        for f in self.fornecedores:
+        fornecedores = lista if lista is not None else self.fornecedores
+        for f in fornecedores:
             self.combo_fornecedores.addItem(f['nome'], f['id'])
+        if self.combo_fornecedores.count() > 0:
+            self.combo_fornecedores.setCurrentIndex(0)
 
     def fornecedor_selecionado(self, index):
         if index < 0 or index >= len(self.fornecedores):
@@ -372,20 +422,42 @@ class FornecedoresUI(QWidget):
         self.carregar_categorias_do_fornecedor(f['id'])
 
     def carregar_categorias_do_fornecedor(self, fornecedor_id):
+        # Trava para evitar múltiplos carregamentos simultâneos
+        if self._carregando_categorias:
+            return
+        self._carregando_categorias = True
+        self.tabela.setEnabled(False)  # Desabilita tabela central
+
+        # Finaliza worker anterior se estiver rodando
+        if hasattr(self, "worker_categorias") and self.worker_categorias.isRunning():
+            self.worker_categorias.quit()
+            self.worker_categorias.wait()
+
+        def tarefa_db():
+            categorias = self.db.listar_categorias_do_fornecedor(fornecedor_id)
+            if not categorias:
+                from db_context import get_cursor
+                with get_cursor() as cursor:
+                    cursor.execute("SELECT id, nome FROM categorias_fornecedor_por_fornecedor WHERE nome = %s LIMIT 1",
+                                   ('Padrão',))
+                    cat_padrao = cursor.fetchone()
+                    if cat_padrao:
+                        categorias = [cat_padrao]
+            return categorias
+
+        self.worker_categorias = WorkerThread(tarefa_db)
+        self.worker_categorias.finished.connect(self._preencher_combo_categorias)
+        self.worker_categorias.erro.connect(self._mostrar_erro_thread)
+        self.worker_categorias.start()
+
+    def _preencher_combo_categorias(self, categorias):
         self.combo_categoria.clear()
-        self.categorias_do_fornecedor = self.db.listar_categorias_do_fornecedor(fornecedor_id)
-        # Se não houver categorias próprias, tenta pegar a categoria "Padrão"
-        if not self.categorias_do_fornecedor:
-            # Busca a categoria "Padrão" no banco
-            with get_cursor() as cursor:
-                cursor.execute("SELECT id, nome FROM categorias_fornecedor_por_fornecedor WHERE nome = %s LIMIT 1",
-                               ('Padrão',))
-                cat_padrao = cursor.fetchone()
-                if cat_padrao:
-                    self.categorias_do_fornecedor = [cat_padrao]
-        for c in self.categorias_do_fornecedor:
+        self.categorias_do_fornecedor = categorias
+        for c in categorias:
             self.combo_categoria.addItem(c['nome'], c['id'])
         self.tabela_precos.setRowCount(0)
+        self.tabela.setEnabled(True)  # Habilita tabela novamente
+        self._carregando_categorias = False  # Libera trava
         if self.combo_categoria.count() > 0:
             self.combo_categoria.setCurrentIndex(0)
             self.categoria_selecionada(0)
@@ -463,20 +535,25 @@ class FornecedoresUI(QWidget):
         obter_categoria_principal_cached.cache_clear()
 
     def linha_selecionada(self, row, column):
-        if 0 <= row < len(self.fornecedores_exibidos):
-            f = self.fornecedores_exibidos[row]
-            index_combo = self.combo_fornecedores.findData(f['id'])
-            if index_combo != -1:
-                self.combo_fornecedores.setCurrentIndex(index_combo)
-            # Preencha os campos diretamente
-            self.input_nome.setText(f['nome'])
-            self.input_endereco.setText(f.get('fornecedores_endereco', '') or f.get('endereco', ''))
-            self.input_numero_balanca.setText(
-                str(f.get('fornecedores_numerobalanca', '') or f.get('numerobalanca', '')))
-            self.carregar_categorias_do_fornecedor(f['id'])
-            if self.combo_categoria.count() > 0:
-                self.combo_categoria.setCurrentIndex(0)
-                self.categoria_selecionada(0)
+        if self._em_linha_selecionada:
+            return
+        self._em_linha_selecionada = True
+        try:
+            if 0 <= row < len(self.fornecedores_exibidos):
+                f = self.fornecedores_exibidos[row]
+                index_combo = self.combo_fornecedores.findData(f['id'])
+                if index_combo != -1:
+                    self.combo_fornecedores.setCurrentIndex(index_combo)
+                self.input_nome.setText(f['nome'])
+                self.input_endereco.setText(f.get('fornecedores_endereco', '') or f.get('endereco', ''))
+                self.input_numero_balanca.setText(
+                    str(f.get('fornecedores_numerobalanca', '') or f.get('numerobalanca', '')))
+                self.carregar_categorias_do_fornecedor(f['id'])
+                if self.combo_categoria.count() > 0:
+                    self.combo_categoria.setCurrentIndex(0)
+                    self.categoria_selecionada(0)
+        finally:
+            self._em_linha_selecionada = False
 
     def preencher_tabela_precos(self, categoria_id):
         self.editando_ajuste = True
@@ -628,6 +705,9 @@ class FornecedoresUI(QWidget):
     # ... [Os métodos exportar_pdf e exportar_jpg permanecem inalterados] ...
 
     def exportar_pdf(self):
+        if hasattr(self, "worker_tabela") and self.worker_tabela.isRunning():
+            self.worker_tabela.quit()
+            self.worker_tabela.wait()
         fornecedor_idx = self.combo_fornecedores.currentIndex()
         categoria_idx = self.combo_categoria.currentIndex()
         if fornecedor_idx < 0 or categoria_idx < 0:
@@ -640,90 +720,84 @@ class FornecedoresUI(QWidget):
         categoria_id = self.combo_categoria.currentData()
         categoria_nome = self.combo_categoria.currentText()
 
-        precos = self.db.listar_precos_por_categoria(categoria_id)
-        if not precos:
-            QMessageBox.information(self, "Exportar PDF", "Não há preços para essa categoria.")
-            return
+        def tarefa_pdf():
+            precos = self.db.listar_precos_por_categoria(categoria_id)
+            precos_filtrados = [p for p in precos if (p['preco_base'] + p['ajuste_fixo']) > 0]
+            if not precos_filtrados:
+                return None  # Sinaliza para não abrir PDF
 
-        precos_filtrados = [p for p in precos if (p['preco_base'] + p['ajuste_fixo']) > 0]
+            arquivo_pdf = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf").name
+            c = canvas.Canvas(arquivo_pdf, pagesize=A4)
+            largura, altura = A4
 
-        if not precos_filtrados:
-            QMessageBox.information(self, "Exportar PDF", "Não há produtos com preço positivo para essa categoria.")
-            return
+            margem = 2 * cm
+            largura_disponivel = largura - 2 * margem
+            altura_disponivel = altura - 2 * margem - 60
+            linhas_por_pagina = 25
+            altura_linha = 18
+            dados_tabela = [["Produto", "Preço"]]
+            for p in precos_filtrados:
+                preco_ajustado = p['preco_base'] + p['ajuste_fixo']
+                dados_tabela.append([p['nome'], f"R$ {preco_ajustado:.2f}"])
+            total_linhas = len(dados_tabela) - 1
+            paginas = (total_linhas + linhas_por_pagina - 1) // linhas_por_pagina
+            for pagina in range(paginas):
+                c.setFont("Helvetica-Bold", 16)
+                c.drawString(margem, altura - margem,
+                             f"Tabela de Preços - {nome} (Nº Balança: {num_balanca}) - {categoria_nome}")
+                c.setFont("Helvetica", 10)
+                data_emissao = datetime.now().strftime("%d/%m/%Y")
+                c.drawString(margem, altura - margem - 20, f"Data de emissão: {data_emissao}")
+                inicio = pagina * linhas_por_pagina + 1
+                fim = inicio + linhas_por_pagina
+                fatia = [dados_tabela[0]] + dados_tabela[inicio:fim]
+                largura_colunas = [largura_disponivel * 0.7, largura_disponivel * 0.3]
+                tabela = Table(fatia, colWidths=largura_colunas, rowHeights=altura_linha)
+                estilo = TableStyle([
+                    ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+                    ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                    ('ALIGN', (1, 1), (-1, -1), 'RIGHT'),
+                    ('GRID', (0, 0), (-1, -1), 0.5, colors.black),
+                    ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                    ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
+                    ('FONTSIZE', (0, 0), (-1, -1), 10),
+                    ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
+                ])
+                tabela.setStyle(estilo)
+                largura_tabela, altura_tabela = tabela.wrapOn(c, largura_disponivel, altura_disponivel)
+                y_tabela = altura - margem - 50 - altura_tabela
+                # Marca d'água
+                if hasattr(self, 'adicionar_marca_dagua_pdf_area'):
+                    self.adicionar_marca_dagua_pdf_area(
+                        c,
+                        texto=num_balanca,
+                        x_inicio=margem,
+                        x_fim=margem + largura_disponivel,
+                        y_topo=y_tabela + altura_tabela - 60,
+                        altura=altura_tabela,
+                        tamanho_fonte=30,
+                        cor=(0.8, 0.8, 0.8),
+                        angulo=25
+                    )
+                tabela.drawOn(c, margem, y_tabela)
+                texto_rodape = "Tabela com validade de 7(sete) dias corridos, podendo ter mudanças a qualquer momento"
+                c.setFont("Helvetica-Oblique", 9)
+                c.drawCentredString(largura / 2, margem / 2, texto_rodape)
+                c.showPage()
+            c.save()
+            return arquivo_pdf
 
-        arquivo_pdf = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf").name
+        def on_pdf_ready(path):
+            if not path:
+                QMessageBox.information(self, "Exportar PDF", "Não há produtos com preço positivo para essa categoria.")
+                return
+            QMessageBox.information(self, "Exportar PDF", f"Arquivo PDF gerado:\n{path}")
+            abrir_arquivo(path)
 
-        c = canvas.Canvas(arquivo_pdf, pagesize=A4)
-        largura, altura = A4
-
-        margem = 2 * cm
-        largura_disponivel = largura - 2 * margem
-        altura_disponivel = altura - 2 * margem - 60
-
-        linhas_por_pagina = 25
-        altura_linha = 18
-
-        dados_tabela = [["Produto", "Preço"]]
-        for p in precos_filtrados:
-            preco_ajustado = p['preco_base'] + p['ajuste_fixo']
-            dados_tabela.append([p['nome'], f"R$ {preco_ajustado:.2f}"])
-
-        total_linhas = len(dados_tabela) - 1
-        paginas = (total_linhas + linhas_por_pagina - 1) // linhas_por_pagina
-
-        for pagina in range(paginas):
-            c.setFont("Helvetica-Bold", 16)
-            c.drawString(margem, altura - margem, f"Tabela de Preços - {nome} (Nº Balança: {num_balanca}) - {categoria_nome}")
-            c.setFont("Helvetica", 10)
-            data_emissao = datetime.now().strftime("%d/%m/%Y")
-            c.drawString(margem, altura - margem - 20, f"Data de emissão: {data_emissao}")
-
-            inicio = pagina * linhas_por_pagina + 1
-            fim = inicio + linhas_por_pagina
-            fatia = [dados_tabela[0]] + dados_tabela[inicio:fim]
-
-            largura_colunas = [largura_disponivel * 0.7, largura_disponivel * 0.3]
-            tabela = Table(fatia, colWidths=largura_colunas, rowHeights=altura_linha)
-
-            estilo = TableStyle([
-                ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
-                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-                ('ALIGN', (1, 1), (-1, -1), 'RIGHT'),
-                ('GRID', (0, 0), (-1, -1), 0.5, colors.black),
-                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
-                ('FONTSIZE', (0, 0), (-1, -1), 10),
-                ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
-            ])
-            tabela.setStyle(estilo)
-
-            largura_tabela, altura_tabela = tabela.wrapOn(c, largura_disponivel, altura_disponivel)
-            y_tabela = altura - margem - 50 - altura_tabela
-
-            # Marca d'água - múltiplas vezes dentro da tabela (restrita à área da tabela)
-            self.adicionar_marca_dagua_pdf_area(
-                c,
-                texto=num_balanca,
-                x_inicio=margem,
-                x_fim=margem+largura_disponivel,
-                y_topo=y_tabela + altura_tabela - 60,
-                altura=altura_tabela,
-                tamanho_fonte=30,
-                cor=(0.8, 0.8, 0.8),
-                angulo=25
-            )
-
-            tabela.drawOn(c, margem, y_tabela)
-
-            texto_rodape = "Tabela com validade de 7(sete) dias corridos, podendo ter mudanças a qualquer momento"
-            c.setFont("Helvetica-Oblique", 9)
-            c.drawCentredString(largura / 2, margem / 2, texto_rodape)
-
-            c.showPage()
-
-        c.save()
-        QMessageBox.information(self, "Exportar PDF", f"Arquivo PDF gerado:\n{arquivo_pdf}")
-        abrir_arquivo(arquivo_pdf)
+        self.worker_exportar_pdf = WorkerThread(tarefa_pdf)
+        self.worker_exportar_pdf.finished.connect(on_pdf_ready)
+        self.worker_exportar_pdf.erro.connect(self._mostrar_erro_thread)
+        self.worker_exportar_pdf.start()
 
     def adicionar_marca_dagua_pdf_area(self, c, texto, x_inicio, x_fim, y_topo, altura, tamanho_fonte=30, cor=(0.8, 0.8, 0.8), angulo=25):
         from reportlab.pdfbase import pdfmetrics
@@ -753,6 +827,9 @@ class FornecedoresUI(QWidget):
         c.restoreState()
 
     def exportar_jpg(self):
+        if hasattr(self, "worker_tabela") and self.worker_tabela.isRunning():
+            self.worker_tabela.quit()
+            self.worker_tabela.wait()
         fornecedor_idx = self.combo_fornecedores.currentIndex()
         categoria_idx = self.combo_categoria.currentIndex()
         if fornecedor_idx < 0 or categoria_idx < 0:
@@ -765,83 +842,97 @@ class FornecedoresUI(QWidget):
         categoria_id = self.combo_categoria.currentData()
         categoria_nome = self.combo_categoria.currentText()
 
-        precos = self.db.listar_precos_por_categoria(categoria_id)
-        if not precos:
-            QMessageBox.information(self, "Exportar JPG", "Não há preços para essa categoria.")
-            return
+        def tarefa_jpg():
+            import tempfile
+            from PIL import Image, ImageDraw, ImageFont
+            from datetime import datetime
 
-        precos_filtrados = [p for p in precos if (p['preco_base'] + p['ajuste_fixo']) > 0]
+            precos = self.db.listar_precos_por_categoria(categoria_id)
+            precos_filtrados = [p for p in precos if (p['preco_base'] + p['ajuste_fixo']) > 0]
+            if not precos_filtrados:
+                return None
 
-        if not precos_filtrados:
-            QMessageBox.information(self, "Exportar JPG", "Não há produtos com preço positivo para essa categoria.")
-            return
+            try:
+                fonte_titulo = ImageFont.truetype("arialbd.ttf", 24)
+                fonte_texto = ImageFont.truetype("arial.ttf", 16)
+                fonte_rodape = ImageFont.truetype("ariali.ttf", 12)
+                fonte_marca = ImageFont.truetype("arialbd.ttf", 30)
+            except IOError:
+                fonte_titulo = fonte_texto = fonte_rodape = fonte_marca = ImageFont.load_default()
 
-        try:
-            fonte_titulo = ImageFont.truetype("arialbd.ttf", 24)
-            fonte_texto = ImageFont.truetype("arial.ttf", 16)
-            fonte_rodape = ImageFont.truetype("ariali.ttf", 12)
-            fonte_marca = ImageFont.truetype("arialbd.ttf", 30)
-        except IOError:
-            fonte_titulo = fonte_texto = fonte_rodape = fonte_marca = ImageFont.load_default()
+            largura_img = 800
+            altura_linha = 30
+            num_linhas = len(precos_filtrados) + 1
+            altura_tabela = num_linhas * altura_linha
+            altura_total = altura_tabela + 200
 
-        largura_img = 800
-        altura_linha = 30
-        num_linhas = len(precos_filtrados) + 1
-        altura_tabela = num_linhas * altura_linha
-        altura_total = altura_tabela + 200
+            img_base = Image.new("RGB", (largura_img, altura_total), (255, 255, 255))
+            draw = ImageDraw.Draw(img_base)
 
-        img_base = Image.new("RGB", (largura_img, altura_total), (255, 255, 255))
-        draw = ImageDraw.Draw(img_base)
+            margem_topo = 40
+            margem_lateral = 40
 
-        margem_topo = 40
-        margem_lateral = 40
+            draw.text((margem_lateral, 10), f"Tabela de Preços - {nome} (Nº Balança: {num_balanca}) - {categoria_nome}",
+                      font=fonte_titulo, fill=(0, 0, 0))
+            draw.text((margem_lateral, 10 + 30), f"Data de emissão: {datetime.now().strftime('%d/%m/%Y')}",
+                      font=fonte_texto, fill=(0, 0, 0))
 
-        draw.text((margem_lateral, 10), f"Tabela de Preços - {nome} (Nº Balança: {num_balanca}) - {categoria_nome}", font=fonte_titulo, fill=(0, 0, 0))
-        draw.text((margem_lateral, 10 + 30), f"Data de emissão: {datetime.now().strftime('%d/%m/%Y')}", font=fonte_texto, fill=(0, 0, 0))
+            col1_x = margem_lateral
+            col2_x = int(largura_img * 0.65)
+            col_end = largura_img - margem_lateral
 
-        col1_x = margem_lateral
-        col2_x = int(largura_img * 0.65)
-        col_end = largura_img - margem_lateral
-
-        y = margem_topo + 50
-        draw.rectangle([col1_x, y, col_end, y + altura_linha], fill=(100, 100, 100))
-        draw.text((col1_x + 10, y + 5), "Produto", font=fonte_texto, fill=(255, 255, 255))
-        draw.text((col2_x + 10, y + 5), "Preço", font=fonte_texto, fill=(255, 255, 255))
-        y += altura_linha
-
-        for p in precos_filtrados:
-            preco_ajustado = p['preco_base'] + p['ajuste_fixo']
-            draw.rectangle([col1_x, y, col_end, y + altura_linha], outline=(0, 0, 0))
-            draw.line((col2_x, y, col2_x, y + altura_linha), fill=(0, 0, 0))
-            draw.text((col1_x + 10, y + 5), p['nome'], font=fonte_texto, fill=(0, 0, 0))
-            draw.text((col2_x + 10, y + 5), f"R$ {preco_ajustado:.2f}", font=fonte_texto, fill=(0, 0, 0))
+            y = margem_topo + 50
+            draw.rectangle([col1_x, y, col_end, y + altura_linha], fill=(100, 100, 100))
+            draw.text((col1_x + 10, y + 5), "Produto", font=fonte_texto, fill=(255, 255, 255))
+            draw.text((col2_x + 10, y + 5), "Preço", font=fonte_texto, fill=(255, 255, 255))
             y += altura_linha
 
-        y_fim_tabela = y
-        y_inicio_tabela = margem_topo + 50 + altura_linha
+            for p in precos_filtrados:
+                preco_ajustado = p['preco_base'] + p['ajuste_fixo']
+                draw.rectangle([col1_x, y, col_end, y + altura_linha], outline=(0, 0, 0))
+                draw.line((col2_x, y, col2_x, y + altura_linha), fill=(0, 0, 0))
+                draw.text((col1_x + 10, y + 5), p['nome'], font=fonte_texto, fill=(0, 0, 0))
+                draw.text((col2_x + 10, y + 5), f"R$ {preco_ajustado:.2f}", font=fonte_texto, fill=(0, 0, 0))
+                y += altura_linha
 
-        img_base = self.adicionar_marca_dagua_area(
-            img_base,
-            texto=num_balanca,
-            x_inicio=col1_x,
-            x_fim=col_end,
-            y_inicio=y_inicio_tabela,
-            altura=altura_linha * len(precos_filtrados),
-            fonte_path="arialbd.ttf",
-            tamanho_fonte=30,
-            opacidade=80,
-            angulo=25
-        )
+            y_fim_tabela = y
+            y_inicio_tabela = margem_topo + 50 + altura_linha
 
-        texto_rodape = "Tabela com validade de 7(sete) dias corridos, podendo ter mudanças a qualquer momento"
-        bbox = draw.textbbox((0, 0), texto_rodape, font=fonte_rodape)
-        draw = ImageDraw.Draw(img_base)
-        draw.text(((largura_img - bbox[2]) // 2, altura_total - 30), texto_rodape, font=fonte_rodape, fill=(0, 0, 0, 255))
+            # Marca d'água opcional: use sua função já existente se desejar.
+            if hasattr(self, 'adicionar_marca_dagua_area'):
+                img_base = self.adicionar_marca_dagua_area(
+                    img_base,
+                    texto=num_balanca,
+                    x_inicio=col1_x,
+                    x_fim=col_end,
+                    y_inicio=y_inicio_tabela,
+                    altura=altura_linha * len(precos_filtrados),
+                    fonte_path="arialbd.ttf",
+                    tamanho_fonte=30,
+                    opacidade=80,
+                    angulo=25
+                )
 
-        arquivo_jpg = tempfile.NamedTemporaryFile(delete=False, suffix=".jpg").name
-        img_base.convert("RGB").save(arquivo_jpg, "JPEG")
-        QMessageBox.information(self, "Exportar JPG", f"Arquivo JPG gerado:\n{arquivo_jpg}")
-        abrir_arquivo(arquivo_jpg)
+            texto_rodape = "Tabela com validade de 7(sete) dias corridos, podendo ter mudanças a qualquer momento"
+            bbox = draw.textbbox((0, 0), texto_rodape, font=fonte_rodape)
+            draw.text(((largura_img - bbox[2]) // 2, altura_total - 30), texto_rodape, font=fonte_rodape,
+                      fill=(0, 0, 0, 255))
+
+            arquivo_jpg = tempfile.NamedTemporaryFile(delete=False, suffix=".jpg").name
+            img_base.convert("RGB").save(arquivo_jpg, "JPEG")
+            return arquivo_jpg
+
+        def on_jpg_ready(path):
+            if not path:
+                QMessageBox.information(self, "Exportar JPG", "Não há produtos com preço positivo para essa categoria.")
+                return
+            QMessageBox.information(self, "Exportar JPG", f"Arquivo JPG gerado:\n{path}")
+            abrir_arquivo(path)
+
+        self.worker_exportar_jpg = WorkerThread(tarefa_jpg)
+        self.worker_exportar_jpg.finished.connect(on_jpg_ready)
+        self.worker_exportar_jpg.erro.connect(self._mostrar_erro_thread)
+        self.worker_exportar_jpg.start()
 
     def adicionar_marca_dagua_area(self, imagem, texto, x_inicio, x_fim, y_inicio, altura, fonte_path="arial.ttf", tamanho_fonte=30, opacidade=80, angulo=25):
         try:
@@ -869,6 +960,15 @@ class FornecedoresUI(QWidget):
                 marca.alpha_composite(txt_img, (px, py))
         resultado = Image.alpha_composite(imagem.convert("RGBA"), marca)
         return resultado.convert("RGB")
+
+    def closeEvent(self, event):
+        for attr in ["worker_tabela", "worker_categorias", "worker_exportar_pdf", "worker_exportar_jpg"]:
+            if hasattr(self, attr):
+                worker = getattr(self, attr)
+                if worker.isRunning():
+                    worker.quit()
+                    worker.wait()
+        event.accept()
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)

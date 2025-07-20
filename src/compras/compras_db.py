@@ -27,7 +27,7 @@ def listar_contas_do_fornecedor_cached(fornecedor_id):
         return []
     with get_cursor() as cursor:
         cursor.execute("""
-            SELECT id, banco, agencia, conta, nome_conta, padrao
+            SELECT id, banco, agencia, conta, nome_conta, padrao, chave_pix
             FROM dados_bancarios_fornecedor
             WHERE fornecedor_id = %s
             ORDER BY padrao DESC, nome_conta, banco
@@ -36,11 +36,12 @@ def listar_contas_do_fornecedor_cached(fornecedor_id):
         return [
             {
                 'id': row['id'],
-                'apelido': row['nome_conta'] or row['banco'],
+                'apelido': row['nome_conta'] or row['banco'] or (row['chave_pix'] if row['chave_pix'] else ''),
                 'banco': row['banco'],
                 'agencia': row['agencia'],
                 'conta': row['conta'],
                 'padrao': row['padrao'],
+                'chave_pix': row.get('chave_pix', ''),
             }
             for row in rows
         ]
@@ -184,7 +185,8 @@ def obter_detalhes_compra(compra_id):
                    f.nome AS fornecedor,
                    f.fornecedores_numerobalanca,
                    c.data_compra,
-                   c.valor_abatimento
+                   c.valor_abatimento,
+                   c.status
             FROM compras c
                  JOIN fornecedores f ON c.fornecedor_id = f.id
             WHERE c.id = %s
@@ -192,7 +194,8 @@ def obter_detalhes_compra(compra_id):
         compra = cursor.fetchone()
 
         cursor.execute("""
-            SELECT p.nome                            AS produto_nome,
+            SELECT p.nome AS produto_nome,
+                   i.produto_id,
                    i.quantidade,
                    i.preco_unitario,
                    (i.quantidade * i.preco_unitario) AS total
@@ -235,36 +238,6 @@ def obter_valor_com_abatimento_adiantamento(compra_id, total_produtos=None):
         return total_produtos + adiantamento
     else:
         return total_produtos - abatimento
-
-def obter_saldo_devedor_fornecedor(fornecedor_id):
-    with get_cursor() as cursor:
-        cursor.execute("""
-                        SELECT valor, tipo
-                        FROM debitos_fornecedores
-                        WHERE fornecedor_id = %s
-                        """, (fornecedor_id,))
-        saldo = Decimal('0.00')
-        for row in cursor.fetchall():
-            if row["tipo"] in ("inclusao", "adiantamento"):
-                saldo += Decimal(str(row["valor"]))
-            else:
-                saldo -= Decimal(str(row["valor"]))
-        return saldo
-
-def buscar_nome_conta_padrao(fornecedor_id):
-    try:
-        with get_cursor() as cursor:
-            cursor.execute("""
-                            SELECT nome_conta
-                            FROM dados_bancarios_fornecedor
-                            WHERE fornecedor_id = %s
-                            AND padrao = 1 LIMIT 1
-                            """, (fornecedor_id,))
-            row = cursor.fetchone()
-            return row["nome_conta"] if row else "Conta não cadastrada"
-    except mysql.connector.Error as e:
-        print(f"Erro ao buscar conta padrão: {e}")
-        return "Erro ao buscar conta"
 
 def obter_saldo_devedor_fornecedor(fornecedor_id):
     with get_cursor() as cursor:
@@ -419,42 +392,74 @@ def obter_fornecedor_id_por_numero_balanca(numero):
     return resultado['id'] if resultado else None
 
 def obter_dados_bancarios_para_campo_copiavel(compra_id):
+    def monta_texto(row, valor):
+        linhas = []
+        if row.get('nome_conta'):
+            linhas.append(f"{row['nome_conta']} - R$ {valor}")
+        elif row.get('banco'):
+            linhas.append(f"{row['banco']} - R$ {valor}")
+        else:
+            linhas.append(f"Conta/Pix - R$ {valor}")
+
+        if row.get('banco'):
+            agencia = row.get('agencia')
+            conta = row.get('conta')
+            dados_bancarios = f"{row['banco']}"
+            if agencia:
+                dados_bancarios += f" (Ag: {agencia}"
+                if conta:
+                    dados_bancarios += f", Conta: {conta})"
+                else:
+                    dados_bancarios += ")"
+            elif conta:
+                dados_bancarios += f" (Conta: {conta})"
+            linhas.append(dados_bancarios)
+        elif row.get('agencia') or row.get('conta'):
+            dados_bancarios = ""
+            if row.get('agencia'):
+                dados_bancarios += f"Ag: {row['agencia']}"
+            if row.get('conta'):
+                if dados_bancarios:
+                    dados_bancarios += ", "
+                dados_bancarios += f"Conta: {row['conta']}"
+            linhas.append(dados_bancarios)
+
+        if row.get('CPFouCNPJ'):
+            tipo_doc = "CNPJ" if len(row['CPFouCNPJ']) > 14 else "CPF"
+            linhas.append(f"{tipo_doc}: {row['CPFouCNPJ']}")
+
+        if row.get('chave_pix'):
+            linhas.append(f"Chave PIX: {row['chave_pix']}")
+
+        return "\n".join([l for l in linhas if l])
+
     with get_cursor() as cursor:
         # Primeiro tenta pegar a conta personalizada (da compra)
         cursor.execute("""
-            SELECT c.total, dbf.banco, dbf.agencia, dbf.conta, dbf.nome_conta, dbf.CPFouCNPJ
+            SELECT c.total, dbf.banco, dbf.agencia, dbf.conta, dbf.nome_conta, dbf.CPFouCNPJ, dbf.chave_pix
             FROM compras c
                 LEFT JOIN dados_bancarios_fornecedor dbf ON c.dados_bancarios_id = dbf.id
             WHERE c.id = %s
         """, (compra_id,))
         row = cursor.fetchone()
-        if row and row['banco']:
+        if row:
             valor = f"{row['total']:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-            tipo_doc = "CNPJ" if row['CPFouCNPJ'] and len(row['CPFouCNPJ']) > 14 else "CPF"
-            texto = (
-                f"{row['nome_conta'] or row['banco']} - R$ {valor}\n"
-                f"{row['banco']} (Ag: {row['agencia']}, Conta: {row['conta']})\n"
-                f"{tipo_doc}: {row['CPFouCNPJ']}"
-            )
-            return texto
-        else:
-            # Se não houver conta personalizada, busca a padrão do fornecedor com o mesmo formato
-            cursor.execute("""
-                SELECT dbf.banco, dbf.agencia, dbf.conta, dbf.nome_conta, dbf.CPFouCNPJ, c.total
-                FROM compras c
-                JOIN dados_bancarios_fornecedor dbf
-                    ON dbf.fornecedor_id = c.fornecedor_id AND dbf.padrao = 1
-                WHERE c.id = %s LIMIT 1
-            """, (compra_id,))
-            row = cursor.fetchone()
-            if row:
-                valor = f"{row['total']:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-                tipo_doc = "CNPJ" if row['CPFouCNPJ'] and len(row['CPFouCNPJ']) > 14 else "CPF"
-                texto = (
-                    f"{row['nome_conta'] or row['banco']} - R$ {valor}\n"
-                    f"{row['banco']} (Ag: {row['agencia']}, Conta: {row['conta']})\n"
-                    f"{tipo_doc}: {row['CPFouCNPJ']}"
-                )
+            texto = monta_texto(row, valor)
+            if texto:
+                return texto
+        # Se não houver conta personalizada, busca a padrão do fornecedor
+        cursor.execute("""
+            SELECT dbf.banco, dbf.agencia, dbf.conta, dbf.nome_conta, dbf.CPFouCNPJ, dbf.chave_pix, c.total
+            FROM compras c
+            JOIN dados_bancarios_fornecedor dbf
+                ON dbf.fornecedor_id = c.fornecedor_id AND dbf.padrao = 1
+            WHERE c.id = %s LIMIT 1
+        """, (compra_id,))
+        row = cursor.fetchone()
+        if row:
+            valor = f"{row['total']:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+            texto = monta_texto(row, valor)
+            if texto:
                 return texto
     return ""
 
@@ -473,8 +478,14 @@ def atualizar_status_compra(compra_id, novo_status):
         )
 
 def listar_itens_compra(compra_ids):
+    # Garante que compra_ids seja uma lista/tupla de ints
+    if isinstance(compra_ids, int):
+        compra_ids = [compra_ids]
     if not compra_ids:
         return {}
+    # Achata listas internas (ex: [[1,2,3]])
+    if any(isinstance(cid, (list, tuple)) for cid in compra_ids):
+        compra_ids = [item for sublist in compra_ids for item in (sublist if isinstance(sublist, (list, tuple)) else [sublist])]
     with get_cursor() as cursor:
         format_ids = ','.join(['%s'] * len(compra_ids))
         cursor.execute(f"""
@@ -483,7 +494,7 @@ def listar_itens_compra(compra_ids):
             FROM itens_compra i
             JOIN produtos p ON i.produto_id = p.id
             WHERE i.compra_id IN ({format_ids})
-        """, compra_ids)
+        """, tuple(compra_ids))
         itens = cursor.fetchall()
     # Agrupa por compra_id
     from collections import defaultdict
@@ -556,6 +567,20 @@ def contar_compras(status=None, status_not=None, data_de=None, data_ate=None, fo
         cursor.execute(query, params)
         row = cursor.fetchone()
         return row["total"] if row else 0
+
+def existe_transacao_saida_para_compra(compra_id):
+    descricao_chave = f"CompraID:{compra_id}"
+    with get_cursor() as cursor:
+        cursor.execute("""
+            SELECT id FROM compras
+            WHERE tipo = 'Transação'
+              AND direcao = 'Saída'
+              AND origem = 'movimentacao'
+              AND descricao LIKE %s
+        """, (f"%{descricao_chave}",))
+        row = cursor.fetchone()
+        return row is not None
+
 
 # Após qualquer alteração/inclusão/exclusão:
 # listar_fornecedores_cached.cache_clear()

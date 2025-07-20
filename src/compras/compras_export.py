@@ -8,6 +8,11 @@ from datetime import datetime
 from PIL import Image, ImageDraw, ImageFont
 import platform
 import os
+import re
+
+def limpar_numero_nome_produto(nome):
+    # Remove todos os números do nome do produto
+    return re.sub(r'\d+', '', nome).strip()
 
 def exportar_compra_pdf(compra, itens, saldo, filename, marca_dagua_texto=""):
     c = canvas.Canvas(filename, pagesize=A4)
@@ -68,7 +73,7 @@ def exportar_compra_pdf(compra, itens, saldo, filename, marca_dagua_texto=""):
             c.showPage()
             y = height - 30 * mm
         c.setFont(fonte_padrao, 11)
-        c.drawString(20 * mm, y, item['produto_nome'])
+        c.drawString(20 * mm, y, limpar_numero_nome_produto(item['produto_nome']))
         c.drawString(90 * mm, y, str(item['quantidade']))
         c.drawString(110 * mm, y, f"R$ {item['preco_unitario']:.2f}")
         c.drawString(140 * mm, y, f"R$ {item['total']:.2f}")
@@ -95,7 +100,7 @@ def exportar_compra_pdf(compra, itens, saldo, filename, marca_dagua_texto=""):
     c.setFont(fonte_padrao + "-Bold", 11)
     if saldo < 0:
         c.drawString(20 * mm, y, f"Saldo positivo do fornecedor: R$ {-saldo:.2f}")
-    else:
+    if saldo > 0:
         c.drawString(20 * mm, y, f"Saldo devedor do fornecedor: R$ {abs(saldo):.2f}")
 
     y -= 20 * mm
@@ -168,7 +173,7 @@ def exportar_compra_jpg(compra, itens, saldo, filename, marca_dagua_texto=""):
 
     total = 0
     for item in itens:
-        draw.text((30, y), item['produto_nome'], fill="black", font=fonte_mono)
+        draw.text((30, y), limpar_numero_nome_produto(item['produto_nome']), fill="black", font=fonte_mono)
         draw.text((400, y), str(item['quantidade']), fill="black", font=fonte_mono)
         draw.text((470, y), f"{item['preco_unitario']:.2f}", fill="black", font=fonte_mono)
         draw.text((570, y), f"{item['total']:.2f}", fill="black", font=fonte_mono)
@@ -198,7 +203,7 @@ def exportar_compra_jpg(compra, itens, saldo, filename, marca_dagua_texto=""):
 
     if saldo < 0:
         draw.text((30, y), f"Saldo positivo do fornecedor: R$ {-saldo:.2f}", fill="black", font=fonte_bold)
-    else:
+    if saldo > 0:
         draw.text((30, y), f"Saldo devedor do fornecedor: R$ {abs(saldo):.2f}", fill="black", font=fonte_bold)
     y += 40
 
@@ -253,3 +258,23 @@ def adicionar_marca_dagua_area(imagem, texto, x_inicio, x_fim, y_inicio, altura,
             marca.alpha_composite(txt_img, (px, py))
     resultado = Image.alpha_composite(imagem.convert("RGBA"), marca)
     return resultado.convert("RGB")
+
+def exportar_compra_pdf_threaded(compra, itens, saldo, filename, marca_dagua_texto=""):
+    def tarefa_pdf():
+        exportar_compra_pdf(compra, itens, saldo, filename, marca_dagua_texto=marca_dagua_texto)
+        return filename
+
+    worker = WorkerThread(tarefa_pdf)
+    worker.finished.connect(lambda path: print(f"PDF gerado: {path}"))
+    worker.erro.connect(lambda msg: print(f"Erro: {msg}"))
+    worker.start()
+
+def exportar_compra_jpg_threaded(compra, itens, saldo, filename, marca_dagua_texto=""):
+    def tarefa_jpg():
+        exportar_compra_jpg(compra, itens, saldo, filename, marca_dagua_texto=marca_dagua_texto)
+        return filename
+
+    worker = WorkerThread(tarefa_jpg)
+    worker.finished.connect(lambda path: print(f"JPG gerado: {path}"))
+    worker.erro.connect(lambda msg: print(f"Erro: {msg}"))
+    worker.start()
