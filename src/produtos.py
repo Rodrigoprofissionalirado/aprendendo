@@ -7,9 +7,6 @@ from PySide6.QtCore import Qt, QLocale
 from db_context import get_cursor
 from threads_utils import WorkerThread
 from utils_permissoes import requer_permissao
-from compras.compras_db import listar_produtos_cached
-from compras.compras import get_produtos_cache
-from movimentacoes import get_produtos_cache
 
 class ProdutosUI(QWidget):
     def __init__(self):
@@ -106,8 +103,6 @@ class ProdutosUI(QWidget):
                 QMessageBox.warning(self, 'Erro', 'Preço inválido. Use ponto ou vírgula para os decimais.')
         else:
             QMessageBox.warning(self, 'Campos obrigatórios', 'Preencha todos os campos.')
-        listar_produtos_cached.cache_clear()
-        get_produtos_cache.cache_clear()
 
     def carregar_dado_selecionado(self, row, column):
         self.dado_selecionado = int(self.tabela.item(row, 0).text())
@@ -130,8 +125,6 @@ class ProdutosUI(QWidget):
                 self.limpar()
             except ValueError:
                 QMessageBox.warning(self, 'Erro', 'Preço inválido. Use ponto ou vírgula para os decimais.')
-            listar_produtos_cached.cache_clear()
-            get_produtos_cache.cache_clear()
 
     @requer_permissao(['admin', 'gerente', 'operador'])
     def excluir(self):
@@ -140,8 +133,6 @@ class ProdutosUI(QWidget):
                 cursor.execute("DELETE FROM produtos WHERE id = %s", (self.dado_selecionado,))
             self.carregar_tabela()
             self.limpar()
-            listar_produtos_cached.cache_clear()
-            get_produtos_cache.cache_clear()
 
     def limpar(self):
         self.dado_selecionado = None
