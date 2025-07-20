@@ -7,9 +7,10 @@ from PySide6.QtWidgets import (
     QComboBox, QGridLayout, QInputDialog, QDialog, QDialogButtonBox, QFormLayout,
     QDoubleSpinBox, QSizePolicy, QHeaderView, QSplitter
 )
-from PySide6.QtCore import Qt, QLocale
+from PySide6.QtCore import Qt, QLocale, QTimer
 from PySide6.QtGui import QIntValidator
 from db_context import get_cursor
+from dados_bancarios import DadosBancariosUI
 from threads_utils import WorkerThread
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
@@ -215,6 +216,10 @@ class FornecedoresUI(QWidget):
         self.btn_excluir = QPushButton('Excluir')
         self.btn_cancelar = QPushButton('Cancelar')
 
+        # Botão Gerenciar contas
+        self.btn_gerenciar_contas = QPushButton('Gerenciar contas')
+        self.btn_gerenciar_contas.clicked.connect(self.abrir_gerenciador_contas)
+
         # --- NOVA TABELA DE DADOS BANCÁRIOS ---
         self.label_dados_bancarios = QLabel('Dados Bancários do Fornecedor')
         self.tabela_dados_bancarios = QTableWidget()
@@ -312,6 +317,7 @@ class FornecedoresUI(QWidget):
         #layout_esquerda.addStretch()
 
         # --- Adiciona a nova tabela de dados bancários ao painel esquerdo ---
+        layout_esquerda.addWidget(self.btn_gerenciar_contas)
         layout_esquerda.addWidget(self.label_dados_bancarios)
         layout_esquerda.addWidget(self.tabela_dados_bancarios)
         # ---
@@ -667,24 +673,36 @@ class FornecedoresUI(QWidget):
 
     def atualizar_fornecedor_combo(self):
         index = self.combo_fornecedores.currentIndex()
-        if index >= 0:
-            fornecedor_id = self.combo_fornecedores.currentData()
-            nome = self.input_nome.text().strip()
-            endereco = self.input_endereco.text().strip()
-            numero_balanca = self.input_numero_balanca.text().strip()
+        fornecedor_id = self.combo_fornecedores.currentData()
+        if index < 0 or fornecedor_id is None:
+            QMessageBox.warning(self, 'Seleção', 'Selecione um fornecedor válido para atualizar.')
+            return
 
-            if nome and numero_balanca:
-                try:
-                    self.db.atualizar_fornecedor(fornecedor_id, nome, endereco, numero_balanca)
-                    self.cancelar_edicao()
-                    self.atualizar_tabela()
-                    self.carregar_combo_fornecedores()
-                    self.aplicar_filtro()
-                except Exception as e:
-                    QMessageBox.critical(self, 'Erro', str(e))
-            else:
-                QMessageBox.warning(self, 'Campos obrigatórios',
-                                    'Preencha o nome e o número da balança para atualizar.')
+        nome = self.input_nome.text().strip()
+        endereco = self.input_endereco.text().strip()
+        numero_balanca = self.input_numero_balanca.text().strip()
+
+        if not (nome and numero_balanca):
+            QMessageBox.warning(self, 'Campos obrigatórios',
+                                'Preencha o nome e o número da balança para atualizar.')
+            return
+
+        try:
+            self.db.atualizar_fornecedor(fornecedor_id, nome, endereco, numero_balanca)
+            # Atualize apenas a tabela e combo, bloqueando sinais
+            self.combo_fornecedores.blockSignals(True)
+            self.atualizar_tabela()
+            self.carregar_combo_fornecedores()
+            index = self.combo_fornecedores.findData(fornecedor_id)
+            if index != -1:
+                self.combo_fornecedores.setCurrentIndex(index)
+            self.combo_fornecedores.blockSignals(False)
+            QMessageBox.information(self, "Sucesso", "Fornecedor atualizado com sucesso!")
+        except Exception as e:
+            import traceback
+            print("Erro ao atualizar fornecedor:", e)
+            traceback.print_exc()
+            QMessageBox.critical(self, 'Erro', str(e))
 
     def excluir_fornecedor_combo(self):
         index = self.combo_fornecedores.currentIndex()
@@ -1001,6 +1019,35 @@ class FornecedoresUI(QWidget):
                 marca.alpha_composite(txt_img, (px, py))
         resultado = Image.alpha_composite(imagem.convert("RGBA"), marca)
         return resultado.convert("RGB")
+
+    def abrir_gerenciador_contas(self):
+        # Descobre o fornecedor atualmente selecionado
+        idx = self.combo_fornecedores.currentIndex()
+        if idx < 0:
+            QMessageBox.warning(self, "Gerenciar contas", "Selecione um fornecedor para gerenciar contas.")
+            return
+        nome_fornecedor = self.combo_fornecedores.currentText()
+
+        # Cria e mostra a janela de dados bancários
+        self.dlg_dados_bancarios = DadosBancariosUI()
+
+        # Preenche combo e filtro após a janela ser criada e carregada
+        # Aguarda o carregamento dos fornecedores
+        def selecionar_fornecedor_na_janela():
+            # Procura o índice do fornecedor na combo pelo nome
+            for i in range(self.dlg_dados_bancarios.combo_fornecedor_nome.count()):
+                if self.dlg_dados_bancarios.combo_fornecedor_nome.itemText(i) == nome_fornecedor:
+                    self.dlg_dados_bancarios.combo_fornecedor_nome.setCurrentIndex(i)
+                    break
+            # Preenche filtro
+            self.dlg_dados_bancarios.input_filtro_nome.setText(nome_fornecedor)
+            # Atualiza a tabela para aplicar o filtro
+            self.dlg_dados_bancarios.carregar_tabela()
+
+        # Executa o ajuste após o event loop da nova janela rodar (garante que combo está carregada)
+        QTimer.singleShot(200, selecionar_fornecedor_na_janela)  # delay leve para garantir que carregou
+
+        self.dlg_dados_bancarios.show()
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
