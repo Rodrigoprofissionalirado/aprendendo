@@ -25,7 +25,7 @@ from .compras_db import (
     obter_fornecedor_id_por_numero_balanca, obter_primeira_categoria_do_fornecedor,
     obter_dados_bancarios_para_campo_copiavel, atualizar_conta_bancaria_da_compra,
     atualizar_status_compra as atualizar_status_compra_db, obter_totais_produtos_compras,
-    obter_valores_finais_compras, contar_compras
+    obter_valores_finais_compras, contar_compras, existe_transacao_saida_para_compra
 )
 from .compras_logic import (
     obter_total_produtos_lista, calcular_valor_com_abatimento_adiantamento, formatar_moeda
@@ -671,10 +671,11 @@ class ComprasUI(QWidget):
             tabela = item.tableWidget()
             compra_id = int(tabela.item(row, 0).text())
             novo_status = item.text()
-            # Verifica status anterior
-            status_anterior = tabela.item(row, 5).data(Qt.UserRole) if tabela.item(row, 5) else None
-            considerar_no_saldo = self.checkbox_considerar_no_saldo.isChecked() if hasattr(self,
-                                                                                           'checkbox_considerar_no_saldo') else False
+            considerar_no_saldo = self.checkbox_considerar_no_saldo.isChecked() if hasattr(self, 'checkbox_considerar_no_saldo') else False
+
+            # Busca status anterior do banco ANTES de atualizar!
+            compra, _ = obter_detalhes_compra(compra_id)
+            status_anterior = compra.get('status') if compra else None
 
             # Atualiza status no banco
             self.atualizar_status_compra(compra_id, novo_status)
@@ -687,7 +688,11 @@ class ComprasUI(QWidget):
                         self
                     )
                     if dialog.exec() and dialog.resultado:
-                        self.lancar_transacao_saida_para_compra(compra_id)
+                        if not existe_transacao_saida_para_compra(compra_id):
+                            self.lancar_transacao_saida_para_compra(compra_id)
+                        else:
+                            QMessageBox.information(self, "Atenção",
+                                                    "Já existe uma transação de saída para esta compra!")
                 elif status_anterior == "Concluída" and novo_status != "Concluída":
                     dialog = ConfirmTransacaoDialog(
                         "Deseja excluir a transação de saída correspondente lançada na conclusão desta compra?",
@@ -703,7 +708,7 @@ class ComprasUI(QWidget):
         compra, itens = obter_detalhes_compra(compra_id)
         fornecedor_id = compra['fornecedor_id']
         data_compra = compra['data_compra']
-        descricao = obter_dados_bancarios_para_campo_copiavel(compra_id)
+        descricao = obter_dados_bancarios_para_campo_copiavel(compra_id) + f" - CompraID:{compra_id}"
 
         # PATCH: Usa função que considera adiantamento e abatimento corretamente!
         valor_final = obter_valor_com_abatimento_adiantamento(compra_id)
@@ -715,7 +720,7 @@ class ComprasUI(QWidget):
             direcao="Saída",
             descricao=descricao,
             valor_abatimento=Decimal("0.00"),
-            valor_operacao=valor_final,  # <-- valor correto
+            valor_operacao=valor_final,
             status="Concluída",
             origem="movimentacao",
             considerar_no_saldo=True
@@ -739,20 +744,24 @@ class ComprasUI(QWidget):
 
     def excluir_transacao_saida_para_compra(self, compra_id):
         from movimentacoes_db import excluir_movimentacao, buscar_fornecedor_id_por_numero_balanca
-        from compras_db import obter_dados_bancarios_para_campo_copiavel
 
-        # Localiza a transação vinculada à compra
-        descricao = obter_dados_bancarios_para_campo_copiavel(compra_id)
-        fornecedor_id = None
+        # Busca a transação vinculada por descrição terminando com CompraID:{compra_id}
+        descricao_chave = f"CompraID:{compra_id}"
+        transacao_id = None
         with get_cursor() as cursor:
-            # Busca transação lançada com a mesma descrição, tipo e compra_id
             cursor.execute("""
-                SELECT id FROM compras
-                WHERE tipo = 'Transação' AND direcao = 'Saída' AND descricao = %s AND origem = 'movimentacao'
-            """, (descricao,))
+                    SELECT id FROM compras
+                    WHERE tipo = 'Transação'
+                      AND direcao = 'Saída'
+                      AND origem = 'movimentacao'
+                      AND descricao LIKE %s
+                """, (f"%{descricao_chave}",))
             row = cursor.fetchone()
             if row:
-                excluir_movimentacao(row["id"])
+                transacao_id = row["id"]
+
+        if transacao_id:
+            excluir_movimentacao(transacao_id)
 
     def atualizar_status_compra(self, compra_id, novo_status):
         atualizar_status_compra_db(compra_id, novo_status)

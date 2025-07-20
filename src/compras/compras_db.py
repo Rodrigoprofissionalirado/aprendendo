@@ -185,7 +185,8 @@ def obter_detalhes_compra(compra_id):
                    f.nome AS fornecedor,
                    f.fornecedores_numerobalanca,
                    c.data_compra,
-                   c.valor_abatimento
+                   c.valor_abatimento,
+                   c.status
             FROM compras c
                  JOIN fornecedores f ON c.fornecedor_id = f.id
             WHERE c.id = %s
@@ -566,6 +567,20 @@ def contar_compras(status=None, status_not=None, data_de=None, data_ate=None, fo
         cursor.execute(query, params)
         row = cursor.fetchone()
         return row["total"] if row else 0
+
+def existe_transacao_saida_para_compra(compra_id):
+    descricao_chave = f"CompraID:{compra_id}"
+    with get_cursor() as cursor:
+        cursor.execute("""
+            SELECT id FROM compras
+            WHERE tipo = 'Transação'
+              AND direcao = 'Saída'
+              AND origem = 'movimentacao'
+              AND descricao LIKE %s
+        """, (f"%{descricao_chave}",))
+        row = cursor.fetchone()
+        return row is not None
+
 
 # Após qualquer alteração/inclusão/exclusão:
 # listar_fornecedores_cached.cache_clear()
