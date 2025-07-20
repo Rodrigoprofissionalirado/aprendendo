@@ -1,28 +1,23 @@
 from db_context import get_cursor
 from decimal import Decimal
-from functools import lru_cache
 from collections import defaultdict
 
-@lru_cache(maxsize=1)
-def listar_fornecedores_cached():
+def listar_fornecedores():
     with get_cursor() as cursor:
         cursor.execute("SELECT id, nome, fornecedores_numerobalanca FROM fornecedores ORDER BY nome")
         return cursor.fetchall()
 
-@lru_cache(maxsize=1)
-def listar_produtos_cached():
+def listar_produtos():
     with get_cursor() as cursor:
         cursor.execute("SELECT id, nome, preco_base FROM produtos ORDER BY nome")
         return cursor.fetchall()
 
-@lru_cache(maxsize=128)
-def listar_categorias_do_fornecedor_cached(fornecedor_id):
+def listar_categorias_do_fornecedor(fornecedor_id):
     with get_cursor() as cursor:
         cursor.execute("SELECT id, nome FROM categorias_fornecedor_por_fornecedor WHERE fornecedor_id = %s ORDER BY nome", (fornecedor_id,))
         return cursor.fetchall()
 
-@lru_cache(maxsize=128)
-def listar_contas_do_fornecedor_cached(fornecedor_id):
+def listar_contas_do_fornecedor(fornecedor_id):
     if not fornecedor_id:
         return []
     with get_cursor() as cursor:
@@ -79,16 +74,6 @@ def listar_compras(status=None, status_not=None, data_de=None, data_ate=None, fo
     with get_cursor() as cursor:
         cursor.execute(query, params)
         return cursor.fetchall()
-
-def listar_fornecedores():
-    return listar_fornecedores_cached()
-
-
-def listar_contas_do_fornecedor(fornecedor_id):
-    return listar_contas_do_fornecedor_cached(fornecedor_id)
-
-def listar_produtos():
-    return listar_produtos_cached()
 
 def obter_produto(produto_id):
     with get_cursor() as cursor:
