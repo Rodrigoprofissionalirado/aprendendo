@@ -1380,15 +1380,31 @@ class MovimentacoesUI(QWidget):
         row.addWidget(self.btn_nova_op)
         layout.addLayout(row)
 
+        # --- NOVO: Atalho ENTER no campo número da balança ---
         self.input_numero_balanca.editingFinished.connect(
             lambda: self.selecionar_fornecedor_por_numero_balanca(self.input_numero_balanca, self.combo_fornecedor)
         )
+        self.input_numero_balanca.returnPressed.connect(self._enter_nova_operacao)
+
+        # Adiciona o eventFilter para ENTER no combo
+        self.combo_fornecedor.installEventFilter(self)
 
         self.tabs = QTabWidget()
         self.tabs.setTabsClosable(True)
         self.tabs.tabCloseRequested.connect(self.fechar_aba)
         layout.addWidget(self.tabs)
         self.setLayout(layout)
+
+    def eventFilter(self, obj, event):
+        if obj is self.combo_fornecedor and event.type() == QEvent.KeyPress:
+            if event.key() in (Qt.Key_Return, Qt.Key_Enter):
+                self._enter_nova_operacao()
+                return True
+        return super().eventFilter(obj, event)
+
+    def _enter_nova_operacao(self):
+        # Executa ação do botão nova operação ao pressionar ENTER
+        self.btn_nova_op.click()
 
     def abrir_nova_aba(self):
         idx = self.combo_fornecedor.currentIndex()
