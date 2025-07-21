@@ -735,6 +735,13 @@ class FornecedoresUI(QWidget):
                 QMessageBox.critical(self, 'Erro', str(e))
 
     def cancelar_edicao(self):
+        # Finalize threads antes de alterar UI
+        for attr in ["worker_tabela", "worker_categorias", "worker_exportar_pdf", "worker_exportar_jpg", "worker_dados_bancarios"]:
+            if hasattr(self, attr):
+                worker = getattr(self, attr)
+                if worker.isRunning():
+                    worker.quit()
+                    worker.wait()
         self.combo_fornecedores.setCurrentIndex(-1)
         self.input_nome.clear()
         self.input_endereco.clear()
@@ -743,7 +750,6 @@ class FornecedoresUI(QWidget):
         self.input_filtro_nome.clear()
         self.input_filtro_balanca.clear()
         self.tabela_precos.setRowCount(0)
-        # Limpa tabela de dados bancários também
         self.atualizar_tabela_dados_bancarios([])
 
     def adicionar_categoria(self):
