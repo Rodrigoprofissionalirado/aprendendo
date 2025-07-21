@@ -423,22 +423,30 @@ class FornecedoresUI(QWidget):
             self.combo_fornecedores.setCurrentIndex(0)
 
     def fornecedor_selecionado(self, index):
-        if index < 0 or index >= len(self.fornecedores):
+        try:
+            if index < 0 or index >= len(self.fornecedores_exibidos):
+                self.input_nome.clear()
+                self.input_endereco.clear()
+                self.input_numero_balanca.clear()
+                self.combo_categoria.clear()
+                self.tabela_precos.setRowCount(0)
+                self.atualizar_tabela_dados_bancarios([])
+                return
+            f = self.fornecedores_exibidos[index]
+            self.input_nome.setText(f['nome'])
+            self.input_endereco.setText(f.get('fornecedores_endereco', '') or f.get('endereco', ''))
+            self.input_numero_balanca.setText(
+                str(f.get('fornecedores_numerobalanca', '') or f.get('numerobalanca', '')))
+            self.carregar_categorias_do_fornecedor(f['id'])
+            self.carregar_dados_bancarios_do_fornecedor(f['id'])
+        except Exception as e:
+            print("Erro no slot fornecedor_selecionado:", e)
             self.input_nome.clear()
             self.input_endereco.clear()
             self.input_numero_balanca.clear()
             self.combo_categoria.clear()
             self.tabela_precos.setRowCount(0)
-            # Limpa tabela de dados bancários também
             self.atualizar_tabela_dados_bancarios([])
-            return
-
-        f = self.fornecedores[index]
-        self.input_nome.setText(f['nome'])
-        self.input_endereco.setText(f.get('fornecedores_endereco', '') or f.get('endereco', ''))
-        self.input_numero_balanca.setText(str(f.get('fornecedores_numerobalanca', '') or f.get('numerobalanca', '')))
-        self.carregar_categorias_do_fornecedor(f['id'])
-        self.carregar_dados_bancarios_do_fornecedor(f['id'])
 
         # --- NOVOS MÉTODOS PARA DADOS BANCÁRIOS ---
 
@@ -727,7 +735,11 @@ class FornecedoresUI(QWidget):
                 # Exclua do banco
                 self.db.excluir_fornecedor(fornecedor_id)
 
-                # Limpe campos e combos ANTES de atualizar a tabela
+                # Bloqueia sinais dos combos durante toda a operação
+                self.combo_fornecedores.blockSignals(True)
+                self.combo_categoria.blockSignals(True)
+
+                # Limpa campos
                 self.combo_fornecedores.setCurrentIndex(-1)
                 self.input_nome.clear()
                 self.input_endereco.clear()
@@ -736,10 +748,16 @@ class FornecedoresUI(QWidget):
                 self.tabela_precos.setRowCount(0)
                 self.atualizar_tabela_dados_bancarios([])
 
-                # Agora atualize
+                # Atualiza tabela e combos
                 self.atualizar_tabela()
                 self.carregar_combo_fornecedores()
+                self.combo_fornecedores.setCurrentIndex(-1)
+                self.combo_categoria.setCurrentIndex(-1)
                 self.aplicar_filtro()
+
+                # Libera sinais
+                self.combo_fornecedores.blockSignals(False)
+                self.combo_categoria.blockSignals(False)
             except Exception as e:
                 QMessageBox.critical(self, 'Erro', str(e))
 
