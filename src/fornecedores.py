@@ -718,6 +718,14 @@ class FornecedoresUI(QWidget):
         )
         if resposta == QMessageBox.Yes:
             try:
+                # FINALIZE THREADS RELACIONADAS
+                for attr in ["worker_tabela", "worker_categorias", "worker_dados_bancarios"]:
+                    if hasattr(self, attr):
+                        worker = getattr(self, attr)
+                        if worker.isRunning():
+                            worker.quit()
+                            worker.wait()
+                # AGORA EXCLUA DO BANCO
                 self.db.excluir_fornecedor(fornecedor_id)
                 self.cancelar_edicao()
                 self.atualizar_tabela()
