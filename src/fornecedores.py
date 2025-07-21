@@ -720,14 +720,23 @@ class FornecedoresUI(QWidget):
             try:
                 # FINALIZE THREADS RELACIONADAS
                 for attr in ["worker_tabela", "worker_categorias", "worker_dados_bancarios"]:
-                    if hasattr(self, attr):
-                        worker = getattr(self, attr)
-                        if worker.isRunning():
-                            worker.quit()
-                            worker.wait()
-                # AGORA EXCLUA DO BANCO
+                    worker = getattr(self, attr, None)
+                    if worker is not None and worker.isRunning():
+                        worker.quit()
+                        worker.wait()
+                # Exclua do banco
                 self.db.excluir_fornecedor(fornecedor_id)
-                self.cancelar_edicao()
+
+                # Limpe campos e combos ANTES de atualizar a tabela
+                self.combo_fornecedores.setCurrentIndex(-1)
+                self.input_nome.clear()
+                self.input_endereco.clear()
+                self.input_numero_balanca.clear()
+                self.combo_categoria.clear()
+                self.tabela_precos.setRowCount(0)
+                self.atualizar_tabela_dados_bancarios([])
+
+                # Agora atualize
                 self.atualizar_tabela()
                 self.carregar_combo_fornecedores()
                 self.aplicar_filtro()
@@ -831,11 +840,11 @@ class FornecedoresUI(QWidget):
             self.worker_tabela.wait()
         fornecedor_idx = self.combo_fornecedores.currentIndex()
         categoria_idx = self.combo_categoria.currentIndex()
-        if fornecedor_idx < 0 or categoria_idx < 0:
+        if fornecedor_idx < 0 or categoria_idx < 0 or fornecedor_idx >= len(self.fornecedores_exibidos):
             QMessageBox.warning(self, "Exportar PDF", "Selecione um fornecedor e uma categoria para exportar a tabela.")
             return
 
-        fornecedor = self.fornecedores[fornecedor_idx]
+        fornecedor = self.fornecedores_exibidos[fornecedor_idx]
         nome = fornecedor['nome']
         num_balanca = str(fornecedor.get('fornecedores_numerobalanca', '') or fornecedor.get('numerobalanca', ''))
         categoria_id = self.combo_categoria.currentData()
@@ -865,7 +874,7 @@ class FornecedoresUI(QWidget):
             for pagina in range(paginas):
                 c.setFont("Helvetica-Bold", 16)
                 c.drawString(margem, altura - margem,
-                             f"Tabela de Preços - {nome} (Nº Balança: {num_balanca}) - {categoria_nome}")
+                             f"Tabela de Preços - {nome} (Nº Balança: {num_balanca})")
                 c.setFont("Helvetica", 10)
                 data_emissao = datetime.now().strftime("%d/%m/%Y")
                 c.drawString(margem, altura - margem - 20, f"Data de emissão: {data_emissao}")
@@ -953,11 +962,11 @@ class FornecedoresUI(QWidget):
             self.worker_tabela.wait()
         fornecedor_idx = self.combo_fornecedores.currentIndex()
         categoria_idx = self.combo_categoria.currentIndex()
-        if fornecedor_idx < 0 or categoria_idx < 0:
+        if fornecedor_idx < 0 or categoria_idx < 0 or fornecedor_idx >= len(self.fornecedores_exibidos):
             QMessageBox.warning(self, "Exportar JPG", "Selecione um fornecedor e uma categoria para exportar a tabela.")
             return
 
-        fornecedor = self.fornecedores[fornecedor_idx]
+        fornecedor = self.fornecedores_exibidos[fornecedor_idx]
         nome = fornecedor['nome']
         num_balanca = str(fornecedor.get('fornecedores_numerobalanca', '') or fornecedor.get('numerobalanca', ''))
         categoria_id = self.combo_categoria.currentData()
@@ -993,7 +1002,7 @@ class FornecedoresUI(QWidget):
             margem_topo = 40
             margem_lateral = 40
 
-            draw.text((margem_lateral, 10), f"Tabela de Preços - {nome} (Nº Balança: {num_balanca}) - {categoria_nome}",
+            draw.text((margem_lateral, 10), f"Tabela de Preços - {nome} (Nº Balança: {num_balanca})",
                       font=fonte_titulo, fill=(0, 0, 0))
             draw.text((margem_lateral, 10 + 30), f"Data de emissão: {datetime.now().strftime('%d/%m/%Y')}",
                       font=fonte_texto, fill=(0, 0, 0))
