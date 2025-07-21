@@ -1,5 +1,4 @@
 import sys
-from db_context import get_cursor
 from PySide6.QtWidgets import (
     QApplication, QWidget, QLabel, QPushButton, QVBoxLayout,
     QHBoxLayout, QGridLayout, QComboBox, QDateEdit, QLineEdit,
@@ -25,7 +24,8 @@ from .compras_db import (
     obter_fornecedor_id_por_numero_balanca, obter_primeira_categoria_do_fornecedor,
     obter_dados_bancarios_para_campo_copiavel, atualizar_conta_bancaria_da_compra,
     atualizar_status_compra as atualizar_status_compra_db, obter_totais_produtos_compras,
-    obter_valores_finais_compras, contar_compras, existe_transacao_saida_para_compra
+    obter_valores_finais_compras, contar_compras, existe_transacao_saida_para_compra,
+    excluir_transacao_saida_para_compra
 )
 from .compras_logic import (
     obter_total_produtos_lista, calcular_valor_com_abatimento_adiantamento, formatar_moeda
@@ -34,26 +34,6 @@ from .compras_export import (
     exportar_compra_pdf, exportar_compra_jpg
 )
 from .compras_dialogs import DiferencaCompraDialog
-
-from functools import lru_cache
-
-# Adicione no início do arquivo:
-
-@lru_cache(maxsize=1)
-def get_fornecedores_cache():
-    return listar_fornecedores()
-
-@lru_cache(maxsize=1)
-def get_produtos_cache():
-    return listar_produtos()
-
-@lru_cache(maxsize=128)
-def get_categorias_fornecedor_cache(fornecedor_id):
-    return obter_categorias_do_fornecedor(fornecedor_id)
-
-@lru_cache(maxsize=128)
-def get_contas_fornecedor_cache(fornecedor_id):
-    return listar_contas_do_fornecedor(fornecedor_id)
 
 STATUS_LIST = [
     "Criada", "Emitindo nota", "Efetuando pagamento", "Finalizada", "Concluída"
@@ -449,7 +429,7 @@ class ComprasUI(QWidget):
         self.combo_categoria_temporaria.blockSignals(True)
         self.combo_categoria_temporaria.clear()
         self.combo_categoria_temporaria.addItem("Selecione uma categoria", 0)
-        categorias = get_categorias_fornecedor_cache(fornecedor_id)
+        categorias = obter_categorias_do_fornecedor(fornecedor_id)
         for c in categorias:
             self.combo_categoria_temporaria.addItem(c['nome'], c['id'])
         self.combo_categoria_temporaria.setCurrentIndex(1 if self.combo_categoria_temporaria.count() > 1 else 0)
@@ -501,7 +481,7 @@ class ComprasUI(QWidget):
             QMessageBox.warning(self, "Erro", "Não foi possível identificar o fornecedor da compra selecionada.")
             return
 
-        contas_do_fornecedor = get_contas_fornecedor_cache(fornecedor_id)
+        contas_do_fornecedor = listar_contas_do_fornecedor(fornecedor_id)
         if not contas_do_fornecedor:
             QMessageBox.information(self, "Sem contas", "Este fornecedor não possui contas bancárias cadastradas.")
             return
@@ -699,7 +679,7 @@ class ComprasUI(QWidget):
                         self
                     )
                     if dialog.exec() and dialog.resultado:
-                        self.excluir_transacao_saida_para_compra(compra_id)
+                        excluir_transacao_saida_para_compra(compra_id)
 
             self.atualizar_tabelas()
 
@@ -741,27 +721,6 @@ class ComprasUI(QWidget):
         # Não precisa inserir item virtual; exiba adiantamento/abatimento na UI usando obter_itens_e_lancamentos_da_compra
 
         return mov_id
-
-    def excluir_transacao_saida_para_compra(self, compra_id):
-        from movimentacoes_db import excluir_movimentacao, buscar_fornecedor_id_por_numero_balanca
-
-        # Busca a transação vinculada por descrição terminando com CompraID:{compra_id}
-        descricao_chave = f"CompraID:{compra_id}"
-        transacao_id = None
-        with get_cursor() as cursor:
-            cursor.execute("""
-                    SELECT id FROM compras
-                    WHERE tipo = 'Transação'
-                      AND direcao = 'Saída'
-                      AND origem = 'movimentacao'
-                      AND descricao LIKE %s
-                """, (f"%{descricao_chave}",))
-            row = cursor.fetchone()
-            if row:
-                transacao_id = row["id"]
-
-        if transacao_id:
-            excluir_movimentacao(transacao_id)
 
     def atualizar_status_compra(self, compra_id, novo_status):
         atualizar_status_compra_db(compra_id, novo_status)
@@ -1237,7 +1196,7 @@ class ComprasUI(QWidget):
         self.filtro_combo_fornecedor.clear()
         self.filtro_combo_fornecedor.addItem("Todos os Fornecedores", None)
         self.combo_fornecedor.addItem("", None)
-        for f in get_fornecedores_cache():
+        for f in listar_fornecedores():
             self.combo_fornecedor.addItem(f["nome"], f["id"])
             self.filtro_combo_fornecedor.addItem(f["nome"], f["id"])
 
@@ -1245,7 +1204,7 @@ class ComprasUI(QWidget):
         self.combo_produto.blockSignals(True)
         self.combo_produto.clear()
         self.combo_produto.setEditable(True)
-        produtos = get_produtos_cache()
+        produtos = listar_produtos()
         produtos.sort(key=lambda p: p["nome"])
         for p in produtos:
             self.combo_produto.addItem(p['nome'], p['id'])

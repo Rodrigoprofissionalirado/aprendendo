@@ -1,9 +1,7 @@
 from db_context import get_cursor
 from decimal import Decimal
-from functools import lru_cache
 
-@lru_cache(maxsize=128)
-def obter_categoria_principal_cached(fornecedor_id):
+def obter_categoria_principal(fornecedor_id):
     with get_cursor() as cursor:
         cursor.execute(
             "SELECT id, nome FROM categorias_fornecedor_por_fornecedor WHERE fornecedor_id = %s ORDER BY id ASC LIMIT 1",
@@ -14,9 +12,6 @@ def obter_categoria_principal_cached(fornecedor_id):
             cursor.execute("SELECT id, nome FROM categorias_fornecedor_por_fornecedor WHERE nome = %s LIMIT 1", ('Padrão',))
             cat = cursor.fetchone()
         return cat
-
-def obter_categoria_principal(fornecedor_id):
-    return obter_categoria_principal_cached(fornecedor_id)
 
 def listar_movimentacoes(fornecedor_id, data_de=None, data_ate=None, limit=50, offset=0):
     query = """

@@ -7,9 +7,10 @@ from PySide6.QtWidgets import (
     QComboBox, QGridLayout, QInputDialog, QDialog, QDialogButtonBox, QFormLayout,
     QDoubleSpinBox, QSizePolicy, QHeaderView, QSplitter
 )
-from PySide6.QtCore import Qt, QLocale
+from PySide6.QtCore import Qt, QLocale, QTimer
 from PySide6.QtGui import QIntValidator
 from db_context import get_cursor
+from dados_bancarios import DadosBancariosUI
 from threads_utils import WorkerThread
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
@@ -22,9 +23,6 @@ import os
 import tempfile
 import subprocess
 import platform
-from compras.compras_db import listar_fornecedores_cached, listar_categorias_do_fornecedor_cached
-from compras.compras import get_fornecedores_cache, get_categorias_fornecedor_cache
-from movimentacoes_db import obter_categoria_principal_cached
 
 def abrir_arquivo(caminho):
     """Abre arquivo PDF ou imagem com programa padrão do SO."""
@@ -55,8 +53,6 @@ class DB:
                 "INSERT INTO fornecedores (nome, fornecedores_endereco, fornecedores_numerobalanca) VALUES (%s, %s, %s)",
                 (nome, endereco, numero_balanca)
             )
-        listar_fornecedores_cached.cache_clear()
-        get_fornecedores_cache.cache_clear()
 
     def excluir_fornecedor(self, fornecedor_id):
         with get_cursor(commit=True) as cursor:
@@ -68,8 +64,6 @@ class DB:
                 "UPDATE fornecedores SET nome=%s, fornecedores_endereco=%s, fornecedores_numerobalanca=%s WHERE id=%s",
                 (nome, endereco, numero_balanca, fornecedor_id)
             )
-        listar_fornecedores_cached.cache_clear()
-        get_fornecedores_cache.cache_clear()
 
     def listar_precos_por_categoria(self, categoria_id):
         with get_cursor() as cursor:
@@ -173,6 +167,7 @@ class FornecedoresUI(QWidget):
         self.editando_ajuste = False  # Para bloquear recursão no slot de edição
         self._em_linha_selecionada = False  # Flag para proteção
         self._carregando_categorias = False  # Flag de carregamento
+        self.dados_bancarios_fornecedor = []  # Lista de dados bancários do fornecedor selecionado
         self.init_ui()
 
     def init_ui(self):
@@ -221,11 +216,29 @@ class FornecedoresUI(QWidget):
         self.btn_excluir = QPushButton('Excluir')
         self.btn_cancelar = QPushButton('Cancelar')
 
+        # Botão Gerenciar contas
+        self.btn_gerenciar_contas = QPushButton('Gerenciar contas')
+        self.btn_gerenciar_contas.clicked.connect(self.abrir_gerenciador_contas)
+
+        # --- NOVA TABELA DE DADOS BANCÁRIOS ---
+        self.label_dados_bancarios = QLabel('Dados Bancários do Fornecedor')
+        self.tabela_dados_bancarios = QTableWidget()
+        self.tabela_dados_bancarios.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.tabela_dados_bancarios.setColumnCount(7)
+        self.tabela_dados_bancarios.setHorizontalHeaderLabels([
+            'Nome Conta', 'Banco', 'CPF/CNPJ', 'Agência', 'Conta', 'Chave PIX', 'Padrão'
+        ])
+        self.tabela_dados_bancarios.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        # -- FIM NOVO BLOCO
+
         # Tabela principal
         self.tabela = QTableWidget()
         self.tabela.setEditTriggers(QTableWidget.NoEditTriggers)
-        self.tabela.setColumnCount(3)
-        self.tabela.setHorizontalHeaderLabels(['Nº Balança', 'Nome', 'Endereço'])
+        self.tabela.setColumnCount(2)
+        self.tabela.setHorizontalHeaderLabels(['Nº Balança', 'Nome'])
+        header = self.tabela.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.Fixed)
+        header.setSectionResizeMode(1, QHeaderView.Fixed)
 
         # Tabela de preços
         self.tabela_precos = QTableWidget()
@@ -301,13 +314,20 @@ class FornecedoresUI(QWidget):
         layout_esquerda = QVBoxLayout()
         layout_esquerda.addLayout(layout_dados)
         layout_esquerda.addLayout(layout_botoes)
-        layout_esquerda.addStretch()
+        #layout_esquerda.addStretch()
+
+        # --- Adiciona a nova tabela de dados bancários ao painel esquerdo ---
+        layout_esquerda.addWidget(self.btn_gerenciar_contas)
+        layout_esquerda.addWidget(self.label_dados_bancarios)
+        layout_esquerda.addWidget(self.tabela_dados_bancarios)
+        # ---
+
         widget_esquerda = QWidget()
         widget_esquerda.setLayout(layout_esquerda)
 
         # PAINEL CENTRAL (tabela de fornecedores + filtros)
         self.tabela.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        self.tabela.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        #self.tabela.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         layout_central = QVBoxLayout()
         layout_central.addLayout(filtro_layout)
         layout_central.addWidget(self.tabela)
@@ -363,7 +383,6 @@ class FornecedoresUI(QWidget):
             self.tabela.setItem(i, 0, QTableWidgetItem(
                 str(row.get('fornecedores_numerobalanca', '') or row.get('numerobalanca', ''))))
             self.tabela.setItem(i, 1, QTableWidgetItem(row['nome']))
-            self.tabela.setItem(i, 2, QTableWidgetItem(row.get('fornecedores_endereco', '') or row.get('endereco', '')))
         self.carregar_combo_fornecedores(filtrados)
 
     def atualizar_tabela(self, dados=None):
@@ -389,9 +408,6 @@ class FornecedoresUI(QWidget):
             self.tabela.setItem(i, 0, QTableWidgetItem(
                 str(row.get('fornecedores_numerobalanca', '') or row.get('numerobalanca', ''))))
             self.tabela.setItem(i, 1, QTableWidgetItem(row['nome']))
-            self.tabela.setItem(i, 2, QTableWidgetItem(row.get('fornecedores_endereco', '') or row.get('endereco', '')))
-
-        # Chama aplicar_filtro para garantir sincronismo após atualização da tabela
         self.aplicar_filtro()
 
     def _mostrar_erro_thread(self, mensagem):
@@ -413,6 +429,8 @@ class FornecedoresUI(QWidget):
             self.input_numero_balanca.clear()
             self.combo_categoria.clear()
             self.tabela_precos.setRowCount(0)
+            # Limpa tabela de dados bancários também
+            self.atualizar_tabela_dados_bancarios([])
             return
 
         f = self.fornecedores[index]
@@ -420,6 +438,38 @@ class FornecedoresUI(QWidget):
         self.input_endereco.setText(f.get('fornecedores_endereco', '') or f.get('endereco', ''))
         self.input_numero_balanca.setText(str(f.get('fornecedores_numerobalanca', '') or f.get('numerobalanca', '')))
         self.carregar_categorias_do_fornecedor(f['id'])
+        self.carregar_dados_bancarios_do_fornecedor(f['id'])
+
+        # --- NOVOS MÉTODOS PARA DADOS BANCÁRIOS ---
+
+    def carregar_dados_bancarios_do_fornecedor(self, fornecedor_id):
+        def tarefa_db():
+            with get_cursor() as cursor:
+                cursor.execute("""
+                    SELECT nome_conta, banco, CPFouCNPJ, agencia, conta, chave_pix, padrao
+                    FROM dados_bancarios_fornecedor
+                    WHERE fornecedor_id = %s
+                """, (fornecedor_id,))
+                return cursor.fetchall()
+
+        self.worker_dados_bancarios = WorkerThread(tarefa_db)
+        self.worker_dados_bancarios.finished.connect(self.atualizar_tabela_dados_bancarios)
+        self.worker_dados_bancarios.erro.connect(self._mostrar_erro_thread)
+        self.worker_dados_bancarios.start()
+
+    def atualizar_tabela_dados_bancarios(self, dados):
+        self.dados_bancarios_fornecedor = dados
+        self.tabela_dados_bancarios.setRowCount(len(dados))
+        for i, dado in enumerate(dados):
+            self.tabela_dados_bancarios.setItem(i, 0, QTableWidgetItem(dado.get('nome_conta', '')))
+            self.tabela_dados_bancarios.setItem(i, 1, QTableWidgetItem(dado.get('banco', '')))
+            self.tabela_dados_bancarios.setItem(i, 2, QTableWidgetItem(dado.get('CPFouCNPJ', '')))
+            self.tabela_dados_bancarios.setItem(i, 3, QTableWidgetItem(dado.get('agencia', '')))
+            self.tabela_dados_bancarios.setItem(i, 4, QTableWidgetItem(dado.get('conta', '')))
+            self.tabela_dados_bancarios.setItem(i, 5, QTableWidgetItem(dado.get('chave_pix', '')))
+            self.tabela_dados_bancarios.setItem(i, 6, QTableWidgetItem('Sim' if dado.get('padrao', 0) else 'Não'))
+
+        # --- FIM DOS MÉTODOS DE DADOS BANCÁRIOS ---
 
     def carregar_categorias_do_fornecedor(self, fornecedor_id):
         # Trava para evitar múltiplos carregamentos simultâneos
@@ -500,9 +550,6 @@ class FornecedoresUI(QWidget):
                 QMessageBox.information(self, "Categoria", "Categoria excluída com sucesso.")
             except Exception as e:
                 QMessageBox.critical(self, "Erro", str(e))
-        listar_categorias_do_fornecedor_cached.cache_clear()
-        get_categorias_fornecedor_cache.cache_clear()
-        obter_categoria_principal_cached.cache_clear()
 
     def editar_categoria(self):
         fornecedor_idx = self.combo_fornecedores.currentIndex()
@@ -530,28 +577,33 @@ class FornecedoresUI(QWidget):
                 QMessageBox.information(self, "Categoria", "Categoria atualizada com sucesso.")
             except Exception as e:
                 QMessageBox.critical(self, "Erro", str(e))
-        listar_categorias_do_fornecedor_cached.cache_clear()
-        get_categorias_fornecedor_cache.cache_clear()
-        obter_categoria_principal_cached.cache_clear()
 
     def linha_selecionada(self, row, column):
         if self._em_linha_selecionada:
             return
         self._em_linha_selecionada = True
         try:
-            if 0 <= row < len(self.fornecedores_exibidos):
-                f = self.fornecedores_exibidos[row]
-                index_combo = self.combo_fornecedores.findData(f['id'])
-                if index_combo != -1:
-                    self.combo_fornecedores.setCurrentIndex(index_combo)
-                self.input_nome.setText(f['nome'])
-                self.input_endereco.setText(f.get('fornecedores_endereco', '') or f.get('endereco', ''))
-                self.input_numero_balanca.setText(
-                    str(f.get('fornecedores_numerobalanca', '') or f.get('numerobalanca', '')))
-                self.carregar_categorias_do_fornecedor(f['id'])
-                if self.combo_categoria.count() > 0:
-                    self.combo_categoria.setCurrentIndex(0)
-                    self.categoria_selecionada(0)
+            if not (0 <= row < len(self.fornecedores_exibidos)):
+                return
+            f = self.fornecedores_exibidos[row]
+            index_combo = self.combo_fornecedores.findData(f['id'])
+            if index_combo != -1:
+                self.combo_fornecedores.blockSignals(True)
+                self.combo_fornecedores.setCurrentIndex(index_combo)
+                self.combo_fornecedores.blockSignals(False)
+            self.input_nome.setText(f['nome'])
+            self.input_endereco.setText(f.get('fornecedores_endereco', '') or f.get('endereco', ''))
+            self.input_numero_balanca.setText(
+                str(f.get('fornecedores_numerobalanca', '') or f.get('numerobalanca', '')))
+            self.carregar_categorias_do_fornecedor(f['id'])
+            self.carregar_dados_bancarios_do_fornecedor(f['id'])
+            if self.combo_categoria.count() > 0:
+                self.combo_categoria.setCurrentIndex(0)
+                self.categoria_selecionada(0)
+        except Exception as e:
+            import traceback
+            print("Erro ao selecionar linha:", e)
+            traceback.print_exc()
         finally:
             self._em_linha_selecionada = False
 
@@ -621,26 +673,36 @@ class FornecedoresUI(QWidget):
 
     def atualizar_fornecedor_combo(self):
         index = self.combo_fornecedores.currentIndex()
-        if index >= 0:
-            fornecedor_id = self.combo_fornecedores.currentData()
-            nome = self.input_nome.text().strip()
-            endereco = self.input_endereco.text().strip()
-            numero_balanca = self.input_numero_balanca.text().strip()
+        fornecedor_id = self.combo_fornecedores.currentData()
+        if index < 0 or fornecedor_id is None:
+            QMessageBox.warning(self, 'Seleção', 'Selecione um fornecedor válido para atualizar.')
+            return
 
-            if nome and numero_balanca:
-                try:
-                    self.db.atualizar_fornecedor(fornecedor_id, nome, endereco, numero_balanca)
-                    self.cancelar_edicao()
-                    self.atualizar_tabela()
-                    self.carregar_combo_fornecedores()
-                    self.aplicar_filtro()
-                except Exception as e:
-                    QMessageBox.critical(self, 'Erro', str(e))
-            else:
-                QMessageBox.warning(self, 'Campos obrigatórios',
-                                    'Preencha o nome e o número da balança para atualizar.')
-        listar_fornecedores_cached.cache_clear()
-        get_fornecedores_cache.cache_clear()
+        nome = self.input_nome.text().strip()
+        endereco = self.input_endereco.text().strip()
+        numero_balanca = self.input_numero_balanca.text().strip()
+
+        if not (nome and numero_balanca):
+            QMessageBox.warning(self, 'Campos obrigatórios',
+                                'Preencha o nome e o número da balança para atualizar.')
+            return
+
+        try:
+            self.db.atualizar_fornecedor(fornecedor_id, nome, endereco, numero_balanca)
+            # Atualize apenas a tabela e combo, bloqueando sinais
+            self.combo_fornecedores.blockSignals(True)
+            self.atualizar_tabela()
+            self.carregar_combo_fornecedores()
+            index = self.combo_fornecedores.findData(fornecedor_id)
+            if index != -1:
+                self.combo_fornecedores.setCurrentIndex(index)
+            self.combo_fornecedores.blockSignals(False)
+            QMessageBox.information(self, "Sucesso", "Fornecedor atualizado com sucesso!")
+        except Exception as e:
+            import traceback
+            print("Erro ao atualizar fornecedor:", e)
+            traceback.print_exc()
+            QMessageBox.critical(self, 'Erro', str(e))
 
     def excluir_fornecedor_combo(self):
         index = self.combo_fornecedores.currentIndex()
@@ -656,6 +718,14 @@ class FornecedoresUI(QWidget):
         )
         if resposta == QMessageBox.Yes:
             try:
+                # FINALIZE THREADS RELACIONADAS
+                for attr in ["worker_tabela", "worker_categorias", "worker_dados_bancarios"]:
+                    if hasattr(self, attr):
+                        worker = getattr(self, attr)
+                        if worker.isRunning():
+                            worker.quit()
+                            worker.wait()
+                # AGORA EXCLUA DO BANCO
                 self.db.excluir_fornecedor(fornecedor_id)
                 self.cancelar_edicao()
                 self.atualizar_tabela()
@@ -663,10 +733,15 @@ class FornecedoresUI(QWidget):
                 self.aplicar_filtro()
             except Exception as e:
                 QMessageBox.critical(self, 'Erro', str(e))
-        listar_fornecedores_cached.cache_clear()
-        get_fornecedores_cache.cache_clear()
 
     def cancelar_edicao(self):
+        # Finalize threads antes de alterar UI
+        for attr in ["worker_tabela", "worker_categorias", "worker_exportar_pdf", "worker_exportar_jpg", "worker_dados_bancarios"]:
+            if hasattr(self, attr):
+                worker = getattr(self, attr)
+                if worker.isRunning():
+                    worker.quit()
+                    worker.wait()
         self.combo_fornecedores.setCurrentIndex(-1)
         self.input_nome.clear()
         self.input_endereco.clear()
@@ -675,6 +750,7 @@ class FornecedoresUI(QWidget):
         self.input_filtro_nome.clear()
         self.input_filtro_balanca.clear()
         self.tabela_precos.setRowCount(0)
+        self.atualizar_tabela_dados_bancarios([])
 
     def adicionar_categoria(self):
         fornecedor_idx = self.combo_fornecedores.currentIndex()
@@ -683,10 +759,58 @@ class FornecedoresUI(QWidget):
             return
         fornecedor_id = self.combo_fornecedores.currentData()
 
+        # Buscar categorias do fornecedor "teste"
+        with get_cursor() as cursor:
+            cursor.execute("SELECT id FROM fornecedores WHERE nome = %s LIMIT 1", ("teste",))
+            row_teste = cursor.fetchone()
+            id_teste = row_teste["id"] if row_teste else None
+            categorias_template = []
+            if id_teste:
+                cursor.execute("SELECT id, nome FROM categorias_fornecedor_por_fornecedor WHERE fornecedor_id = %s",
+                               (id_teste,))
+                categorias_template = cursor.fetchall()
+
+        # Cria uma lista de opções para o usuário
+        opcoes = ["Nova categoria"]
+        opcoes.extend([cat["nome"] for cat in categorias_template])
+
+        # Popup de seleção
+        dlg_escolha = QDialog(self)
+        dlg_escolha.setWindowTitle("Escolha modelo de categoria")
+        layout = QVBoxLayout(dlg_escolha)
+        layout.addWidget(QLabel("Selecione como deseja criar a nova categoria:"))
+        combo_opcoes = QComboBox()
+        for opcao in opcoes:
+            combo_opcoes.addItem(opcao)
+        layout.addWidget(combo_opcoes)
+        btn_ok = QPushButton("OK")
+        layout.addWidget(btn_ok)
+        btn_ok.clicked.connect(dlg_escolha.accept)
+        if not dlg_escolha.exec():
+            return
+        idx = combo_opcoes.currentIndex()
+
+        # Busca lista de produtos
         produtos = self.db.listar_produtos()
-        dialog = DialogNovaCategoria(produtos, self)
-        if dialog.exec() == QDialog.Accepted:
-            nome_categoria, ajustes = dialog.get_dados()
+        dialog_nova = DialogNovaCategoria(produtos, self)
+
+        # Se selecionou um template, carrega os ajustes da categoria escolhida
+        if idx > 0 and categorias_template:
+            cat_template = categorias_template[idx - 1]
+            with get_cursor() as cursor:
+                cursor.execute("""
+                    SELECT produto_id, ajuste_fixo
+                    FROM ajustes_fixos_produto_fornecedor_categoria
+                    WHERE categoria_id = %s
+                """, (cat_template["id"],))
+                ajustes_template = {row["produto_id"]: row["ajuste_fixo"] for row in cursor.fetchall()}
+            for pid, spin in dialog_nova.inputs_ajustes.items():
+                if pid in ajustes_template:
+                    spin.setValue(ajustes_template[pid])
+
+        # Mostra DialogNovaCategoria para revisão/finalização
+        if dialog_nova.exec() == QDialog.Accepted:
+            nome_categoria, ajustes = dialog_nova.get_dados()
             if not nome_categoria:
                 QMessageBox.warning(self, "Categoria", "Nome da categoria não pode ser vazio.")
                 return
@@ -695,12 +819,9 @@ class FornecedoresUI(QWidget):
                 if ajustes:
                     self.db.inserir_ajustes_categoria(categoria_id, ajustes)
                 self.carregar_categorias_do_fornecedor(fornecedor_id)
-                QMessageBox.information(self, "Categoria", "Categoria e ajustes adicionados com sucesso.")
+                QMessageBox.information(self, "Categoria", "Categoria adicionada com sucesso.")
             except Exception as e:
                 QMessageBox.critical(self, "Erro", str(e))
-        listar_categorias_do_fornecedor_cached.cache_clear()
-        get_categorias_fornecedor_cache.cache_clear()
-        obter_categoria_principal_cached.cache_clear()
 
     # ... [Os métodos exportar_pdf e exportar_jpg permanecem inalterados] ...
 
@@ -961,8 +1082,45 @@ class FornecedoresUI(QWidget):
         resultado = Image.alpha_composite(imagem.convert("RGBA"), marca)
         return resultado.convert("RGB")
 
+    def abrir_gerenciador_contas(self):
+        # Descobre o fornecedor atualmente selecionado
+        idx = self.combo_fornecedores.currentIndex()
+        if idx < 0:
+            QMessageBox.warning(self, "Gerenciar contas", "Selecione um fornecedor para gerenciar contas.")
+            return
+        nome_fornecedor = self.combo_fornecedores.currentText()
+
+        # Cria e mostra a janela de dados bancários
+        self.dlg_dados_bancarios = DadosBancariosUI()
+
+        # Preenche combo e filtro após a janela ser criada e carregada
+        # Aguarda o carregamento dos fornecedores
+        def selecionar_fornecedor_na_janela():
+            # Procura o índice do fornecedor na combo pelo nome
+            for i in range(self.dlg_dados_bancarios.combo_fornecedor_nome.count()):
+                if self.dlg_dados_bancarios.combo_fornecedor_nome.itemText(i) == nome_fornecedor:
+                    self.dlg_dados_bancarios.combo_fornecedor_nome.setCurrentIndex(i)
+                    break
+            # Preenche filtro
+            self.dlg_dados_bancarios.input_filtro_nome.setText(nome_fornecedor)
+            # Atualiza a tabela para aplicar o filtro
+            self.dlg_dados_bancarios.carregar_tabela()
+
+        # Executa o ajuste após o event loop da nova janela rodar (garante que combo está carregada)
+        QTimer.singleShot(200, selecionar_fornecedor_na_janela)  # delay leve para garantir que carregou
+
+        self.dlg_dados_bancarios.show()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        total_width = self.tabela.viewport().width()
+        balanca_width = max(int(total_width / 6), 60)
+        nome_width = total_width - balanca_width
+        self.tabela.setColumnWidth(0, balanca_width)
+        self.tabela.setColumnWidth(1, nome_width)
+
     def closeEvent(self, event):
-        for attr in ["worker_tabela", "worker_categorias", "worker_exportar_pdf", "worker_exportar_jpg"]:
+        for attr in ["worker_tabela", "worker_categorias", "worker_exportar_pdf", "worker_exportar_jpg", "worker_dados_bancarios"]:
             if hasattr(self, attr):
                 worker = getattr(self, attr)
                 if worker.isRunning():

@@ -1,28 +1,23 @@
 from db_context import get_cursor
 from decimal import Decimal
-from functools import lru_cache
 from collections import defaultdict
 
-@lru_cache(maxsize=1)
-def listar_fornecedores_cached():
+def listar_fornecedores():
     with get_cursor() as cursor:
         cursor.execute("SELECT id, nome, fornecedores_numerobalanca FROM fornecedores ORDER BY nome")
         return cursor.fetchall()
 
-@lru_cache(maxsize=1)
-def listar_produtos_cached():
+def listar_produtos():
     with get_cursor() as cursor:
         cursor.execute("SELECT id, nome, preco_base FROM produtos ORDER BY nome")
         return cursor.fetchall()
 
-@lru_cache(maxsize=128)
-def listar_categorias_do_fornecedor_cached(fornecedor_id):
+def listar_categorias_do_fornecedor(fornecedor_id):
     with get_cursor() as cursor:
         cursor.execute("SELECT id, nome FROM categorias_fornecedor_por_fornecedor WHERE fornecedor_id = %s ORDER BY nome", (fornecedor_id,))
         return cursor.fetchall()
 
-@lru_cache(maxsize=128)
-def listar_contas_do_fornecedor_cached(fornecedor_id):
+def listar_contas_do_fornecedor(fornecedor_id):
     if not fornecedor_id:
         return []
     with get_cursor() as cursor:
@@ -79,16 +74,6 @@ def listar_compras(status=None, status_not=None, data_de=None, data_ate=None, fo
     with get_cursor() as cursor:
         cursor.execute(query, params)
         return cursor.fetchall()
-
-def listar_fornecedores():
-    return listar_fornecedores_cached()
-
-
-def listar_contas_do_fornecedor(fornecedor_id):
-    return listar_contas_do_fornecedor_cached(fornecedor_id)
-
-def listar_produtos():
-    return listar_produtos_cached()
 
 def obter_produto(produto_id):
     with get_cursor() as cursor:
@@ -580,6 +565,31 @@ def existe_transacao_saida_para_compra(compra_id):
         """, (f"%{descricao_chave}",))
         row = cursor.fetchone()
         return row is not None
+
+def excluir_transacao_saida_para_compra(compra_id):
+    """
+    Exclui a transação de saída vinculada a uma compra concluída, se existir.
+    """
+    descricao_chave = f"CompraID:{compra_id}"
+    transacao_id = None
+    with get_cursor() as cursor:
+        cursor.execute("""
+            SELECT id FROM compras
+            WHERE tipo = 'Transação'
+              AND direcao = 'Saída'
+              AND origem = 'movimentacao'
+              AND descricao LIKE %s
+        """, (f"%{descricao_chave}",))
+        row = cursor.fetchone()
+        if row:
+            transacao_id = row["id"]
+
+    if transacao_id:
+        with get_cursor(commit=True) as cursor:
+            # Exclui adiantamentos, itens e a movimentação
+            cursor.execute("DELETE FROM debitos_fornecedores WHERE compra_id = %s", (transacao_id,))
+            cursor.execute("DELETE FROM itens_compra WHERE compra_id = %s", (transacao_id,))
+            cursor.execute("DELETE FROM compras WHERE id = %s", (transacao_id,))
 
 
 # Após qualquer alteração/inclusão/exclusão:

@@ -11,7 +11,6 @@ from PySide6.QtWidgets import (
 from PySide6.QtGui import QIntValidator
 from PySide6.QtCore import Qt, QDate, QLocale, QEvent, QTimer
 from decimal import Decimal, InvalidOperation
-from functools import lru_cache
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
 from reportlab.lib.units import mm
@@ -45,11 +44,6 @@ from movimentacoes_db import (
     contar_movimentacoes,
     obter_saldo_anterior
 )
-
-# ---- CACHE PRODUTOS ----
-@lru_cache(maxsize=1)
-def get_produtos_cache():
-    return listar_produtos()
 
 def decimal_para_str_brasil(valor, locale=None):
     if locale is None:
@@ -1020,7 +1014,7 @@ class MovimentacaoTabUI(QWidget):
         self.combo_produto.clear()
         self.combo_produto.setEditable(True)
         self.combo_produto.addItem("", None)
-        for p in get_produtos_cache():
+        for p in listar_produtos():
             self.combo_produto.addItem(p["nome"], p["id"])
 
     def adicionar_item(self):
@@ -1386,15 +1380,31 @@ class MovimentacoesUI(QWidget):
         row.addWidget(self.btn_nova_op)
         layout.addLayout(row)
 
+        # --- NOVO: Atalho ENTER no campo número da balança ---
         self.input_numero_balanca.editingFinished.connect(
             lambda: self.selecionar_fornecedor_por_numero_balanca(self.input_numero_balanca, self.combo_fornecedor)
         )
+        self.input_numero_balanca.returnPressed.connect(self._enter_nova_operacao)
+
+        # Adiciona o eventFilter para ENTER no combo
+        self.combo_fornecedor.installEventFilter(self)
 
         self.tabs = QTabWidget()
         self.tabs.setTabsClosable(True)
         self.tabs.tabCloseRequested.connect(self.fechar_aba)
         layout.addWidget(self.tabs)
         self.setLayout(layout)
+
+    def eventFilter(self, obj, event):
+        if obj is self.combo_fornecedor and event.type() == QEvent.KeyPress:
+            if event.key() in (Qt.Key_Return, Qt.Key_Enter):
+                self._enter_nova_operacao()
+                return True
+        return super().eventFilter(obj, event)
+
+    def _enter_nova_operacao(self):
+        # Executa ação do botão nova operação ao pressionar ENTER
+        self.btn_nova_op.click()
 
     def abrir_nova_aba(self):
         idx = self.combo_fornecedor.currentIndex()
