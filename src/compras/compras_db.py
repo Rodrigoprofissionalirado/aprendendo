@@ -566,6 +566,31 @@ def existe_transacao_saida_para_compra(compra_id):
         row = cursor.fetchone()
         return row is not None
 
+def excluir_transacao_saida_para_compra(compra_id):
+    """
+    Exclui a transação de saída vinculada a uma compra concluída, se existir.
+    """
+    descricao_chave = f"CompraID:{compra_id}"
+    transacao_id = None
+    with get_cursor() as cursor:
+        cursor.execute("""
+            SELECT id FROM compras
+            WHERE tipo = 'Transação'
+              AND direcao = 'Saída'
+              AND origem = 'movimentacao'
+              AND descricao LIKE %s
+        """, (f"%{descricao_chave}",))
+        row = cursor.fetchone()
+        if row:
+            transacao_id = row["id"]
+
+    if transacao_id:
+        with get_cursor(commit=True) as cursor:
+            # Exclui adiantamentos, itens e a movimentação
+            cursor.execute("DELETE FROM debitos_fornecedores WHERE compra_id = %s", (transacao_id,))
+            cursor.execute("DELETE FROM itens_compra WHERE compra_id = %s", (transacao_id,))
+            cursor.execute("DELETE FROM compras WHERE id = %s", (transacao_id,))
+
 
 # Após qualquer alteração/inclusão/exclusão:
 # listar_fornecedores_cached.cache_clear()

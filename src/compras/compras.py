@@ -25,7 +25,8 @@ from .compras_db import (
     obter_fornecedor_id_por_numero_balanca, obter_primeira_categoria_do_fornecedor,
     obter_dados_bancarios_para_campo_copiavel, atualizar_conta_bancaria_da_compra,
     atualizar_status_compra as atualizar_status_compra_db, obter_totais_produtos_compras,
-    obter_valores_finais_compras, contar_compras, existe_transacao_saida_para_compra
+    obter_valores_finais_compras, contar_compras, existe_transacao_saida_para_compra,
+    excluir_transacao_saida_para_compra
 )
 from .compras_logic import (
     obter_total_produtos_lista, calcular_valor_com_abatimento_adiantamento, formatar_moeda
@@ -679,7 +680,7 @@ class ComprasUI(QWidget):
                         self
                     )
                     if dialog.exec() and dialog.resultado:
-                        self.excluir_transacao_saida_para_compra(compra_id)
+                        excluir_transacao_saida_para_compra(compra_id)
 
             self.atualizar_tabelas()
 
@@ -721,27 +722,6 @@ class ComprasUI(QWidget):
         # Não precisa inserir item virtual; exiba adiantamento/abatimento na UI usando obter_itens_e_lancamentos_da_compra
 
         return mov_id
-
-    def excluir_transacao_saida_para_compra(self, compra_id):
-        from movimentacoes_db import excluir_movimentacao, buscar_fornecedor_id_por_numero_balanca
-
-        # Busca a transação vinculada por descrição terminando com CompraID:{compra_id}
-        descricao_chave = f"CompraID:{compra_id}"
-        transacao_id = None
-        with get_cursor() as cursor:
-            cursor.execute("""
-                    SELECT id FROM compras
-                    WHERE tipo = 'Transação'
-                      AND direcao = 'Saída'
-                      AND origem = 'movimentacao'
-                      AND descricao LIKE %s
-                """, (f"%{descricao_chave}",))
-            row = cursor.fetchone()
-            if row:
-                transacao_id = row["id"]
-
-        if transacao_id:
-            excluir_movimentacao(transacao_id)
 
     def atualizar_status_compra(self, compra_id, novo_status):
         atualizar_status_compra_db(compra_id, novo_status)
