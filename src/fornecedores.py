@@ -745,10 +745,58 @@ class FornecedoresUI(QWidget):
             return
         fornecedor_id = self.combo_fornecedores.currentData()
 
+        # Buscar categorias do fornecedor "teste"
+        with get_cursor() as cursor:
+            cursor.execute("SELECT id FROM fornecedores WHERE nome = %s LIMIT 1", ("teste",))
+            row_teste = cursor.fetchone()
+            id_teste = row_teste["id"] if row_teste else None
+            categorias_template = []
+            if id_teste:
+                cursor.execute("SELECT id, nome FROM categorias_fornecedor_por_fornecedor WHERE fornecedor_id = %s",
+                               (id_teste,))
+                categorias_template = cursor.fetchall()
+
+        # Cria uma lista de opções para o usuário
+        opcoes = ["Nova categoria"]
+        opcoes.extend([cat["nome"] for cat in categorias_template])
+
+        # Popup de seleção
+        dlg_escolha = QDialog(self)
+        dlg_escolha.setWindowTitle("Escolha modelo de categoria")
+        layout = QVBoxLayout(dlg_escolha)
+        layout.addWidget(QLabel("Selecione como deseja criar a nova categoria:"))
+        combo_opcoes = QComboBox()
+        for opcao in opcoes:
+            combo_opcoes.addItem(opcao)
+        layout.addWidget(combo_opcoes)
+        btn_ok = QPushButton("OK")
+        layout.addWidget(btn_ok)
+        btn_ok.clicked.connect(dlg_escolha.accept)
+        if not dlg_escolha.exec():
+            return
+        idx = combo_opcoes.currentIndex()
+
+        # Busca lista de produtos
         produtos = self.db.listar_produtos()
-        dialog = DialogNovaCategoria(produtos, self)
-        if dialog.exec() == QDialog.Accepted:
-            nome_categoria, ajustes = dialog.get_dados()
+        dialog_nova = DialogNovaCategoria(produtos, self)
+
+        # Se selecionou um template, carrega os ajustes da categoria escolhida
+        if idx > 0 and categorias_template:
+            cat_template = categorias_template[idx - 1]
+            with get_cursor() as cursor:
+                cursor.execute("""
+                    SELECT produto_id, ajuste_fixo
+                    FROM ajustes_fixos_produto_fornecedor_categoria
+                    WHERE categoria_id = %s
+                """, (cat_template["id"],))
+                ajustes_template = {row["produto_id"]: row["ajuste_fixo"] for row in cursor.fetchall()}
+            for pid, spin in dialog_nova.inputs_ajustes.items():
+                if pid in ajustes_template:
+                    spin.setValue(ajustes_template[pid])
+
+        # Mostra DialogNovaCategoria para revisão/finalização
+        if dialog_nova.exec() == QDialog.Accepted:
+            nome_categoria, ajustes = dialog_nova.get_dados()
             if not nome_categoria:
                 QMessageBox.warning(self, "Categoria", "Nome da categoria não pode ser vazio.")
                 return
@@ -757,7 +805,7 @@ class FornecedoresUI(QWidget):
                 if ajustes:
                     self.db.inserir_ajustes_categoria(categoria_id, ajustes)
                 self.carregar_categorias_do_fornecedor(fornecedor_id)
-                QMessageBox.information(self, "Categoria", "Categoria e ajustes adicionados com sucesso.")
+                QMessageBox.information(self, "Categoria", "Categoria adicionada com sucesso.")
             except Exception as e:
                 QMessageBox.critical(self, "Erro", str(e))
 
