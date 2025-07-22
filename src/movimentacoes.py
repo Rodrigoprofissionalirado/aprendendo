@@ -363,84 +363,117 @@ class MovimentacaoTabUI(QWidget):
             movimentacoes = listar_movimentacoes(fornecedor_id, data_de, data_ate)
             if not movimentacoes:
                 return None
+
+            movimentacoes = movimentacoes[::-1]
+
             saldo_por_id = obter_saldos_acumulados(fornecedor_id, data_de, data_ate, remove_acento)
             mov_ids = [mov['id'] for mov in movimentacoes]
             itens_por_mov = listar_itens_movimentacao(mov_ids)
-
-            # Parâmetros do PDF
-            largura, _ = A4
-            margem = 20 * mm
-            espacamento_blocos = 10 * mm
-
-            # NOVO: saldo anterior ao período
             saldo_anterior = obter_saldo_anterior(fornecedor_id, data_de, remove_acento)
 
-            altura_total = margem + 40  # espaço extra para saldo anterior
+            largura, altura_pagina = A4
+            margem = 20 * mm
+            espacamento_compra = 10
+            espacamento_transacao = 10
+            altura_util_pagina = altura_pagina - 2 * margem
+
+            # Preparar blocos e altura de cada um
             blocos = []
             for mov in movimentacoes:
                 bloco = {}
                 bloco['mov'] = mov
                 bloco['itens'] = itens_por_mov.get(mov['id'], []) if mov['tipo'].lower() in ("compra", "venda") else []
-                bloco['altura'] = 250 + 28 * (len(bloco['itens']) if bloco['itens'] else 1)
-                altura_total += bloco['altura'] + espacamento_blocos
+                if remove_acento(mov['tipo']) == "transacao":
+                    bloco['altura'] = 210
+                    bloco['espacamento'] = espacamento_transacao
+                else:
+                    bloco['altura'] = 250 + 28 * (len(bloco['itens']) if bloco['itens'] else 1)
+                    bloco['espacamento'] = espacamento_compra
                 blocos.append(bloco)
 
             filename = f"movimentacoes_{data_de.strftime('%Y%m%d')}_{data_ate.strftime('%Y%m%d')}_extrato.pdf"
-            c = canvas.Canvas(filename, pagesize=(largura, altura_total))
-            y = altura_total - margem
+            c = canvas.Canvas(filename, pagesize=A4)
 
-            # NOVO: saldo anterior no topo
-            c.setFont("Helvetica-Bold", 14)
-            c.setFillColorRGB(0, 0.39, 0) if saldo_anterior >= 0 else c.setFillColorRGB(1, 0, 0)
-            c.drawString(margem, y, f"SALDO ANTERIOR AO PERÍODO: R$ {float(saldo_anterior):,.2f}")
-            c.setFillColorRGB(0, 0, 0)
-            y -= 30
+            def desenhar_cabecalho(y, primeira_pagina):
+                # Fornecedor e balança
+                if movimentacoes:
+                    nome_fornecedor = movimentacoes[0]['fornecedor']
+                    num_balanca = movimentacoes[0]['fornecedores_numerobalanca']
+                    c.setFont("Helvetica-Bold", 16)
+                    c.setFillColorRGB(0, 0, 0)
+                    c.drawString(margem, y,
+                                 f"Extrato de movimentações - Fornecedor: {nome_fornecedor}  |  Balança: {num_balanca}")
+                    y -= 30
+                # Cabeçalho de datas
+                if data_de != data_ate:
+                    c.setFont("Helvetica", 12)
+                    c.drawString(margem, y,
+                                 f"Do dia {data_de.strftime('%d/%m/%Y')} até {data_ate.strftime('%d/%m/%Y')}")
+                    y -= 25
+                # Saldo anterior só na primeira página
+                if primeira_pagina:
+                    c.setFont("Helvetica-Bold", 14)
+                    if saldo_anterior >= 0:
+                        c.setFillColorRGB(0, 0.39, 0)
+                    else:
+                        c.setFillColorRGB(1, 0, 0)
+                    c.drawString(margem, y, f"SALDO ANTERIOR AO PERÍODO: R$ {float(saldo_anterior):,.2f}")
+                    c.setFillColorRGB(0, 0, 0)
+                    y -= 30
+                return y
+
+            y = altura_pagina - margem
+            pagina = 1
+            y = desenhar_cabecalho(y, primeira_pagina=True)
 
             for bloco in blocos:
+                if (y - (bloco['altura'] + bloco['espacamento'])) < margem:
+                    c.showPage()
+                    pagina += 1
+                    y = altura_pagina - margem
+                    y = desenhar_cabecalho(y, primeira_pagina=False)
+
                 mov = bloco['mov']
                 itens = bloco['itens']
-                tipo = mov['tipo'].capitalize()
-                direcao = (mov.get('direcao') or "").capitalize()
+                tipo_raw = mov['tipo']
+                tipo = tipo_raw.capitalize()
+                if remove_acento(tipo_raw).lower() == "transacao":
+                    tipo = "Transação"
+                direcao = (mov.get('direcao') or "").lower()
                 descricao = mov['descricao'] or ""
                 valor_operacao = float(mov['valor_operacao'] or 0)
                 saldo_atual = saldo_por_id.get(mov['id'], 0)
 
                 c.setFont("Helvetica-Bold", 13)
                 c.setFillColorRGB(0, 0, 0)
-                c.drawString(margem, y, f"Movimentação ID: {mov['id']} | Tipo: {tipo}")
-                y -= 16
+                c.drawString(margem, y, f"{tipo}")
+                y -= 20
+
                 c.setFont("Helvetica", 11)
-                c.drawString(margem, y, f"Fornecedor: {mov['fornecedor']}")
-                y -= 13
-                c.drawString(margem, y, f"Nº Balança: {mov['fornecedores_numerobalanca']}")
-                y -= 13
-                c.drawString(margem, y, f"Data: {mov['data'].strftime('%d/%m/%Y')}")
-                y -= 13
-                if direcao:
-                    c.drawString(margem, y, f"Direção: {direcao}")
-                    y -= 13
+                if direcao == "saida":
+                    c.drawString(margem, y, "Pagamento efetuado")
+                    y -= 18
+                elif direcao == "entrada":
+                    c.drawString(margem, y, "Pagamento recebido")
+                    y -= 18
+
+                if 'data' in mov and mov['data']:
+                    if isinstance(mov['data'], datetime):
+                        data_str = mov['data'].strftime('%d/%m/%Y')
+                    else:
+                        data_str = str(mov['data'])
+                    c.drawString(margem, y, f"Data: {data_str}")
+                    y -= 18
+
                 if descricao:
                     c.drawString(margem, y, f"Descrição: {descricao}")
-                    y -= 13
-
-                self.adicionar_marca_dagua_pdf_area(
-                    c,
-                    texto=str(mov['fornecedores_numerobalanca']),
-                    x_inicio=margem,
-                    x_fim=largura - margem,
-                    y_topo=y + 73,
-                    altura=bloco['altura'] - 18,
-                    tamanho_fonte=24,
-                    cor=(0.8, 0.8, 0.8),
-                    angulo=25
-                )
+                    y -= 18
 
                 if itens:
-                    y -= 8
+                    y -= 5
                     c.setFont("Helvetica-Bold", 11)
-                    c.setFillColorRGB(0, 0, 0)
                     c.drawString(margem, y, "Produtos")
-                    y -= 12
+                    y -= 15
                     c.setFont("Helvetica-Bold", 10)
                     c.drawString(margem, y, "Produto")
                     c.drawString(margem + 180, y, "Qtd")
@@ -468,25 +501,33 @@ class MovimentacaoTabUI(QWidget):
                     c.drawString(margem, y, f"Total Final (com abatimento): R$ {valor_operacao:.2f}")
                     y -= 13
                 else:
-                    y -= 13
-                    c.setFont("Helvetica-Bold", 11)
-                    c.setFillColorRGB(0, 0, 0)
+                    y -= 8
+                    c.setFont("Helvetica-Bold", 14)
                     c.drawString(margem, y, f"Valor da Operação: R$ {valor_operacao:.2f}")
-                    y -= 13
+                    y -= 25
 
-                # SALDO TOTAL APÓS ESTA MOVIMENTAÇÃO (cor e fonte menor)
-                c.setFont("Helvetica-Bold", 10)
+                c.setFont("Helvetica-Bold", 12)
                 if saldo_atual < 0:
                     c.setFillColorRGB(1, 0, 0)
                 else:
                     c.setFillColorRGB(0, 0.39, 0)
                 c.drawString(margem, y, f"SALDO TOTAL APÓS ESTA MOVIMENTAÇÃO: R$ {float(saldo_atual):,.2f}")
                 c.setFillColorRGB(0, 0, 0)
-                y -= 14
+                y -= 21
 
-                c.setFont("Helvetica-Oblique", 8)
-                c.drawString(margem, y, f"Gerado em: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}")
-                y -= espacamento_blocos
+                self.adicionar_marca_dagua_pdf_area(
+                    c,
+                    texto=str(mov['fornecedores_numerobalanca']),
+                    x_inicio=margem,
+                    x_fim=largura - margem,
+                    y_topo=y + 73,
+                    altura=bloco['altura'] - 70,
+                    tamanho_fonte=24,
+                    cor=(0.8, 0.8, 0.8),
+                    angulo=25
+                )
+
+                y -= bloco['espacamento']
 
             c.save()
             return filename
@@ -553,15 +594,19 @@ class MovimentacaoTabUI(QWidget):
             compras = listar_movimentacoes(fornecedor_id, data_de, data_ate)
             if not compras:
                 return None
+
+            # Inverter ordem das movimentações (da mais velha para a mais nova)
+            compras = compras[::-1]
+
             saldo_por_id = obter_saldos_acumulados(fornecedor_id, data_de, data_ate, remove_acento)
             mov_ids = [mov['id'] for mov in compras]
             itens_por_mov = listar_itens_movimentacao(mov_ids)
-
             saldo_anterior = obter_saldo_anterior(fornecedor_id, data_de, remove_acento)
 
             largura_img = 1200
             margem = 20 * mm
-            espacamento_blocos = 10 * mm
+            espacamento_compra = 10  # Espaço padrão após compra/venda
+            espacamento_transacao = 10  # Espaço menor após transação
 
             altura_total = margem + 40
             blocos = []
@@ -569,15 +614,17 @@ class MovimentacaoTabUI(QWidget):
                 bloco = {}
                 bloco['mov'] = mov
                 bloco['itens'] = itens_por_mov.get(mov['id'], []) if mov['tipo'].lower() in ("compra", "venda") else []
-                bloco['altura'] = 250 + 28 * (len(bloco['itens']) if bloco['itens'] else 1)
-                altura_total += bloco['altura'] + espacamento_blocos
+                if remove_acento(mov['tipo']) == "transacao":
+                    # Calcula altura menor para transação
+                    bloco['altura'] = 210  # ou 120, ajuste conforme visual
+                else:
+                    # Mantém a lógica atual para compra/venda
+                    bloco['altura'] = 250 + 28 * (len(bloco['itens']) if bloco['itens'] else 1)
+                altura_total += bloco['altura'] + (
+                    espacamento_transacao if remove_acento(mov['tipo']) == "transacao" else espacamento_compra)
                 blocos.append(bloco)
 
-            # Parâmetros do JPG
-            imagem = Image.new("RGB", (int(largura_img), int(altura_total)), "white")
-            draw = ImageDraw.Draw(imagem)
-            y_base = margem
-            marca_dagua_blocos = []
+            altura_total += 40  # Adiciona borda inferior extra
 
             try:
                 fonte = ImageFont.truetype("arial.ttf", 18)
@@ -585,36 +632,68 @@ class MovimentacaoTabUI(QWidget):
                 fonte_mono = ImageFont.truetype("arial.ttf", 16)
                 fonte_menor = ImageFont.truetype("arial.ttf", 15)
                 fonte_saldo = ImageFont.truetype("arialbd.ttf", 17)
+                fonte_valor_op = ImageFont.truetype("arialbd.ttf", 26)
             except IOError:
-                fonte = fonte_bold = fonte_mono = fonte_menor = fonte_saldo = ImageFont.load_default()
+                fonte = fonte_bold = fonte_mono = fonte_menor = fonte_saldo = fonte_valor_op = ImageFont.load_default()
 
-            # NOVO: saldo anterior no topo
+            imagem = Image.new("RGB", (int(largura_img), int(altura_total)), "white")
+            draw = ImageDraw.Draw(imagem)
+            y_base = margem
+            marca_dagua_blocos = []
+
+            # Cabeçalho fornecedor e balança
+            if compras:
+                nome_fornecedor = compras[0]['fornecedor']
+                num_balanca = compras[0]['fornecedores_numerobalanca']
+                draw.text((margem, y_base),
+                          f"Extrato de movimentações - Fornecedor: {nome_fornecedor}  |  Balança: {num_balanca}",
+                          font=fonte_bold, fill="black")
+                y_base += 30
+
+            # Cabeçalho de datas
+            if data_de != data_ate:
+                draw.text((margem, y_base),
+                          f"Do dia {data_de.strftime('%d/%m/%Y')} até {data_ate.strftime('%d/%m/%Y')}", font=fonte,
+                          fill="black")
+                y_base += 25
+
             cor_saldo = (0, 70, 0) if saldo_anterior >= 0 else (220, 0, 0)
-            draw.text((margem, y_base), f"SALDO ANTERIOR AO PERÍODO: R$ {float(saldo_anterior):,.2f}",
-                        fill=cor_saldo, font=fonte_bold)
+            draw.text((margem, y_base), f"SALDO ANTERIOR AO PERÍODO: R$ {float(saldo_anterior):,.2f}", fill=cor_saldo,
+                      font=fonte_bold)
             y_base += 30
 
             for bloco in blocos:
                 mov = bloco['mov']
                 itens = bloco['itens']
-                tipo = mov['tipo'].capitalize()
-                direcao = (mov.get('direcao') or "").capitalize()
+                tipo_raw = mov['tipo']
+                tipo = tipo_raw.capitalize()
+                if remove_acento(tipo_raw).lower() == "transacao":
+                    tipo = "Transação"
+                direcao = (mov.get('direcao') or "").lower()
                 descricao = mov['descricao'] or ""
                 valor_operacao = float(mov['valor_operacao'] or 0)
                 saldo_atual = saldo_por_id.get(mov['id'], 0)
                 y = y_base
 
-                draw.text((margem, y), f"Movimentação ID: {mov['id']} | Tipo: {tipo}", fill="black", font=fonte_bold)
+                # Exibe só o tipo
+                draw.text((margem, y), f"{tipo}", fill="black", font=fonte_bold)
                 y += 36
-                draw.text((margem, y), f"Fornecedor: {mov['fornecedor']}", fill="black", font=fonte)
-                y += 24
-                draw.text((margem, y), f"Nº Balança: {mov['fornecedores_numerobalanca']}", fill="black", font=fonte)
-                y += 24
-                draw.text((margem, y), f"Data: {mov['data'].strftime('%d/%m/%Y')}", fill="black", font=fonte)
-                y += 24
-                if direcao:
-                    draw.text((margem, y), f"Direção: {direcao}", fill="black", font=fonte)
+
+                if direcao == "saida":
+                    draw.text((margem, y), "Pagamento efetuado", fill="black", font=fonte)
                     y += 24
+                elif direcao == "entrada":
+                    draw.text((margem, y), "Pagamento recebido", fill="black", font=fonte)
+                    y += 24
+
+                if 'data' in mov and mov['data']:
+                    if isinstance(mov['data'], datetime):
+                        data_str = mov['data'].strftime('%d/%m/%Y')
+                    else:
+                        data_str = str(mov['data'])
+                    draw.text((margem, y), f"Data: {data_str}", fill="black", font=fonte)
+                    y += 24
+
                 if descricao:
                     draw.text((margem, y), f"Descrição: {descricao}", fill="black", font=fonte)
                     y += 24
@@ -633,7 +712,8 @@ class MovimentacaoTabUI(QWidget):
 
                     total = 0
                     for item in itens:
-                        draw.text((margem, y), limpar_numero_nome_produto(item['produto_nome']), fill="black", font=fonte_mono)
+                        draw.text((margem, y), limpar_numero_nome_produto(item['produto_nome']), fill="black",
+                                  font=fonte_mono)
                         draw.text((margem + 500, y), str(item['quantidade']), fill="black", font=fonte_mono)
                         draw.text((margem + 650, y), f"R$ {item['preco_unitario']:.2f}", fill="black", font=fonte_mono)
                         draw.text((margem + 800, y), f"R$ {item['total']:.2f}", fill="black", font=fonte_mono)
@@ -648,22 +728,16 @@ class MovimentacaoTabUI(QWidget):
                               font=fonte_menor)
                     y += 19
                 else:
+                    # Valor da operação em destaque e bold para transação
                     y += 8
                     draw.text((margem, y), f"Valor da Operação: R$ {valor_operacao:.2f}", fill="black",
-                              font=fonte_menor)
-                    y += 19
+                              font=fonte_valor_op)
+                    y += 32
 
-                # S A L D O   (com cor)
                 saldo_str = f"SALDO TOTAL APÓS ESTA MOVIMENTAÇÃO: R$ {float(saldo_atual):,.2f}"
-                if saldo_atual < 0:
-                    cor_saldo = (220, 0, 0)  # vermelho
-                else:
-                    cor_saldo = (0, 70, 0)  # verde escuro (aprox. #006400)
-                draw.text((margem, y), saldo_str, fill=cor_saldo, font=fonte_saldo)
+                cor_saldo_mov = (220, 0, 0) if saldo_atual < 0 else (0, 70, 0)
+                draw.text((margem, y), saldo_str, fill=cor_saldo_mov, font=fonte_saldo)
                 y += 21
-
-                draw.text((margem, y), f"Gerado em: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}", fill="gray",
-                          font=fonte_menor)
 
                 marca_dagua_blocos.append({
                     "texto": str(mov['fornecedores_numerobalanca']),
@@ -673,9 +747,12 @@ class MovimentacaoTabUI(QWidget):
                     "altura": bloco['altura'] - 70
                 })
 
-                y_base += bloco['altura'] + 25
+                # Espaçamento pós movimentação: menor após transação, padrão após compra/venda
+                if remove_acento(tipo_raw).lower() == "transacao":
+                    y_base += bloco['altura'] + espacamento_transacao
+                else:
+                    y_base += bloco['altura'] + espacamento_compra
 
-            # Aplica as marcas d'água reatribuindo imagem
             for md in marca_dagua_blocos:
                 imagem = self.adicionar_marca_dagua_area(
                     imagem,
