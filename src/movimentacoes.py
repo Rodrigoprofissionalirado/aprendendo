@@ -1446,6 +1446,12 @@ class MovimentacoesUI(QWidget):
 
     def showEvent(self, event):
         super().showEvent(event)
+        # Chama atualizar_tabela() em cada aba aberta
+        for i in range(self.tabs.count()):
+            tab_widget = self.tabs.widget(i)
+            if tab_widget and hasattr(tab_widget, "atualizar_tabela"):
+                tab_widget.atualizar_tabela()
+
         fornecedor_id = self.combo_fornecedor.currentData()
         if fornecedor_id is not None:
             self.atualizar_lista_produtos()

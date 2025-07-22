@@ -11,6 +11,7 @@ from decimal import Decimal, InvalidOperation
 from status_delegate_combo import StatusComboDelegate
 from utils_permissoes import requer_permissao
 from threads_utils import WorkerThread
+from movimentacoes_db import obter_saldo_total
 
 # Importações dos submódulos
 from .compras_db import (
@@ -741,18 +742,21 @@ class ComprasUI(QWidget):
     def atualizar_saldo_fornecedor(self):
         fornecedor_id = self.combo_fornecedor.currentData()
         if not fornecedor_id:
-            self.label_saldo_fornecedor.setText("Saldo devedor: R$ 0,00")
+            self.label_saldo_fornecedor.setText("Saldo total: R$ 0,00")
             self.label_saldo_fornecedor.setStyleSheet(
                 "font-weight: bold; color: #808080; font-size: 13px; text-decoration: underline; cursor: pointer;")
             return
 
-        saldo = float(obter_saldo_devedor_fornecedor(fornecedor_id))
+        # Use saldo de movimentações
+        saldo = float(
+            obter_saldo_total(fornecedor_id, lambda x: x.lower().replace('ç', 'c').replace('ã', 'a').replace('á', 'a')))
+        # Ajuste o lambda conforme o remove_acento utilizado
 
         # Define texto e cor de acordo com o saldo
-        if saldo > 0:
+        if saldo < 0:
             texto = f"Saldo devedor: R$ {self.locale.toString(abs(saldo), 'f', 2)}"
             cor = "#b22222"  # vermelho
-        elif saldo < 0:
+        elif saldo > 0:
             texto = f"Saldo credor: R$ {self.locale.toString(abs(-saldo), 'f', 2)}"
             cor = "#228B22"  # verde
         else:
@@ -767,12 +771,19 @@ class ComprasUI(QWidget):
     @requer_permissao(['admin', 'gerente', 'operador'])
     def on_saldo_label_clicked(self, event):
         fornecedor_id = self.combo_fornecedor.currentData()
-        if fornecedor_id and hasattr(self, 'janela_debitos'):
-            if hasattr(self.janela_debitos, "filtrar_por_fornecedor"):
-                self.janela_debitos.filtrar_por_fornecedor(fornecedor_id)
-            if hasattr(self, "main_window"):
-                index = self.main_window.stack.indexOf(self.janela_debitos)
+        if fornecedor_id and hasattr(self, 'main_window'):
+            # Abra o módulo movimentações e selecione a aba do fornecedor
+            movimentacoes_ui = getattr(self.main_window, "movimentacoes_ui", None)
+            if movimentacoes_ui:
+                # Descobre o índice da MovimentaçõesUI no stack
+                index = self.main_window.stack.indexOf(movimentacoes_ui)
                 self.main_window.stack.setCurrentIndex(index)
+                # Seleciona o fornecedor na MovimentaçõesUI
+                combo_fornecedor = movimentacoes_ui.combo_fornecedor
+                idx = combo_fornecedor.findData(fornecedor_id)
+                if idx >= 0:
+                    combo_fornecedor.setCurrentIndex(idx)
+                    movimentacoes_ui.abrir_nova_aba()  # já abre a aba do fornecedor
 
     def set_main_window(self, main_window):
         self.main_window = main_window
