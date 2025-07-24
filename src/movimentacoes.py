@@ -28,6 +28,7 @@ from compras.compras_db import (
     obter_itens_e_lancamentos_da_compra,
     obter_valor_com_abatimento_adiantamento
 )
+from compras.compras_dialogs import PagamentoMovimentacaoDialog
 from movimentacoes_db import (
     listar_movimentacoes,
     obter_categoria_principal,
@@ -1243,7 +1244,8 @@ class MovimentacaoTabUI(QWidget):
         if compra_id is not None:
             try:
                 atualizar_movimentacao(
-                    compra_id, data, tipo, direcao, descricao, valor_abatimento, valor_operacao, tipo_lancamento, valor_lancamento
+                    compra_id, data, tipo, direcao, descricao, valor_abatimento, valor_operacao, tipo_lancamento,
+                    valor_lancamento
                 )
                 if tipo != "transação" and itens:
                     inserir_item_compra(compra_id, itens)
@@ -1262,6 +1264,8 @@ class MovimentacaoTabUI(QWidget):
             self.movimentacao_edit_id = None
         else:
             try:
+                # PATCH INÍCIO: Diálogo para pagamento referente à movimentação
+                saldo_anterior = obter_saldo_total(self.fornecedor['id'], remove_acento)
                 compra_id = inserir_movimentacao(
                     self.fornecedor['id'], data, tipo, direcao, descricao, valor_abatimento, valor_operacao
                 )
@@ -1276,12 +1280,32 @@ class MovimentacaoTabUI(QWidget):
                             VALUES (%s, %s, %s, 'inclusao')
                         """, (self.fornecedor['id'], compra_id, valor_adiantamento))
                 QMessageBox.information(self, "Sucesso", "Movimentação cadastrada com sucesso.")
+
+                dialog = PagamentoMovimentacaoDialog(float(valor_operacao), float(saldo_anterior), self)
+                if dialog.exec() == QDialog.Accepted and dialog.resultado == "sim":
+                    valor_pagamento = dialog.valor_lancamento
+                    inserir_movimentacao(
+                        fornecedor_id=self.fornecedor['id'],
+                        data=datetime.now(),
+                        tipo="Transação",
+                        direcao="Saída",
+                        descricao=f"Pagamento referente à movimentação {compra_id}",
+                        valor_abatimento=Decimal('0.00'),
+                        valor_operacao=Decimal(str(valor_pagamento)),
+                        status="Concluída",
+                        origem="movimentacao",
+                        considerar_no_saldo=True
+                    )
+                    QMessageBox.information(self, "Pagamento cadastrado",
+                                            "Pagamento referente à movimentação foi cadastrado com sucesso!")
+                # PATCH FIM
+
             except Exception as e:
                 QMessageBox.critical(self, "Erro", f"Erro ao cadastrar movimentação: {e}")
         self.limpar_itens()
         self.limpar_campos()
         self.atualizar_tabela()
-        #self.atualiza_saldo_total()
+        # self.atualiza_saldo_total()
 
     def atualizar_tabela(self):
         if hasattr(self, "worker") and self.worker.isRunning():
