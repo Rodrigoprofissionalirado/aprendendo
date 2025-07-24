@@ -39,10 +39,9 @@ def listar_movimentacoes(fornecedor_id, data_de=None, data_ate=None, limit=50, o
 
 def obter_saldo_total(fornecedor_id, remove_acento):
     saldo = Decimal("0.00")
-
     with get_cursor() as cursor:
         cursor.execute("""
-            SELECT id, tipo, direcao, total, valor_abatimento
+            SELECT id, tipo, direcao, total, valor_abatimento, origem
             FROM compras
             WHERE fornecedor_id = %s
               AND considerar_no_saldo_movimentacao = TRUE
@@ -51,6 +50,7 @@ def obter_saldo_total(fornecedor_id, remove_acento):
         for mov in compras:
             tipo = remove_acento(mov['tipo'] or '')
             direcao = remove_acento(mov['direcao'] or '')
+            origem = remove_acento(mov.get('origem', '') or '')
             valor_op = Decimal(mov['total']) if mov['total'] is not None else Decimal('0.00')
             valor_abatimento = Decimal(mov['valor_abatimento']) if mov['valor_abatimento'] else Decimal('0.00')
 
@@ -62,20 +62,21 @@ def obter_saldo_total(fornecedor_id, remove_acento):
             row = cursor.fetchone()
             valor_adiantamento = Decimal(row['adiantamento']) if row and row['adiantamento'] else Decimal('0.00')
 
-            # Soma abatimento, subtrai adiantamento
-            saldo += valor_abatimento
-            saldo -= valor_adiantamento
+            # Cálculo depende da origem
+            if origem == "movimentacao":
+                valor_real = valor_op
+            else:  # origem == "compras"
+                valor_real = valor_op - valor_abatimento + valor_adiantamento
 
-            # Mantém lógica de movimentações para saldo (opcional: pode remover se só quiser saldo de abate/adiantamento)
             if tipo == "compra":
-                saldo += valor_op
+                saldo += valor_real
             elif tipo == "venda":
-                saldo -= valor_op
+                saldo -= valor_real
             elif tipo == "transacao":
                 if direcao == "entrada":
-                    saldo += valor_op
+                    saldo += valor_real
                 elif direcao == "saida":
-                    saldo -= valor_op
+                    saldo -= valor_real
 
     return saldo
 
