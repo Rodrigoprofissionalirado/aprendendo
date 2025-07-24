@@ -591,6 +591,18 @@ def excluir_transacao_saida_para_compra(compra_id):
             cursor.execute("DELETE FROM itens_compra WHERE compra_id = %s", (transacao_id,))
             cursor.execute("DELETE FROM compras WHERE id = %s", (transacao_id,))
 
+def obter_transacao_saida_para_compra(compra_id):
+    descricao_chave = f"CompraID:{compra_id}"
+    with get_cursor() as cursor:
+        cursor.execute("""
+            SELECT * FROM compras
+            WHERE tipo = 'Transação'
+              AND direcao = 'Saída'
+              AND origem = 'movimentacao'
+              AND descricao LIKE %s
+        """, (f"%{descricao_chave}",))
+        return cursor.fetchone()
+
 
 # Após qualquer alteração/inclusão/exclusão:
 # listar_fornecedores_cached.cache_clear()

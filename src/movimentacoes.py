@@ -26,9 +26,15 @@ from compras.compras_db import (
     listar_fornecedores,
     obter_ajuste_fixo,
     obter_itens_e_lancamentos_da_compra,
-    obter_valor_com_abatimento_adiantamento
+    obter_valor_com_abatimento_adiantamento,
+    existe_transacao_saida_para_compra,
+    obter_detalhes_compra,
+    obter_transacao_saida_para_compra
 )
-from compras.compras_dialogs import PagamentoMovimentacaoDialog
+from compras.compras_dialogs import (
+    PagamentoMovimentacaoDialog,
+    AtualizarTransacaoDialog
+)
 from movimentacoes_db import (
     listar_movimentacoes,
     obter_categoria_principal,
@@ -1243,6 +1249,7 @@ class MovimentacaoTabUI(QWidget):
         # Salva movimentação
         if compra_id is not None:
             try:
+                # Salva edição normalmente
                 atualizar_movimentacao(
                     compra_id, data, tipo, direcao, descricao, valor_abatimento, valor_operacao, tipo_lancamento,
                     valor_lancamento
@@ -1259,13 +1266,51 @@ class MovimentacaoTabUI(QWidget):
                             VALUES (%s, %s, %s, 'inclusao')
                         """, (self.fornecedor['id'], compra_id, valor_adiantamento))
                 QMessageBox.information(self, "Sucesso", "Movimentação editada com sucesso.")
+
+                # === PATCH: Verifica se existe transação vinculada à movimentação ===
+                if existe_transacao_saida_para_compra(compra_id):
+                    # Busca valor antigo da movimentação e transação
+                    compra_antiga, itens_antigos = obter_detalhes_compra(compra_id)
+                    valor_antigo_mov = obter_valor_com_abatimento_adiantamento(compra_id)
+                    # Busca transação vinculada
+                    # Aqui você precisa buscar a transação (por exemplo, via compras_db)
+                    # Supondo que você tem função obter_transacao_saida_para_compra(compra_id)
+                    from compras.compras_db import obter_transacao_saida_para_compra
+                    transacao = obter_transacao_saida_para_compra(compra_id)
+                    valor_antigo_trans = transacao['total'] if transacao else 0.0
+
+                    # Calcula novo valor
+                    valor_novo_mov = valor_operacao
+                    valor_novo_trans = valor_operacao  # Normalmente igual ao novo valor da movimentação
+
+                    # Calcula saldo anterior (sem essa movimentação e transação antiga)
+                    saldo_anterior = obter_saldo_anterior(self.fornecedor['id'], data, remove_acento)
+                    # Abre dialog
+                    dialog = AtualizarTransacaoDialog(
+                        valor_antigo_mov, valor_novo_mov, valor_antigo_trans, valor_novo_trans, saldo_anterior, self
+                    )
+                    if dialog.exec() == QDialog.Accepted and dialog.resultado == "sim":
+                        # Atualiza a transação
+                        novo_valor = getattr(dialog, 'valor_novo_transacao_final', valor_novo_trans)
+                        from movimentacoes_db import atualizar_movimentacao
+                        atualizar_movimentacao(
+                            transacao['id'], data, "Transação", "Saída",
+                            transacao['descricao'],
+                            Decimal('0.00'), Decimal(str(novo_valor)),
+                            None, None,
+                            origem="movimentacao", considerar_no_saldo=True,
+                            fornecedor_id=self.fornecedor['id']
+                        )
+                        QMessageBox.information(self, "Transação atualizada",
+                                                "Transação vinculada à movimentação foi atualizada com sucesso.")
+
             except Exception as e:
                 QMessageBox.critical(self, "Erro", f"Erro ao editar movimentação: {e}")
             self.movimentacao_edit_id = None
         else:
             try:
-                # PATCH INÍCIO: Diálogo para pagamento referente à movimentação
-                saldo_anterior = obter_saldo_total(self.fornecedor['id'], remove_acento)
+                # AJUSTE: Pegue o saldo anterior ANTES de inserir a movimentação
+                saldo_anterior = obter_saldo_anterior(self.fornecedor['id'], data, remove_acento)
                 compra_id = inserir_movimentacao(
                     self.fornecedor['id'], data, tipo, direcao, descricao, valor_abatimento, valor_operacao
                 )
@@ -1298,7 +1343,6 @@ class MovimentacaoTabUI(QWidget):
                     )
                     QMessageBox.information(self, "Pagamento cadastrado",
                                             "Pagamento referente à movimentação foi cadastrado com sucesso!")
-                # PATCH FIM
 
             except Exception as e:
                 QMessageBox.critical(self, "Erro", f"Erro ao cadastrar movimentação: {e}")
@@ -1550,6 +1594,11 @@ class MovimentacoesUI(QWidget):
         # Se não houver nenhuma guia aberta, foca no campo de número da balança
         if self.tabs.count() == 0:
             self.input_numero_balanca.setFocus()
+        else:
+            # Se houver uma aba aberta, foca no combo de produtos da aba ativa
+            tab = self.tabs.currentWidget()
+            if tab and hasattr(tab, "combo_produto"):
+                tab.combo_produto.setFocus()
         # Chama atualizar_tabela() em cada aba aberta
         for i in range(self.tabs.count()):
             tab_widget = self.tabs.widget(i)
