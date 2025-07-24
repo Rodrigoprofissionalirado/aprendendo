@@ -1547,6 +1547,9 @@ class MovimentacoesUI(QWidget):
 
     def showEvent(self, event):
         super().showEvent(event)
+        # Se não houver nenhuma guia aberta, foca no campo de número da balança
+        if self.tabs.count() == 0:
+            self.input_numero_balanca.setFocus()
         # Chama atualizar_tabela() em cada aba aberta
         for i in range(self.tabs.count()):
             tab_widget = self.tabs.widget(i)
