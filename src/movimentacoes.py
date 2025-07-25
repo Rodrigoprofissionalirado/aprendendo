@@ -1298,6 +1298,26 @@ class MovimentacaoTabUI(QWidget):
                         )
                         QMessageBox.information(self, "Transação atualizada",
                                                 "Transação vinculada à movimentação foi atualizada com sucesso.")
+                if tipo in ("compra", "venda") and not existe_transacao_saida_para_compra(compra_id):
+                    saldo_anterior = obter_saldo_total(self.fornecedor['id'], remove_acento)
+                    dialog = PagamentoMovimentacaoDialog(float(valor_operacao), float(saldo_anterior), self)
+                    if dialog.exec() == QDialog.Accepted and dialog.resultado == "sim":
+                        valor_pagamento = dialog.valor_lancamento
+                        direcao_pagamento = "Saída" if tipo == "compra" else "Entrada"
+                        inserir_movimentacao(
+                            fornecedor_id=self.fornecedor['id'],
+                            data=datetime.now(),
+                            tipo="Transação",
+                            direcao=direcao_pagamento,
+                            descricao=f"Pagamento referente à CompraID:{compra_id}",
+                            valor_abatimento=Decimal('0.00'),
+                            valor_operacao=Decimal(str(valor_pagamento)),
+                            status="Concluída",
+                            origem="movimentacao",
+                            considerar_no_saldo=True
+                        )
+                        QMessageBox.information(self, "Pagamento cadastrado",
+                                                "Pagamento referente à movimentação foi cadastrado com sucesso!")
 
             except Exception as e:
                 QMessageBox.critical(self, "Erro", f"Erro ao editar movimentação: {e}")
@@ -1324,11 +1344,12 @@ class MovimentacaoTabUI(QWidget):
                 dialog = PagamentoMovimentacaoDialog(float(valor_operacao), float(saldo_anterior), self)
                 if dialog.exec() == QDialog.Accepted and dialog.resultado == "sim":
                     valor_pagamento = dialog.valor_lancamento
+                    direcao_pagamento = "Saída" if tipo == "compra" else "Entrada"
                     inserir_movimentacao(
                         fornecedor_id=self.fornecedor['id'],
                         data=datetime.now(),
                         tipo="Transação",
-                        direcao="Saída",
+                        direcao=direcao_pagamento,
                         descricao=f"Pagamento referente à CompraID:{compra_id}",
                         valor_abatimento=Decimal('0.00'),
                         valor_operacao=Decimal(str(valor_pagamento)),
