@@ -30,7 +30,12 @@ from compras.compras_db import (
     existe_transacao_saida_para_compra,
     obter_detalhes_compra,
     obter_transacao_saida_para_compra,
-    excluir_transacao_saida_para_compra
+    excluir_transacao_saida_para_compra,
+    obter_dados_bancarios_para_campo_copiavel,
+    listar_contas_do_fornecedor,
+    atualizar_conta_bancaria_da_compra,
+    obter_fornecedor_id_da_compra,
+    obter_saldo_antes_compra
 )
 from compras.compras_dialogs import (
     PagamentoMovimentacaoDialog,
@@ -139,6 +144,82 @@ class MovimentacaoTabUI(QWidget):
         self.init_ui()
         self.carregar_produtos()
         self.atualizar_tabela()
+
+        # ==== PATCH INICIO: CÓPIA DE COMPRASUI para campo copiável e trocar conta ====
+    def atualizar_campo_texto_copiavel(self):
+        compra_id = self.obter_compra_id_selecionado()
+        if not compra_id:
+            self.campo_texto_copiavel.setText("")
+            return
+        texto = obter_dados_bancarios_para_campo_copiavel(compra_id)
+        self.campo_texto_copiavel.setText(texto or "")
+
+    def copiar_campo_texto_copiavel(self, event):
+        clipboard = QApplication.clipboard()
+        clipboard.setText(self.campo_texto_copiavel.text())
+        self.campo_texto_copiavel.setStyleSheet("background-color: #b2f2b4; font-weight: bold; font-size: 13px;")
+        QTimer.singleShot(350,
+                            lambda: self.campo_texto_copiavel.setStyleSheet("font-weight: bold; font-size: 13px;"))
+        QLineEdit.mousePressEvent(self.campo_texto_copiavel, event)
+
+    def abrir_dialog_troca_conta_fornecedor(self):
+        from PySide6.QtWidgets import QDialog, QVBoxLayout, QDialogButtonBox, QComboBox, QLabel, QMessageBox
+        compra_id = self.obter_compra_id_selecionado()
+        if not compra_id:
+            QMessageBox.warning(self, "Atenção", "Selecione uma movimentação primeiro.")
+            return
+        fornecedor_id = obter_fornecedor_id_da_compra(compra_id)
+        if not fornecedor_id:
+            QMessageBox.warning(self, "Erro",
+                                    "Não foi possível identificar o fornecedor da movimentação selecionada.")
+            return
+        contas_do_fornecedor = listar_contas_do_fornecedor(fornecedor_id)
+        if not contas_do_fornecedor:
+            QMessageBox.information(self, "Sem contas", "Este fornecedor não possui contas bancárias cadastradas.")
+            return
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Escolher conta do fornecedor para esta movimentação")
+        layout = QVBoxLayout(dialog)
+        layout.addWidget(QLabel("Selecione a conta bancária ou chave PIX:"))
+        combo_contas = QComboBox(dialog)
+        for conta in contas_do_fornecedor:
+            texto = f"{conta['apelido']}"
+            detalhes = []
+            if conta.get('banco'):
+                detalhes.append(f"{conta['banco']} Ag:{conta['agencia']} Conta:{conta['conta']}")
+            if conta.get('chave_pix'):
+                detalhes.append(f"PIX: {conta['chave_pix']}")
+            if conta.get('padrao'):
+                detalhes.append("(padrão)")
+            if detalhes:
+                texto += " - " + " | ".join(detalhes)
+            combo_contas.addItem(texto, conta['id'])
+        layout.addWidget(combo_contas)
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        layout.addWidget(buttons)
+
+        def on_ok():
+            conta_id = combo_contas.currentData()
+            compra_id_local = self.obter_compra_id_selecionado()
+            if conta_id and compra_id_local:
+                atualizar_conta_bancaria_da_compra(compra_id_local, conta_id)
+                self.atualizar_campo_texto_copiavel()
+            dialog.accept()
+
+        def on_cancel():
+            dialog.reject()
+
+        buttons.accepted.connect(on_ok)
+        buttons.rejected.connect(on_cancel)
+        dialog.exec()
+
+    def obter_compra_id_selecionado(self):
+        row = self.tabela_movimentacoes.currentRow()
+        if row < 0:
+            return None
+        item = self.tabela_movimentacoes.item(row, 0)
+        return int(item.text()) if item else None
+        # ==== PATCH FIM ====
 
     def editar_movimentacao_finalizada(self):
         if hasattr(self, "worker") and self.worker.isRunning():
@@ -1028,6 +1109,18 @@ class MovimentacaoTabUI(QWidget):
         self.tabela_itens.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.tabela_itens.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         layout_dir.addWidget(self.tabela_itens)
+
+        # --- Campo copiável e botão trocar conta do fornecedor ---
+        self.campo_texto_copiavel = QLineEdit()
+        self.campo_texto_copiavel.setReadOnly(True)
+        self.campo_texto_copiavel.setStyleSheet("font-weight: bold; font-size: 13px;")
+        self.campo_texto_copiavel.mousePressEvent = self.copiar_campo_texto_copiavel
+        layout_dir.addWidget(self.campo_texto_copiavel)
+        self.btn_trocar_conta_fornecedor = QPushButton("Trocar conta do fornecedor (só para esta movimentação)")
+        self.btn_trocar_conta_fornecedor.clicked.connect(self.abrir_dialog_troca_conta_fornecedor)
+        layout_dir.addWidget(self.btn_trocar_conta_fornecedor)
+        # --- Fim bloco campo copiável ---
+
         layout_dir.addStretch()
         btn_exportar_pdf = QPushButton("Exportar Movimentações em PDF")
         btn_exportar_pdf.clicked.connect(self.exportar_movimentacoes_pdf)
