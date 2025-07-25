@@ -227,12 +227,13 @@ def inserir_movimentacao(
     fornecedor_id, data, tipo, direcao, descricao,
     valor_abatimento, valor_operacao,
     tipo_lancamento=None, valor_lancamento=None,
-    status='Criada', origem='movimentacao', considerar_no_saldo=True
+    status='Criada', origem='movimentacao', considerar_no_saldo=True,
+    dados_bancarios_id=None
 ):
     with get_cursor(commit=True) as cursor:
         cursor.execute(
-            "INSERT INTO compras (fornecedor_id, data_compra, tipo, direcao, descricao, valor_abatimento, total, status, origem, considerar_no_saldo_movimentacao) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
-            (fornecedor_id, data, tipo, direcao, descricao, valor_abatimento, valor_operacao, status, origem, considerar_no_saldo)
+            "INSERT INTO compras (fornecedor_id, data_compra, tipo, direcao, descricao, valor_abatimento, total, status, origem, considerar_no_saldo_movimentacao, dados_bancarios_id) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            (fornecedor_id, data, tipo, direcao, descricao, valor_abatimento, valor_operacao, status, origem, considerar_no_saldo, dados_bancarios_id)
         )
         compra_id = cursor.lastrowid
         if tipo_lancamento == "adiantamento" and valor_lancamento and valor_lancamento > 0:

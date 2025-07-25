@@ -141,6 +141,7 @@ class MovimentacaoTabUI(QWidget):
         self.pagina_atual = 1
         self.qtd_por_pagina = 50
         self.total_paginas = 1
+        self.dados_bancarios_id_selecionada = None
         self.init_ui()
         self.carregar_produtos()
         self.atualizar_tabela()
@@ -158,21 +159,14 @@ class MovimentacaoTabUI(QWidget):
         clipboard = QApplication.clipboard()
         clipboard.setText(self.campo_texto_copiavel.text())
         self.campo_texto_copiavel.setStyleSheet("background-color: #b2f2b4; font-weight: bold; font-size: 13px;")
-        QTimer.singleShot(350,
-                            lambda: self.campo_texto_copiavel.setStyleSheet("font-weight: bold; font-size: 13px;"))
+        QTimer.singleShot(350, lambda: self.campo_texto_copiavel.setStyleSheet("font-weight: bold; font-size: 13px;"))
         QLineEdit.mousePressEvent(self.campo_texto_copiavel, event)
 
     def abrir_dialog_troca_conta_fornecedor(self):
         from PySide6.QtWidgets import QDialog, QVBoxLayout, QDialogButtonBox, QComboBox, QLabel, QMessageBox
         compra_id = self.obter_compra_id_selecionado()
-        if not compra_id:
-            QMessageBox.warning(self, "Atenção", "Selecione uma movimentação primeiro.")
-            return
-        fornecedor_id = obter_fornecedor_id_da_compra(compra_id)
-        if not fornecedor_id:
-            QMessageBox.warning(self, "Erro",
-                                    "Não foi possível identificar o fornecedor da movimentação selecionada.")
-            return
+        # Permite trocar mesmo sem movimentação salva, guardando no atributo (será gravado no insert/update)
+        fornecedor_id = self.fornecedor["id"]
         contas_do_fornecedor = listar_contas_do_fornecedor(fornecedor_id)
         if not contas_do_fornecedor:
             QMessageBox.information(self, "Sem contas", "Este fornecedor não possui contas bancárias cadastradas.")
@@ -194,12 +188,18 @@ class MovimentacaoTabUI(QWidget):
             if detalhes:
                 texto += " - " + " | ".join(detalhes)
             combo_contas.addItem(texto, conta['id'])
+        # Seleciona a conta atual, se houver
+        if self.dados_bancarios_id_selecionada:
+            idx = combo_contas.findData(self.dados_bancarios_id_selecionada)
+            if idx >= 0:
+                combo_contas.setCurrentIndex(idx)
         layout.addWidget(combo_contas)
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         layout.addWidget(buttons)
 
         def on_ok():
             conta_id = combo_contas.currentData()
+            self.dados_bancarios_id_selecionada = conta_id
             compra_id_local = self.obter_compra_id_selecionado()
             if conta_id and compra_id_local:
                 atualizar_conta_bancaria_da_compra(compra_id_local, conta_id)
@@ -1154,7 +1154,7 @@ class MovimentacaoTabUI(QWidget):
 
     def tipo_changed(self):
         tipo = self.combo_tipo.currentText()
-        is_transacao = tipo == "Transação"
+        is_transacao = remove_acento(tipo) == "transacao"
         self.combo_direcao.setVisible(is_transacao)
         self.label_direcao.setVisible(is_transacao)
         self.input_valor_operacao.setVisible(is_transacao)
@@ -1300,13 +1300,14 @@ class MovimentacaoTabUI(QWidget):
         self.label_total_movimentacao.setText(f"Total: R$ {decimal_para_str_brasil(total_final, self.locale)}")
 
     def finalizar_movimentacao(self):
-        tipo = self.combo_tipo.currentText().lower()
+        tipo = self.combo_tipo.currentText()
+        tipo_normalizado = remove_acento(tipo)
         if not self.input_data.date().isValid():
             QMessageBox.warning(self, "Data inválida", "A data selecionada não é válida.")
             self.input_data.setFocus()
             return
         data = self.input_data.date().toPython()
-        direcao = self.combo_direcao.currentText().lower() if tipo == "transação" else None
+        direcao = self.combo_direcao.currentText().lower() if tipo_normalizado == "transacao" else None
         descricao = self.input_descricao.text().strip()
         compra_id = self.movimentacao_edit_id
 
@@ -1320,27 +1321,35 @@ class MovimentacaoTabUI(QWidget):
         valor_abatimento = valor_lancamento if tipo_lancamento == "abatimento" else Decimal('0.00')
         valor_adiantamento = valor_lancamento if tipo_lancamento == "adiantamento" else Decimal('0.00')
 
-        if tipo == "transação":
+        if tipo_normalizado == "transacao":
             try:
                 valor_operacao = Decimal(self.input_valor_operacao.text().replace(",", "."))
+                # PATCH: grava conta bancária selecionada ao criar/editar transação
+                compra_id = inserir_movimentacao(
+                    self.fornecedor['id'], data, tipo, direcao, descricao,
+                    valor_abatimento, valor_operacao,
+                    tipo_lancamento=None, valor_lancamento=None,
+                    status='Criada', origem='movimentacao', considerar_no_saldo=True,
+                    dados_bancarios_id=self.dados_bancarios_id_selecionada
+                )
+                QMessageBox.information(self, "Sucesso", "Transação cadastrada com sucesso.")
             except Exception as e:
-                QMessageBox.warning(self, "Erro", f"Valor inválido: {e}")
-                return
+                QMessageBox.critical(self, "Erro", f"Erro ao cadastrar transação: {e}")
+            self.limpar_itens()
+            self.limpar_campos()
+            self.atualizar_tabela()
+            return
         else:
             if not self.itens_movimentacao:
                 QMessageBox.warning(self, "Erro", "Adicione pelo menos um item antes de salvar.")
                 return
 
-            # Se estiver editando uma movimentação existente, use seu compra_id.
-            # Se for uma nova, só pega o valor normalmente.
             if compra_id is not None:
                 valor_operacao = obter_valor_com_abatimento_adiantamento(compra_id)
             else:
-                # Se for uma nova movimentação, simule o cálculo:
                 total = sum(Decimal(str(item['total'])) for item in self.itens_movimentacao)
                 valor_operacao = total + valor_adiantamento - valor_abatimento
 
-        # Prepara lista de itens para inserir_item_compra
         itens = [
             {
                 "produto_id": item["produto_id"],
@@ -1350,18 +1359,19 @@ class MovimentacaoTabUI(QWidget):
             for item in self.itens_movimentacao
         ]
 
-        # Salva movimentação
         if compra_id is not None:
             try:
                 valor_antigo_mov = obter_valor_com_abatimento_adiantamento(compra_id)
 
+                # PATCH: grava conta bancária ao atualizar movimentação
                 atualizar_movimentacao(
                     compra_id, data, tipo, direcao, descricao, valor_abatimento, valor_operacao, tipo_lancamento,
-                    valor_lancamento
+                    valor_lancamento, origem='movimentacao', considerar_no_saldo=True,
+                    fornecedor_id=self.fornecedor['id'],
+                    dados_bancarios_id=self.dados_bancarios_id_selecionada
                 )
-                if tipo != "transação" and itens:
+                if tipo_normalizado != "transacao" and itens:
                     inserir_item_compra(compra_id, itens)
-                # Remove lançamentos antigos de abate/adiantamento e insere o novo:
                 from db_context import get_cursor
                 with get_cursor(commit=True) as cursor:
                     cursor.execute("DELETE FROM debitos_fornecedores WHERE compra_id = %s", (compra_id,))
@@ -1372,25 +1382,17 @@ class MovimentacaoTabUI(QWidget):
                         """, (self.fornecedor['id'], compra_id, valor_adiantamento))
                 QMessageBox.information(self, "Sucesso", "Movimentação editada com sucesso.")
 
-                # === PATCH: Verifica se existe transação vinculada à movimentação ===
                 if existe_transacao_saida_para_compra(compra_id):
                     compra_antiga, itens_antigos = obter_detalhes_compra(compra_id)
-                    # Busca transação vinculada
                     transacao = obter_transacao_saida_para_compra(compra_id)
                     valor_antigo_trans = transacao['total'] if transacao else 0.0
-
-                    # Calcula novo valor
                     valor_novo_mov = obter_valor_com_abatimento_adiantamento(compra_id)
-                    valor_novo_trans = obter_valor_com_abatimento_adiantamento(compra_id)  # Normalmente igual ao novo valor da movimentação
-
-                    # Calcula saldo anterior (sem essa movimentação e transação antiga)
+                    valor_novo_trans = obter_valor_com_abatimento_adiantamento(compra_id)
                     saldo_anterior = obter_saldo_anterior(self.fornecedor['id'], data, remove_acento)
-                    # Abre dialog
                     dialog = AtualizarTransacaoDialog(
                         valor_antigo_mov, valor_novo_mov, valor_antigo_trans, valor_novo_trans, saldo_anterior, self
                     )
                     if dialog.exec() == QDialog.Accepted and dialog.resultado == "sim":
-                        # Atualiza a transação
                         novo_valor = getattr(dialog, 'valor_novo_transacao_final', valor_novo_trans)
                         atualizar_movimentacao(
                             transacao['id'], data, "Transação", "Saída",
@@ -1398,16 +1400,19 @@ class MovimentacaoTabUI(QWidget):
                             Decimal('0.00'), Decimal(str(novo_valor)),
                             None, None,
                             origem="movimentacao", considerar_no_saldo=True,
-                            fornecedor_id=self.fornecedor['id']
+                            fornecedor_id=self.fornecedor['id'],
+                            dados_bancarios_id=self.dados_bancarios_id_selecionada
                         )
                         QMessageBox.information(self, "Transação atualizada",
                                                 "Transação vinculada à movimentação foi atualizada com sucesso.")
-                if tipo in ("compra", "venda") and not existe_transacao_saida_para_compra(compra_id):
+
+                # PATCH: só mostra dialog de pagamento se NÃO for transação
+                if tipo_normalizado in ("compra", "venda") and not existe_transacao_saida_para_compra(compra_id):
                     saldo_anterior = obter_saldo_antes_compra(self.fornecedor['id'], compra_id, remove_acento)
                     dialog = PagamentoMovimentacaoDialog(float(valor_operacao), float(saldo_anterior), self)
                     if dialog.exec() == QDialog.Accepted and dialog.resultado == "sim":
                         valor_pagamento = dialog.valor_lancamento
-                        direcao_pagamento = "Saída" if tipo == "compra" else "Entrada"
+                        direcao_pagamento = "Saída" if tipo_normalizado == "compra" else "Entrada"
                         inserir_movimentacao(
                             fornecedor_id=self.fornecedor['id'],
                             data=datetime.now(),
@@ -1418,7 +1423,8 @@ class MovimentacaoTabUI(QWidget):
                             valor_operacao=Decimal(str(valor_pagamento)),
                             status="Concluída",
                             origem="movimentacao",
-                            considerar_no_saldo=True
+                            considerar_no_saldo=True,
+                            dados_bancarios_id=self.dados_bancarios_id_selecionada
                         )
                         QMessageBox.information(self, "Pagamento cadastrado",
                                                 "Pagamento referente à movimentação foi cadastrado com sucesso!")
@@ -1430,40 +1436,43 @@ class MovimentacaoTabUI(QWidget):
             try:
                 # Primeiro, insere a movimentação e itens normalmente
                 compra_id = inserir_movimentacao(
-                    self.fornecedor['id'], data, tipo, direcao, descricao, valor_abatimento, valor_operacao
+                    self.fornecedor['id'], data, tipo, direcao, descricao, valor_abatimento, valor_operacao,
+                    tipo_lancamento=tipo_lancamento, valor_lancamento=valor_lancamento,
+                    status='Criada', origem='movimentacao', considerar_no_saldo=True,
+                    dados_bancarios_id=self.dados_bancarios_id_selecionada
                 )
-                if tipo != "transação" and itens:
+                if tipo_normalizado != "transacao" and itens:
                     inserir_item_compra(compra_id, itens)
-                # Salva adiantamento se houver
                 if valor_adiantamento > 0:
                     from db_context import get_cursor
                     with get_cursor(commit=True) as cursor:
                         cursor.execute("""
-                                INSERT INTO debitos_fornecedores (fornecedor_id, compra_id, valor, tipo)
-                                VALUES (%s, %s, %s, 'inclusao')
-                            """, (self.fornecedor['id'], compra_id, valor_adiantamento))
+                            INSERT INTO debitos_fornecedores (fornecedor_id, compra_id, valor, tipo)
+                            VALUES (%s, %s, %s, 'inclusao')
+                        """, (self.fornecedor['id'], compra_id, valor_adiantamento))
                 QMessageBox.information(self, "Sucesso", "Movimentação cadastrada com sucesso.")
 
-                # Agora sim, calcula o saldo anterior correto usando o ID recém criado
-                saldo_anterior = obter_saldo_antes_compra(self.fornecedor['id'], compra_id, remove_acento)
-                dialog = PagamentoMovimentacaoDialog(float(valor_operacao), float(saldo_anterior), self)
-                if dialog.exec() == QDialog.Accepted and dialog.resultado == "sim":
-                    valor_pagamento = dialog.valor_lancamento
-                    direcao_pagamento = "Saída" if tipo == "compra" else "Entrada"
-                    inserir_movimentacao(
-                        fornecedor_id=self.fornecedor['id'],
-                        data=datetime.now(),
-                        tipo="Transação",
-                        direcao=direcao_pagamento,
-                        descricao=f"Pagamento referente à CompraID:{compra_id}",
-                        valor_abatimento=Decimal('0.00'),
-                        valor_operacao=Decimal(str(valor_pagamento)),
-                        status="Concluída",
-                        origem="movimentacao",
-                        considerar_no_saldo=True
-                    )
-                    QMessageBox.information(self, "Pagamento cadastrado",
-                                            "Pagamento referente à movimentação foi cadastrado com sucesso!")
+                if tipo_normalizado in ("compra", "venda"):
+                    saldo_anterior = obter_saldo_antes_compra(self.fornecedor['id'], compra_id, remove_acento)
+                    dialog = PagamentoMovimentacaoDialog(float(valor_operacao), float(saldo_anterior), self)
+                    if dialog.exec() == QDialog.Accepted and dialog.resultado == "sim":
+                        valor_pagamento = dialog.valor_lancamento
+                        direcao_pagamento = "Saída" if tipo_normalizado == "compra" else "Entrada"
+                        inserir_movimentacao(
+                            fornecedor_id=self.fornecedor['id'],
+                            data=datetime.now(),
+                            tipo="Transação",
+                            direcao=direcao_pagamento,
+                            descricao=f"Pagamento referente à CompraID:{compra_id}",
+                            valor_abatimento=Decimal('0.00'),
+                            valor_operacao=Decimal(str(valor_pagamento)),
+                            status="Concluída",
+                            origem="movimentacao",
+                            considerar_no_saldo=True,
+                            dados_bancarios_id=self.dados_bancarios_id_selecionada
+                        )
+                        QMessageBox.information(self, "Pagamento cadastrado",
+                                                "Pagamento referente à movimentação foi cadastrado com sucesso!")
 
             except Exception as e:
                 QMessageBox.critical(self, "Erro", f"Erro ao cadastrar movimentação: {e}")
@@ -1562,7 +1571,7 @@ class MovimentacaoTabUI(QWidget):
             return
         compra_id = int(item.text())
         tipo = self.tabela_movimentacoes.item(row, 2).text().lower()
-        if tipo == "transacao":
+        if remove_acento(tipo) == "transacao":
             self.tabela_itens.setRowCount(0)
             self.campo_texto_copiavel.setVisible(True)
             self.btn_trocar_conta_fornecedor.setVisible(True)
