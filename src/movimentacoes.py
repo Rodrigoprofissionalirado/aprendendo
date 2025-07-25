@@ -1118,6 +1118,8 @@ class MovimentacaoTabUI(QWidget):
         layout_dir.addWidget(self.campo_texto_copiavel)
         self.btn_trocar_conta_fornecedor = QPushButton("Trocar conta do fornecedor (só para esta movimentação)")
         self.btn_trocar_conta_fornecedor.clicked.connect(self.abrir_dialog_troca_conta_fornecedor)
+        self.campo_texto_copiavel.setVisible(False)
+        self.btn_trocar_conta_fornecedor.setVisible(False)
         layout_dir.addWidget(self.btn_trocar_conta_fornecedor)
         # --- Fim bloco campo copiável ---
 
@@ -1560,9 +1562,15 @@ class MovimentacaoTabUI(QWidget):
             return
         compra_id = int(item.text())
         tipo = self.tabela_movimentacoes.item(row, 2).text().lower()
-        if tipo == "transação":
+        if tipo == "transacao":
             self.tabela_itens.setRowCount(0)
+            self.campo_texto_copiavel.setVisible(True)
+            self.btn_trocar_conta_fornecedor.setVisible(True)
+            self.atualizar_campo_texto_copiavel()
             return
+        else:
+            self.campo_texto_copiavel.setVisible(False)
+            self.btn_trocar_conta_fornecedor.setVisible(False)
 
         # PATCH: usar obter_itens_e_lancamentos_da_compra para mostrar produtos + abatimento + adiantamento
         itens, valor_abatimento, valor_adiantamento = obter_itens_e_lancamentos_da_compra(compra_id)
