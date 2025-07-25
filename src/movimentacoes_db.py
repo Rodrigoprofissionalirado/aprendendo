@@ -160,6 +160,7 @@ def buscar_fornecedor_id_por_numero_balanca(numero_balanca):
         cursor.execute("SELECT id FROM fornecedores WHERE fornecedores_numerobalanca = %s", (numero_balanca,))
         return cursor.fetchone()
 
+
 def atualizar_movimentacao(compra_id, data, tipo, direcao, descricao, valor_abatimento,
     valor_operacao, tipo_lancamento,# "abatimento" ou "adiantamento"
     valor_lancamento,  # valor do campo input (decimal, sempre positivo)
@@ -212,6 +213,16 @@ def atualizar_movimentacao(compra_id, data, tipo, direcao, descricao, valor_abat
                 (fornecedor_id, compra_id, valor_lancamento)
             )
 
+        # NOVO PATCH: Atualiza o campo total com a soma dos itens (se não for transação)
+        if tipo.lower() != "transação":
+            cursor.execute("""
+                UPDATE compras
+                SET total = (SELECT COALESCE(SUM(quantidade * preco_unitario), 0)
+                             FROM itens_compra
+                             WHERE compra_id = %s)
+                WHERE id = %s
+            """, (compra_id, compra_id))
+
 def inserir_movimentacao(
     fornecedor_id, data, tipo, direcao, descricao,
     valor_abatimento, valor_operacao,
@@ -242,6 +253,15 @@ def inserir_item_compra(compra_id, itens):
             "INSERT INTO itens_compra (compra_id, produto_id, quantidade, preco_unitario) VALUES (%s, %s, %s, %s)",
             [(compra_id, item['produto_id'], item['quantidade'], item['preco_unitario']) for item in itens]
         )
+    # PATCH: Atualiza o campo total após inserir itens
+    with get_cursor(commit=True) as cursor:
+        cursor.execute("""
+            UPDATE compras
+            SET total = (SELECT COALESCE(SUM(quantidade * preco_unitario), 0)
+                         FROM itens_compra
+                         WHERE compra_id = %s)
+            WHERE id = %s
+        """, (compra_id, compra_id))
 
 def contar_movimentacoes(fornecedor_id, data_de=None, data_ate=None):
     query = """

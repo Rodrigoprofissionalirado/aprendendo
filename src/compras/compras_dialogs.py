@@ -1,5 +1,6 @@
 from PySide6.QtWidgets import QDialog, QVBoxLayout, QLabel, QLineEdit, QHBoxLayout, QPushButton, QDialogButtonBox, QWidget
 from PySide6.QtCore import Qt
+from decimal import Decimal, InvalidOperation
 
 class DiferencaCompraDialog(QDialog):
     def __init__(self, diferenca, parent=None):
@@ -175,10 +176,11 @@ class AtualizarTransacaoDialog(QDialog):
 
     def atualizar_valor_novo_trans(self):
         try:
-            desconto = float(self.input_desconto.text().replace(",", "."))
-        except Exception:
-            desconto = 0.0
-        valor_novo = max(0.0, self.valor_novo_transacao - desconto)
+            desconto = Decimal(self.input_desconto.text().replace(",", ".") or "0")
+        except InvalidOperation:
+            desconto = Decimal("0.00")
+
+        valor_novo = max(Decimal("0.00"), self.valor_novo_transacao - desconto)
         self.label_valor_novo_trans.setText(f"Valor novo da transação: R$ {valor_novo:.2f}")
         self.valor_novo_transacao_final = valor_novo
 

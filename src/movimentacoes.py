@@ -1249,7 +1249,8 @@ class MovimentacaoTabUI(QWidget):
         # Salva movimentação
         if compra_id is not None:
             try:
-                # Salva edição normalmente
+                valor_antigo_mov = obter_valor_com_abatimento_adiantamento(compra_id)
+
                 atualizar_movimentacao(
                     compra_id, data, tipo, direcao, descricao, valor_abatimento, valor_operacao, tipo_lancamento,
                     valor_lancamento
@@ -1269,19 +1270,14 @@ class MovimentacaoTabUI(QWidget):
 
                 # === PATCH: Verifica se existe transação vinculada à movimentação ===
                 if existe_transacao_saida_para_compra(compra_id):
-                    # Busca valor antigo da movimentação e transação
                     compra_antiga, itens_antigos = obter_detalhes_compra(compra_id)
-                    valor_antigo_mov = obter_valor_com_abatimento_adiantamento(compra_id)
                     # Busca transação vinculada
-                    # Aqui você precisa buscar a transação (por exemplo, via compras_db)
-                    # Supondo que você tem função obter_transacao_saida_para_compra(compra_id)
-                    from compras.compras_db import obter_transacao_saida_para_compra
                     transacao = obter_transacao_saida_para_compra(compra_id)
                     valor_antigo_trans = transacao['total'] if transacao else 0.0
 
                     # Calcula novo valor
-                    valor_novo_mov = valor_operacao
-                    valor_novo_trans = valor_operacao  # Normalmente igual ao novo valor da movimentação
+                    valor_novo_mov = obter_valor_com_abatimento_adiantamento(compra_id)
+                    valor_novo_trans = obter_valor_com_abatimento_adiantamento(compra_id)  # Normalmente igual ao novo valor da movimentação
 
                     # Calcula saldo anterior (sem essa movimentação e transação antiga)
                     saldo_anterior = obter_saldo_anterior(self.fornecedor['id'], data, remove_acento)
@@ -1292,7 +1288,6 @@ class MovimentacaoTabUI(QWidget):
                     if dialog.exec() == QDialog.Accepted and dialog.resultado == "sim":
                         # Atualiza a transação
                         novo_valor = getattr(dialog, 'valor_novo_transacao_final', valor_novo_trans)
-                        from movimentacoes_db import atualizar_movimentacao
                         atualizar_movimentacao(
                             transacao['id'], data, "Transação", "Saída",
                             transacao['descricao'],
@@ -1334,7 +1329,7 @@ class MovimentacaoTabUI(QWidget):
                         data=datetime.now(),
                         tipo="Transação",
                         direcao="Saída",
-                        descricao=f"Pagamento referente à movimentação {compra_id}",
+                        descricao=f"Pagamento referente à CompraID:{compra_id}",
                         valor_abatimento=Decimal('0.00'),
                         valor_operacao=Decimal(str(valor_pagamento)),
                         status="Concluída",
