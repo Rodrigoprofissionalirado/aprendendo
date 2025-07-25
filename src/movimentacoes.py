@@ -1401,7 +1401,7 @@ class MovimentacaoTabUI(QWidget):
                         QMessageBox.information(self, "Transação atualizada",
                                                 "Transação vinculada à movimentação foi atualizada com sucesso.")
                 if tipo in ("compra", "venda") and not existe_transacao_saida_para_compra(compra_id):
-                    saldo_anterior = obter_saldo_total(self.fornecedor['id'], remove_acento)
+                    saldo_anterior = obter_saldo_antes_compra(self.fornecedor['id'], compra_id, remove_acento)
                     dialog = PagamentoMovimentacaoDialog(float(valor_operacao), float(saldo_anterior), self)
                     if dialog.exec() == QDialog.Accepted and dialog.resultado == "sim":
                         valor_pagamento = dialog.valor_lancamento
@@ -1426,8 +1426,7 @@ class MovimentacaoTabUI(QWidget):
             self.movimentacao_edit_id = None
         else:
             try:
-                # AJUSTE: Pegue o saldo anterior ANTES de inserir a movimentação
-                saldo_anterior = obter_saldo_anterior(self.fornecedor['id'], data, remove_acento)
+                # Primeiro, insere a movimentação e itens normalmente
                 compra_id = inserir_movimentacao(
                     self.fornecedor['id'], data, tipo, direcao, descricao, valor_abatimento, valor_operacao
                 )
@@ -1438,11 +1437,13 @@ class MovimentacaoTabUI(QWidget):
                     from db_context import get_cursor
                     with get_cursor(commit=True) as cursor:
                         cursor.execute("""
-                            INSERT INTO debitos_fornecedores (fornecedor_id, compra_id, valor, tipo)
-                            VALUES (%s, %s, %s, 'inclusao')
-                        """, (self.fornecedor['id'], compra_id, valor_adiantamento))
+                                INSERT INTO debitos_fornecedores (fornecedor_id, compra_id, valor, tipo)
+                                VALUES (%s, %s, %s, 'inclusao')
+                            """, (self.fornecedor['id'], compra_id, valor_adiantamento))
                 QMessageBox.information(self, "Sucesso", "Movimentação cadastrada com sucesso.")
 
+                # Agora sim, calcula o saldo anterior correto usando o ID recém criado
+                saldo_anterior = obter_saldo_antes_compra(self.fornecedor['id'], compra_id, remove_acento)
                 dialog = PagamentoMovimentacaoDialog(float(valor_operacao), float(saldo_anterior), self)
                 if dialog.exec() == QDialog.Accepted and dialog.resultado == "sim":
                     valor_pagamento = dialog.valor_lancamento
