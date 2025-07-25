@@ -29,11 +29,13 @@ from compras.compras_db import (
     obter_valor_com_abatimento_adiantamento,
     existe_transacao_saida_para_compra,
     obter_detalhes_compra,
-    obter_transacao_saida_para_compra
+    obter_transacao_saida_para_compra,
+    excluir_transacao_saida_para_compra
 )
 from compras.compras_dialogs import (
     PagamentoMovimentacaoDialog,
-    AtualizarTransacaoDialog
+    AtualizarTransacaoDialog,
+    ConfirmarExclusaoPagamentoDialog
 )
 from movimentacoes_db import (
     listar_movimentacoes,
@@ -270,6 +272,13 @@ class MovimentacaoTabUI(QWidget):
 
         compra_id = int(compra_id_item.text())
 
+        # Verifica se há transação de saída vinculada à movimentação (pagamento correspondente)
+        if existe_transacao_saida_para_compra(compra_id):
+            dialog = ConfirmarExclusaoPagamentoDialog(self)
+            if dialog.exec() and dialog.resultado:
+                # Excluir também a transação de saída vinculada
+                excluir_transacao_saida_para_compra(compra_id)
+        # Confirma exclusão da movimentação principal
         confirm = QMessageBox.question(
             self,
             "Confirmar Exclusão",

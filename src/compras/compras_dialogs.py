@@ -188,3 +188,32 @@ class AtualizarTransacaoDialog(QDialog):
         self.resultado = "sim"
         # Usa self.valor_novo_transacao_final como novo valor para a transação
         self.accept()
+
+class ConfirmarExclusaoPagamentoDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Excluir pagamento correspondente")
+        self.resultado = None
+
+        layout = QVBoxLayout(self)
+        label = QLabel("Esta movimentação possui um pagamento correspondente cadastrado.\n"
+                       "Deseja também excluir o pagamento ao remover esta movimentação?")
+        layout.addWidget(label)
+
+        botoes = QHBoxLayout()
+        btn_sim = QPushButton("Sim")
+        btn_nao = QPushButton("Não")
+        botoes.addWidget(btn_sim)
+        botoes.addWidget(btn_nao)
+        layout.addLayout(botoes)
+
+        btn_sim.clicked.connect(self.on_sim)
+        btn_nao.clicked.connect(self.on_nao)
+
+    def on_sim(self):
+        self.resultado = True
+        self.accept()
+
+    def on_nao(self):
+        self.resultado = False
+        self.accept()
