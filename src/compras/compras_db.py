@@ -568,7 +568,7 @@ def existe_transacao_saida_para_compra(compra_id):
 
 def excluir_transacao_saida_para_compra(compra_id):
     """
-    Exclui a transação de saída vinculada a uma compra concluída, se existir.
+    Exclui a transação vinculada a uma compra concluída, seja de saída ou entrada, se existir.
     """
     descricao_chave = f"CompraID:{compra_id}"
     transacao_id = None
@@ -576,7 +576,6 @@ def excluir_transacao_saida_para_compra(compra_id):
         cursor.execute("""
             SELECT id FROM compras
             WHERE tipo = 'Transação'
-              AND direcao = 'Saída'
               AND origem = 'movimentacao'
               AND descricao LIKE %s
         """, (f"%{descricao_chave}",))
@@ -602,6 +601,41 @@ def obter_transacao_saida_para_compra(compra_id):
               AND descricao LIKE %s
         """, (f"%{descricao_chave}",))
         return cursor.fetchone()
+
+def obter_saldo_antes_compra(fornecedor_id, compra_id, remove_acento):
+    with get_cursor() as cursor:
+        cursor.execute("SELECT id, data_compra FROM compras WHERE id = %s", (compra_id,))
+        row = cursor.fetchone()
+        if not row:
+            return Decimal("0.00")
+        data_compra = row['data_compra']
+        id_compra = row['id']
+
+    saldo = Decimal("0.00")
+    with get_cursor() as cursor:
+        cursor.execute("""
+            SELECT id, tipo, direcao, total, data_compra
+            FROM compras
+            WHERE fornecedor_id = %s
+              AND considerar_no_saldo_movimentacao = TRUE
+              AND (data_compra < %s OR (data_compra = %s AND id < %s))
+            ORDER BY data_compra, id
+        """, (fornecedor_id, data_compra, data_compra, id_compra))
+        compras = cursor.fetchall()
+        for mov in compras:
+            tipo = remove_acento(mov['tipo'] or '')
+            direcao = remove_acento(mov['direcao'] or '')
+            valor_op = Decimal(mov['total']) if mov['total'] is not None else Decimal('0.00')
+            if tipo == "compra":
+                saldo += valor_op
+            elif tipo == "venda":
+                saldo -= valor_op
+            elif tipo == "transacao":
+                if direcao == "entrada":
+                    saldo += valor_op
+                elif direcao == "saida":
+                    saldo -= valor_op
+    return saldo
 
 
 # Após qualquer alteração/inclusão/exclusão:

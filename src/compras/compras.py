@@ -26,7 +26,7 @@ from .compras_db import (
     obter_dados_bancarios_para_campo_copiavel, atualizar_conta_bancaria_da_compra,
     atualizar_status_compra as atualizar_status_compra_db, obter_totais_produtos_compras,
     obter_valores_finais_compras, contar_compras, existe_transacao_saida_para_compra,
-    excluir_transacao_saida_para_compra
+    excluir_transacao_saida_para_compra, obter_saldo_antes_compra
 )
 from .compras_logic import (
     obter_total_produtos_lista, calcular_valor_com_abatimento_adiantamento, formatar_moeda
@@ -646,7 +646,11 @@ class ComprasUI(QWidget):
             tabela.blockSignals(False)
 
     def on_status_item_changed(self, item):
-        from .compras_dialogs import ConfirmTransacaoDialog
+        from .compras_dialogs import (
+            ConfirmarExclusaoPagamentoDialog,
+            PagamentoMovimentacaoDialog,
+        )
+        from movimentacoes_db import obter_saldo_anterior
         if item.column() == 5:
             row = item.row()
             tabela = item.tableWidget()
@@ -663,28 +667,36 @@ class ComprasUI(QWidget):
 
             if considerar_no_saldo:
                 if novo_status == "Concluída" and status_anterior != "Concluída":
-                    # Pergunta sobre lançar transação
-                    dialog = ConfirmTransacaoDialog(
-                        "Deseja lançar uma transação de saída no mesmo valor desta compra concluída?",
-                        self
-                    )
-                    if dialog.exec() and dialog.resultado:
-                        if not existe_transacao_saida_para_compra(compra_id):
-                            self.lancar_transacao_saida_para_compra(compra_id)
+                    # Pergunta sobre lançar pagamento (usando PagamentoMovimentacaoDialog)
+                    if not existe_transacao_saida_para_compra(compra_id):
+                        # Captura saldo anterior para exibir na dialog
+                        saldo_anterior = 0.0
+                        try:
+                            fornecedor_id = compra['fornecedor_id']
+                            data_compra = compra['data_compra']
+                            saldo_anterior = obter_saldo_antes_compra(fornecedor_id, compra_id, lambda x: x.lower())
+                        except Exception:
+                            pass
+                        valor_movimentacao = float(obter_valor_com_abatimento_adiantamento(compra_id))
+                        dialog = PagamentoMovimentacaoDialog(valor_movimentacao, float(saldo_anterior), self)
+                        if dialog.exec() and getattr(dialog, "resultado", None) == "sim":
+                            valor_pagamento = getattr(dialog, "valor_lancamento", valor_movimentacao)
+                            self.lancar_transacao_saida_para_compra(compra_id, valor_pagamento)
                         else:
-                            QMessageBox.information(self, "Atenção",
-                                                    "Já existe uma transação de saída para esta compra!")
+                            pass
+                    else:
+                        QMessageBox.information(self, "Atenção",
+                                                "Já existe uma transação de pagamento para esta compra!")
                 elif status_anterior == "Concluída" and novo_status != "Concluída":
-                    dialog = ConfirmTransacaoDialog(
-                        "Deseja excluir a transação de saída correspondente lançada na conclusão desta compra?",
-                        self
-                    )
-                    if dialog.exec() and dialog.resultado:
-                        excluir_transacao_saida_para_compra(compra_id)
+                    # Pergunta sobre exclusão do pagamento (usando ConfirmarExclusaoPagamentoDialog)
+                    if existe_transacao_saida_para_compra(compra_id):
+                        dialog = ConfirmarExclusaoPagamentoDialog(self)
+                        if dialog.exec() and getattr(dialog, "resultado", None):
+                            excluir_transacao_saida_para_compra(compra_id)
 
             self.atualizar_tabelas()
 
-    def lancar_transacao_saida_para_compra(self, compra_id):
+    def lancar_transacao_saida_para_compra(self, compra_id, valor_pagamento=None):
         from movimentacoes_db import inserir_movimentacao, inserir_item_compra
         compra, itens = obter_detalhes_compra(compra_id)
         fornecedor_id = compra['fornecedor_id']
@@ -692,7 +704,8 @@ class ComprasUI(QWidget):
         descricao = obter_dados_bancarios_para_campo_copiavel(compra_id) + f" - CompraID:{compra_id}"
 
         # PATCH: Usa função que considera adiantamento e abatimento corretamente!
-        valor_final = obter_valor_com_abatimento_adiantamento(compra_id)
+        valor_final = float(obter_valor_com_abatimento_adiantamento(compra_id))
+        valor_para_lancar = valor_pagamento if valor_pagamento is not None else valor_final
 
         mov_id = inserir_movimentacao(
             fornecedor_id=fornecedor_id,
@@ -701,25 +714,11 @@ class ComprasUI(QWidget):
             direcao="Saída",
             descricao=descricao,
             valor_abatimento=Decimal("0.00"),
-            valor_operacao=valor_final,
+            valor_operacao=Decimal(str(valor_para_lancar)),
             status="Concluída",
             origem="movimentacao",
             considerar_no_saldo=True
         )
-
-        # Insere os itens normalmente
-        itens_mov = [
-            {
-                "produto_id": item["produto_id"],
-                "quantidade": item["quantidade"],
-                "preco_unitario": item["preco_unitario"]
-            }
-            for item in itens
-        ]
-        if itens_mov:
-            inserir_item_compra(mov_id, itens_mov)
-
-        # Não precisa inserir item virtual; exiba adiantamento/abatimento na UI usando obter_itens_e_lancamentos_da_compra
 
         return mov_id
 
