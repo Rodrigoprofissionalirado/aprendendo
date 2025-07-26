@@ -62,11 +62,7 @@ def obter_saldo_total(fornecedor_id, remove_acento):
             row = cursor.fetchone()
             valor_adiantamento = Decimal(row['adiantamento']) if row and row['adiantamento'] else Decimal('0.00')
 
-            # Cálculo depende da origem
-            if origem == "movimentacao":
-                valor_real = valor_op
-            else:  # origem == "compras"
-                valor_real = valor_op - valor_abatimento + valor_adiantamento
+            valor_real = valor_op - valor_abatimento + valor_adiantamento
 
             if tipo == "compra":
                 saldo += valor_real
@@ -164,7 +160,8 @@ def buscar_fornecedor_id_por_numero_balanca(numero_balanca):
 def atualizar_movimentacao(compra_id, data, tipo, direcao, descricao, valor_abatimento,
     valor_operacao, tipo_lancamento,# "abatimento" ou "adiantamento"
     valor_lancamento,  # valor do campo input (decimal, sempre positivo)
-    origem='movimentacao', considerar_no_saldo=True, fornecedor_id=None
+    origem='movimentacao', considerar_no_saldo=True, fornecedor_id=None,
+    dados_bancarios_id=None
 ):
     """
     Atualiza a movimentação e faz a lógica correta de abatimento/adiantamento:
@@ -185,11 +182,13 @@ def atualizar_movimentacao(compra_id, data, tipo, direcao, descricao, valor_abat
                 valor_abatimento=%s,
                 total=%s,
                 origem=%s,
-                considerar_no_saldo_movimentacao=%s
+                considerar_no_saldo_movimentacao=%s,
+                dados_bancarios_id=%s
             WHERE id=%s
             """,
             (data, tipo, direcao, descricao,
-             valor_abatimento, valor_operacao, origem, considerar_no_saldo, compra_id)
+             valor_abatimento, valor_operacao, origem, considerar_no_saldo,
+             dados_bancarios_id, compra_id)
         )
 
         # Sempre limpa os itens antigos antes de adicionar os novos
@@ -309,3 +308,12 @@ def obter_saldo_anterior(fornecedor_id, data_de, remove_acento):
                     saldo -= valor_op
 
     return saldo
+
+def get_conta_padrao_id(fornecedor_id):
+    from compras.compras_db import listar_contas_do_fornecedor
+    contas = listar_contas_do_fornecedor(fornecedor_id)
+    for conta in contas:
+        if conta.get('padrao', 0) == 1:
+            return conta['id']
+    # Se não achar nenhuma padrão, retorna None
+    return None

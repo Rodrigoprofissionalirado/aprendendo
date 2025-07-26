@@ -56,7 +56,8 @@ from movimentacoes_db import (
     inserir_item_compra,
     buscar_fornecedor_id_por_numero_balanca,
     contar_movimentacoes,
-    obter_saldo_anterior
+    obter_saldo_anterior,
+    get_conta_padrao_id
 )
 
 def decimal_para_str_brasil(valor, locale=None):
@@ -1324,13 +1325,13 @@ class MovimentacaoTabUI(QWidget):
         if tipo_normalizado == "transacao":
             try:
                 valor_operacao = Decimal(self.input_valor_operacao.text().replace(",", "."))
-                # PATCH: grava conta bancária selecionada ao criar/editar transação
+                conta_padrao_id = get_conta_padrao_id(self.fornecedor['id'])
                 compra_id = inserir_movimentacao(
                     self.fornecedor['id'], data, tipo, direcao, descricao,
                     valor_abatimento, valor_operacao,
                     tipo_lancamento=None, valor_lancamento=None,
                     status='Criada', origem='movimentacao', considerar_no_saldo=True,
-                    dados_bancarios_id=self.dados_bancarios_id_selecionada
+                    dados_bancarios_id=conta_padrao_id
                 )
                 QMessageBox.information(self, "Sucesso", "Transação cadastrada com sucesso.")
             except Exception as e:
