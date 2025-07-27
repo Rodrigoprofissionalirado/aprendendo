@@ -79,11 +79,12 @@ def obter_saldo_total(fornecedor_id, remove_acento):
 def obter_saldos_acumulados(fornecedor_id, data_de, data_ate, remove_acento):
     with get_cursor() as cursor:
         cursor.execute("""
-                       SELECT c.id, c.data_compra, c.tipo, c.direcao, c.total
-                       FROM compras c
-                       WHERE c.fornecedor_id = %s
-                       ORDER BY c.data_compra, c.id
-                       """, (fornecedor_id,))
+            SELECT c.id, c.data_compra, c.tipo, c.direcao, c.total, c.valor_abatimento
+            FROM compras c
+            WHERE c.fornecedor_id = %s
+              AND c.considerar_no_saldo_movimentacao = TRUE
+            ORDER BY c.data_compra, c.id
+        """, (fornecedor_id,))
         todas_movs = cursor.fetchall()
 
     saldo = Decimal("0.00")
@@ -92,16 +93,43 @@ def obter_saldos_acumulados(fornecedor_id, data_de, data_ate, remove_acento):
         tipo = remove_acento(mov['tipo'] or '')
         direcao = remove_acento(mov['direcao'] or '')
         valor_op = Decimal(mov['total']) if mov['total'] is not None else Decimal('0.00')
+        valor_abatimento = Decimal(mov.get('valor_abatimento', 0)) if mov.get('valor_abatimento', None) else Decimal('0.00')
+
+        # Busca adiantamento vinculado à compra
+        with get_cursor() as cursor2:
+            cursor2.execute(
+                "SELECT COALESCE(SUM(valor),0) as adiantamento FROM debitos_fornecedores WHERE compra_id = %s AND tipo = 'inclusao'",
+                (mov['id'],)
+            )
+            row = cursor2.fetchone()
+            valor_adiantamento = Decimal(row['adiantamento']) if row and row['adiantamento'] else Decimal('0.00')
+
+        valor_real = valor_op - valor_abatimento + valor_adiantamento
+
         if tipo == "compra":
-            saldo += valor_op
+            saldo += valor_real
         elif tipo == "venda":
-            saldo -= valor_op
+            saldo -= valor_real
         elif tipo == "transacao":
             if direcao == "entrada":
-                saldo += valor_op
+                saldo += valor_real
             elif direcao == "saida":
-                saldo -= valor_op
+                saldo -= valor_real
         saldo_por_id[mov['id']] = saldo
+
+    # Filtra apenas ids dentro do intervalo exportado
+    with get_cursor() as cursor:
+        cursor.execute("""
+            SELECT c.id
+            FROM compras c
+            WHERE c.fornecedor_id = %s
+              AND c.considerar_no_saldo_movimentacao = TRUE
+              AND c.data_compra >= %s
+              AND c.data_compra <= %s
+            ORDER BY c.data_compra, c.id
+        """, (fornecedor_id, data_de, data_ate))
+        exportadas = [row['id'] for row in cursor.fetchall()]
+    return {mid: saldo_por_id[mid] for mid in exportadas}
 
     # Filtra apenas ids dentro do intervalo exportado
     with get_cursor() as cursor:
@@ -121,17 +149,6 @@ def listar_itens_movimentacao(compra_id):
     if not compra_id:
         return {}
     return listar_itens_compra([compra_id])
-
-def obter_abatimento_automatico(compra_id):
-    with get_cursor() as cursor:
-        cursor.execute("""
-            SELECT total
-            FROM compras
-            WHERE tipo = 'transação'
-              AND direcao = 'entrada'
-              AND descricao LIKE %s
-        """, (f"Abatimento automático referente à movimentação {compra_id}",))
-        return cursor.fetchone()
 
 def obter_compra_por_id(compra_id):
     with get_cursor() as cursor:

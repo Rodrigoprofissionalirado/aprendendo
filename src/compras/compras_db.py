@@ -603,6 +603,7 @@ def obter_transacao_saida_para_compra(compra_id):
         return cursor.fetchone()
 
 def obter_saldo_antes_compra(fornecedor_id, compra_id, remove_acento):
+    from decimal import Decimal
     with get_cursor() as cursor:
         cursor.execute("SELECT id, data_compra FROM compras WHERE id = %s", (compra_id,))
         row = cursor.fetchone()
@@ -614,7 +615,7 @@ def obter_saldo_antes_compra(fornecedor_id, compra_id, remove_acento):
     saldo = Decimal("0.00")
     with get_cursor() as cursor:
         cursor.execute("""
-            SELECT id, tipo, direcao, total, data_compra
+            SELECT id, tipo, direcao, total, valor_abatimento, origem
             FROM compras
             WHERE fornecedor_id = %s
               AND considerar_no_saldo_movimentacao = TRUE
@@ -625,16 +626,27 @@ def obter_saldo_antes_compra(fornecedor_id, compra_id, remove_acento):
         for mov in compras:
             tipo = remove_acento(mov['tipo'] or '')
             direcao = remove_acento(mov['direcao'] or '')
+            origem = remove_acento(mov.get('origem', '') or '')
             valor_op = Decimal(mov['total']) if mov['total'] is not None else Decimal('0.00')
+            valor_abatimento = Decimal(mov['valor_abatimento']) if mov['valor_abatimento'] else Decimal('0.00')
+            # Busca adiantamento vinculado à compra
+            cursor.execute(
+                "SELECT COALESCE(SUM(valor),0) as adiantamento FROM debitos_fornecedores WHERE compra_id = %s AND tipo = 'inclusao'",
+                (mov['id'],)
+            )
+            row = cursor.fetchone()
+            valor_adiantamento = Decimal(row['adiantamento']) if row and row['adiantamento'] else Decimal('0.00')
+            valor_real = valor_op - valor_abatimento + valor_adiantamento
+
             if tipo == "compra":
-                saldo += valor_op
+                saldo += valor_real
             elif tipo == "venda":
-                saldo -= valor_op
+                saldo -= valor_real
             elif tipo == "transacao":
                 if direcao == "entrada":
-                    saldo += valor_op
+                    saldo += valor_real
                 elif direcao == "saida":
-                    saldo -= valor_op
+                    saldo -= valor_real
     return saldo
 
 

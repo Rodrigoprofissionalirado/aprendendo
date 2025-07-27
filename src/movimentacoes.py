@@ -48,7 +48,6 @@ from movimentacoes_db import (
     obter_saldo_total,
     obter_saldos_acumulados,
     listar_itens_movimentacao,
-    obter_abatimento_automatico,
     obter_compra_por_id,
     excluir_movimentacao,
     atualizar_movimentacao,

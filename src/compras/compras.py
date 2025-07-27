@@ -697,7 +697,7 @@ class ComprasUI(QWidget):
             self.atualizar_tabelas()
 
     def lancar_transacao_saida_para_compra(self, compra_id, valor_pagamento=None):
-        from movimentacoes_db import inserir_movimentacao, inserir_item_compra
+        from movimentacoes_db import inserir_movimentacao, inserir_item_compra, get_conta_padrao_id
         compra, itens = obter_detalhes_compra(compra_id)
         fornecedor_id = compra['fornecedor_id']
         data_compra = compra['data_compra']
@@ -707,6 +707,7 @@ class ComprasUI(QWidget):
         valor_final = float(obter_valor_com_abatimento_adiantamento(compra_id))
         valor_para_lancar = valor_pagamento if valor_pagamento is not None else valor_final
 
+        conta_padrao_id = get_conta_padrao_id(fornecedor_id)
         mov_id = inserir_movimentacao(
             fornecedor_id=fornecedor_id,
             data=data_compra,
@@ -717,7 +718,8 @@ class ComprasUI(QWidget):
             valor_operacao=Decimal(str(valor_para_lancar)),
             status="Concluída",
             origem="movimentacao",
-            considerar_no_saldo=True
+            considerar_no_saldo=True,
+            dados_bancarios_id=conta_padrao_id
         )
 
         return mov_id
