@@ -307,8 +307,10 @@ def remover_lancamentos_antigos(compra_id):
 def obter_dados_para_editar_compra(compra_id):
     with get_cursor() as cursor:
         cursor.execute("""
-            SELECT fornecedor_id, data_compra, valor_abatimento, status
-            FROM compras WHERE id = %s
+            SELECT c.fornecedor_id, c.data_compra, c.valor_abatimento, c.status, c.descricao, f.nome as fornecedor
+            FROM compras c
+            JOIN fornecedores f ON c.fornecedor_id = f.id
+            WHERE c.id = %s
         """, (compra_id,))
         compra = cursor.fetchone()
 
