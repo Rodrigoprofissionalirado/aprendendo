@@ -26,7 +26,7 @@ from .compras_db import (
     obter_dados_bancarios_para_campo_copiavel, atualizar_conta_bancaria_da_compra,
     atualizar_status_compra as atualizar_status_compra_db, obter_totais_produtos_compras,
     obter_valores_finais_compras, contar_compras, existe_transacao_saida_para_compra,
-    excluir_transacao_saida_para_compra, obter_saldo_antes_compra
+    excluir_transacao_saida_para_compra, obter_saldo_antes_compra, atualizar_origem_compra
 )
 from .compras_logic import (
     obter_total_produtos_lista, calcular_valor_com_abatimento_adiantamento, formatar_moeda
@@ -34,7 +34,7 @@ from .compras_logic import (
 from .compras_export import (
     exportar_compra_pdf, exportar_compra_jpg
 )
-from .compras_dialogs import DiferencaCompraDialog
+from .compras_dialogs import DiferencaCompraDialog, ImportarAppDialog
 
 STATUS_LIST = [
     "Criada", "Emitindo nota", "Efetuando pagamento", "Finalizada", "Concluída"
@@ -338,7 +338,7 @@ class ComprasUI(QWidget):
         self.tabela_compras_app.setHorizontalHeaderLabels([
             "ID", "Fornecedor", "Data", "Total dos produtos (R$)", "Valor com abatimento/adiantamento", "Status"
         ])
-        self.tabela_compras_app.setEditTriggers(QTableWidget.DoubleClicked)
+        self.tabela_compras_app.setEditTriggers(QTableWidget.NoEditTriggers)
         self.tabela_compras_app.cellClicked.connect(
             lambda row, col: self.mostrar_itens_da_compra(row, col, tabela=self.tabela_compras_app))
         self.tabela_compras_app.setSelectionBehavior(QTableWidget.SelectRows)
@@ -1051,6 +1051,8 @@ class ComprasUI(QWidget):
                 status,
                 considerar_no_saldo_movimentacao=considerar_no_saldo
             )
+            # PATCH: se veio da importação do app, troca origem para "compras"
+            atualizar_origem_compra(self.compra_edit_id, "compras", origem_esperada="app")
             QMessageBox.information(self, "Sucesso", "Compra editada com sucesso.")
 
         # Limpa e atualiza UI
@@ -1065,6 +1067,39 @@ class ComprasUI(QWidget):
 
     @requer_permissao(['admin', 'gerente', 'operador'])
     def editar_compra_finalizada(self):
+        aba_idx = self.tabs.currentIndex()
+        if aba_idx == 1:  # App
+            row = self.tabela_compras_app.currentRow()
+            if row < 0:
+                QMessageBox.warning(self, "Importar", "Selecione uma compra do App para importar.")
+                return
+            compra_id = int(self.tabela_compras_app.item(row, 0).text())
+            compra, itens, _ = obter_dados_para_editar_compra(compra_id)
+            cliente = compra.get('fornecedor')  # ou campo correto
+            descricao = compra.get('descricao', '')
+
+            categorias = obter_categorias_do_fornecedor(compra['fornecedor_id'])
+
+            def get_precos_func(cat_id):
+                # Busca preços ajustados para cada produto nesta categoria
+                precos = {}
+                for item in itens:
+                    ajuste = obter_ajuste_fixo(item['produto_id'], cat_id)
+                    produto = obter_produto(item['produto_id'])
+                    precos[item['produto_id']] = float(produto['preco_base']) + float(ajuste)
+                return precos
+
+            dialog = ImportarAppDialog(cliente, descricao, itens, categorias, get_precos_func, self)
+            if dialog.exec() and dialog.resultado:
+                # Prosseguir: abrir edição normal, preenchendo campos com dialog.novos_itens e categoria
+                self.itens_compra = dialog.novos_itens
+                # Setar categoria temporária, fornecedor, etc, conforme necessário
+                # Seta self.compra_edit_id = compra_id
+                # Troca origem para "compras" ao finalizar
+                self.compra_edit_id = compra_id
+                # Atualize campos da UI conforme necessário
+                # Ao salvar, chame função que atualiza origem para "compras"
+            return  # Interrompe o fluxo normal aqui
         linha = self.tabela_ativa().currentRow()
         if linha < 0:
             QMessageBox.information(self, "Editar Compra", "Selecione uma compra para editar.")

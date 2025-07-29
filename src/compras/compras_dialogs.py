@@ -1,4 +1,5 @@
-from PySide6.QtWidgets import QDialog, QVBoxLayout, QLabel, QLineEdit, QHBoxLayout, QPushButton, QDialogButtonBox, QWidget
+from PySide6.QtWidgets import (QDialog, QVBoxLayout, QLabel, QLineEdit, QHBoxLayout, QPushButton, QDialogButtonBox, QWidget,
+    QTableWidget, QTableWidgetItem, QComboBox)
 from PySide6.QtCore import Qt
 from decimal import Decimal, InvalidOperation
 
@@ -216,4 +217,70 @@ class ConfirmarExclusaoPagamentoDialog(QDialog):
 
     def on_nao(self):
         self.resultado = False
+        self.accept()
+
+class ImportarAppDialog(QDialog):
+    def __init__(self, cliente, descricao, itens, categorias, get_precos_func, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Importar compra do App")
+        self.resultado = False
+        self.categoria_id = None
+        self.novos_itens = []
+
+        layout = QVBoxLayout(self)
+
+        layout.addWidget(QLabel(f"Cliente: {cliente}"))
+        layout.addWidget(QLabel(f"Descrição: {descricao}"))
+
+        # Combo de categoria
+        layout.addWidget(QLabel("Escolha a categoria para esta compra:"))
+        self.combo_categoria = QComboBox()
+        for c in categorias:
+            self.combo_categoria.addItem(c['nome'], c['id'])
+        layout.addWidget(self.combo_categoria)
+
+        # Tabela de itens
+        self.table = QTableWidget()
+        self.table.setColumnCount(3)
+        self.table.setHorizontalHeaderLabels(["Produto", "Quantidade", "Preço (ajustado)"])
+        layout.addWidget(self.table)
+        self.itens = itens
+        self.get_precos_func = get_precos_func
+
+        self.combo_categoria.currentIndexChanged.connect(self.atualizar_precos)
+        self.atualizar_precos()
+
+        # Botões
+        btns = QHBoxLayout()
+        btn_prosseguir = QPushButton("Prosseguir")
+        btn_cancelar = QPushButton("Cancelar")
+        btn_prosseguir.clicked.connect(self.prosseguir)
+        btn_cancelar.clicked.connect(self.reject)
+        btns.addWidget(btn_prosseguir)
+        btns.addWidget(btn_cancelar)
+        layout.addLayout(btns)
+
+    def atualizar_precos(self):
+        cat_id = self.combo_categoria.currentData()
+        precos = self.get_precos_func(cat_id)
+        self.table.setRowCount(len(self.itens))
+        self.novos_itens = []
+        for i, item in enumerate(self.itens):
+            nome = item["produto_nome"]
+            qtd = item["quantidade"]
+            preco = precos.get(item["produto_id"], 0)
+            self.table.setItem(i, 0, QTableWidgetItem(nome))
+            self.table.setItem(i, 1, QTableWidgetItem(str(qtd)))
+            self.table.setItem(i, 2, QTableWidgetItem(f"{preco:.2f}"))
+            self.novos_itens.append({
+                "produto_id": item["produto_id"],
+                "nome": nome,
+                "quantidade": qtd,
+                "preco": preco,
+                "total": preco * qtd
+            })
+
+    def prosseguir(self):
+        self.resultado = True
+        self.categoria_id = self.combo_categoria.currentData()
         self.accept()
