@@ -63,11 +63,11 @@ class ConfirmTransacaoDialog(QDialog):
 
 
 class PagamentoMovimentacaoDialog(QDialog):
-    def __init__(self, valor_movimentacao, saldo_anterior, parent=None):
+    def __init__(self, valor_movimentacao, saldo_atual, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Pagamento referente à movimentação")
         self.valor_movimentacao = valor_movimentacao
-        self.saldo_anterior = saldo_anterior
+        self.saldo_atual = saldo_atual
         layout = QVBoxLayout(self)
         self.resultado = None
 
@@ -87,7 +87,7 @@ class PagamentoMovimentacaoDialog(QDialog):
         campos_layout = QVBoxLayout(self.campos_widget)
         self.campos_widget.setVisible(False)
         campos_layout.addWidget(QLabel(f"Valor da movimentação: R$ {valor_movimentacao:.2f}"))
-        campos_layout.addWidget(QLabel(f"Saldo anterior: R$ {saldo_anterior:.2f}"))
+        campos_layout.addWidget(QLabel(f"Saldo atual: R$ {saldo_atual:.2f}"))
         desconto_layout = QHBoxLayout()
         desconto_layout.addWidget(QLabel("Desconto: R$"))
         self.input_desconto = QLineEdit("")
@@ -95,6 +95,9 @@ class PagamentoMovimentacaoDialog(QDialog):
         campos_layout.addLayout(desconto_layout)
         self.label_valor_final = QLabel(f"Valor da transação: R$ {valor_movimentacao:.2f}")
         campos_layout.addWidget(self.label_valor_final)
+        # NOVO: saldo projetado após transação
+        self.label_saldo_projetado = QLabel(self._saldo_projetado_text(valor_movimentacao))
+        campos_layout.addWidget(self.label_saldo_projetado)
         self.btn_confirmar = QPushButton("Lançar pagamento")
         self.btn_confirmar.clicked.connect(self.confirmar)
         campos_layout.addWidget(self.btn_confirmar)
@@ -111,6 +114,10 @@ class PagamentoMovimentacaoDialog(QDialog):
         self.resultado = "nao"
         self.reject()
 
+    def _saldo_projetado_text(self, valor_final):
+        saldo_proj = self.saldo_atual - valor_final
+        return f"Saldo após pagamento: R$ {saldo_proj:.2f}"
+
     def atualizar_valor_final(self):
         try:
             desconto = float(self.input_desconto.text().replace(",", "."))
@@ -119,6 +126,8 @@ class PagamentoMovimentacaoDialog(QDialog):
         valor_final = max(0.0, self.valor_movimentacao - desconto)
         self.label_valor_final.setText(f"Valor da transação: R$ {valor_final:.2f}")
         self.valor_lancamento = valor_final
+        # Atualiza saldo projetado
+        self.label_saldo_projetado.setText(self._saldo_projetado_text(valor_final))
 
     def confirmar(self):
         self.resultado = "sim"

@@ -712,7 +712,6 @@ class ComprasUI(QWidget):
             ConfirmarExclusaoPagamentoDialog,
             PagamentoMovimentacaoDialog,
         )
-        from movimentacoes_db import obter_saldo_anterior
         if item.column() == 5:
             row = item.row()
             tabela = item.tableWidget()
@@ -731,21 +730,18 @@ class ComprasUI(QWidget):
                 if novo_status == "Concluída" and status_anterior != "Concluída":
                     # Pergunta sobre lançar pagamento (usando PagamentoMovimentacaoDialog)
                     if not existe_transacao_saida_para_compra(compra_id):
-                        # Captura saldo anterior para exibir na dialog
-                        saldo_anterior = 0.0
                         try:
                             fornecedor_id = compra['fornecedor_id']
-                            data_compra = compra['data_compra']
-                            saldo_anterior = obter_saldo_antes_compra(fornecedor_id, compra_id, lambda x: x.lower())
+                            valor_movimentacao = float(obter_valor_com_abatimento_adiantamento(compra_id))
+                            saldo_atual = float(obter_saldo_total(fornecedor_id, lambda x: x.lower()))
                         except Exception:
-                            pass
-                        valor_movimentacao = float(obter_valor_com_abatimento_adiantamento(compra_id))
-                        dialog = PagamentoMovimentacaoDialog(valor_movimentacao, float(saldo_anterior), self)
+                            saldo_atual = 0.0
+                            valor_movimentacao = 0.0
+                        from .compras_dialogs import PagamentoMovimentacaoDialog
+                        dialog = PagamentoMovimentacaoDialog(valor_movimentacao, saldo_atual, self)
                         if dialog.exec() and getattr(dialog, "resultado", None) == "sim":
                             valor_pagamento = getattr(dialog, "valor_lancamento", valor_movimentacao)
                             self.lancar_transacao_saida_para_compra(compra_id, valor_pagamento)
-                        else:
-                            pass
                     else:
                         QMessageBox.information(self, "Atenção",
                                                 "Já existe uma transação de pagamento para esta compra!")
