@@ -34,7 +34,7 @@ from .compras_logic import (
 from .compras_export import (
     exportar_compra_pdf, exportar_compra_jpg
 )
-from .compras_dialogs import DiferencaCompraDialog, ImportarAppDialog
+from .compras_dialogs import ImportarAppDialog
 
 STATUS_LIST = [
     "Criada", "Emitindo nota", "Efetuando pagamento", "Finalizada", "Concluída"
@@ -427,12 +427,6 @@ class ComprasUI(QWidget):
         self.combo_produto.setCurrentIndex(-1)
         self.combo_produto.blockSignals(False)
         self.atualizar_tabelas()
-
-    def mostrar_dialog_diferenca(self, diferenca):
-        dialog = DiferencaCompraDialog(diferenca, self)
-        if dialog.exec() == QDialog.Accepted:
-            return dialog.resultado
-        return None
 
     def selecionar_categoria_do_fornecedor(self, fornecedor_id):
         categoria_id = obter_primeira_categoria_do_fornecedor(fornecedor_id)
@@ -979,54 +973,6 @@ class ComprasUI(QWidget):
         valor_inclusao = valor_lancamento if tipo_lancamento == "adiantamento" else Decimal('0.00')
         considerar_no_saldo = self.checkbox_considerar_no_saldo.isChecked()
 
-        # PATCH INICIO: Verifica diferença de produtos antes de salvar edição
-        if self.compra_edit_id is not None:
-            compra_antiga, itens_antigos, _ = obter_dados_para_editar_compra(self.compra_edit_id)
-            total_antigo = sum(float(item['total']) for item in itens_antigos)
-            total_novo = float(obter_total_produtos_lista(self.itens_compra))
-
-            diferenca = total_novo - total_antigo
-            # Só mostra o popup se mudou o total dos produtos (não apenas abate/adiantamento)
-            if abs(diferenca) > 0.01:
-                resultado = self.mostrar_dialog_diferenca(diferenca)
-                if resultado == "converter_abate":
-                    valor_atual = Decimal(self.input_valor_lancamento.text().replace(',',
-                                                                                     '.')) if self.input_valor_lancamento.text() else Decimal(
-                        '0.00')
-                    tipo_atual = self.combo_tipo_lancamento.currentData()
-                    tipo_diferenca = "adiantamento" if diferenca < 0 else "abatimento"
-                    valor_diferenca = Decimal(abs(diferenca))
-
-                    if tipo_atual == tipo_diferenca:
-                        # Mesmos tipos: soma
-                        novo_valor = valor_atual + valor_diferenca
-                        idx_tipo = 1 if tipo_diferenca == "adiantamento" else 0
-                        self.combo_tipo_lancamento.setCurrentIndex(idx_tipo)
-                        self.input_valor_lancamento.setText(str(novo_valor))
-                    else:
-                        saldo = valor_atual - valor_diferenca
-                        if saldo > 0:
-                            # Sinal positivo: abatimento
-                            self.input_valor_lancamento.setText(str(abs(saldo)))
-                            self.combo_tipo_lancamento.setCurrentIndex(0)  # 0 = abatimento
-                        elif saldo < 0:
-                            # Sinal negativo: adiantamento
-                            self.input_valor_lancamento.setText(str(abs(saldo)))
-                            self.combo_tipo_lancamento.setCurrentIndex(1)  # 1 = adiantamento
-                        else:
-                            self.input_valor_lancamento.setText("0.00")
-                            # Você pode manter o tipo anterior ou escolher um padrão aqui
-
-                    # Recalcula as variáveis para salvar corretamente
-                    valor_lancamento = Decimal(self.input_valor_lancamento.text().replace(',',
-                                                                                          '.')) if self.input_valor_lancamento.text() else Decimal(
-                        '0.00')
-                    tipo_lancamento = self.combo_tipo_lancamento.currentData()
-                    valor_abatimento = valor_lancamento if tipo_lancamento == "abatimento" else Decimal('0.00')
-                    valor_inclusao = valor_lancamento if tipo_lancamento == "adiantamento" else Decimal('0.00')
-                # Se resultado for "somente_alterar", segue normalmente
-        # PATCH FIM
-
         if self.compra_edit_id is None:
             compra_id = adicionar_compra(
                 fornecedor_id, data_compra, valor_abatimento, self.itens_compra, status,
@@ -1097,7 +1043,41 @@ class ComprasUI(QWidget):
                 # Seta self.compra_edit_id = compra_id
                 # Troca origem para "compras" ao finalizar
                 self.compra_edit_id = compra_id
-                # Atualize campos da UI conforme necessário
+                idx_cat = self.combo_categoria_temporaria.findData(dialog.categoria_id)
+                if idx_cat != -1:
+                    self.combo_categoria_temporaria.setCurrentIndex(idx_cat)
+                # Preenche fornecedor
+                idx_forn = self.combo_fornecedor.findData(compra['fornecedor_id'])
+                if idx_forn != -1:
+                    self.combo_fornecedor.setCurrentIndex(idx_forn)
+                # Preenche data
+                if 'data_compra' in compra:
+                    try:
+                        from PySide6.QtCore import QDate
+                        if isinstance(compra['data_compra'], QDate):
+                            self.input_data.setDate(compra['data_compra'])
+                        else:
+                            self.input_data.setDate(QDate.fromString(str(compra['data_compra']), "yyyy-MM-dd"))
+                    except Exception:
+                        self.input_data.setDate(QDate.currentDate())
+                # Preenche valor de lançamento
+                valor_adiantamento = 0
+                if hasattr(dialog, "categoria_id"):
+                    # Se já buscou adiantamento, use
+                    valor_adiantamento = dialog.novos_itens[0].get('adiantamento', 0) if dialog.novos_itens else 0
+                if valor_adiantamento > 0:
+                    self.combo_tipo_lancamento.setCurrentIndex(1)
+                    self.input_valor_lancamento.setText(str(valor_adiantamento))
+                else:
+                    self.combo_tipo_lancamento.setCurrentIndex(0)
+                    self.input_valor_lancamento.setText(str(compra.get('valor_abatimento', 0)))
+                # Preenche status
+                idx_status = self.combo_status.findText(compra['status'])
+                self.combo_status.setCurrentIndex(idx_status if idx_status >= 0 else 0)
+                # Considerar no saldo
+                self.checkbox_considerar_no_saldo.setChecked(compra.get('considerar_no_saldo_movimentacao', True))
+                # Atualiza tabela de itens
+                self.atualizar_tabela_itens_adicionados()
                 # Ao salvar, chame função que atualiza origem para "compras"
             return  # Interrompe o fluxo normal aqui
         linha = self.tabela_ativa().currentRow()
