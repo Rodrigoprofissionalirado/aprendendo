@@ -130,14 +130,8 @@ class ComprasUI(QWidget):
         )
 
         layout_principal.addLayout(layout_filtros)
-        #layout_principal.addStretch()  # espaço flexível
 
-        # ---------------------- Fim dos filtros -----------------
-
-        self.tabs = QTabWidget()
-        layout_principal.addWidget(self.tabs)
-
-        # ===================== ENTRADA DE DADOS - ESQUERDA =====================
+        # ===================== Painel ESQUERDA =====================
         widget_esquerda = QWidget()
         layout_entrada = QVBoxLayout(widget_esquerda)
         layout_dados = QGridLayout()
@@ -309,7 +303,7 @@ class ComprasUI(QWidget):
         self.btn_exportar_jpg.clicked.connect(self.exportar_compra_jpg)
         layout_direita.addWidget(self.btn_exportar_jpg)
 
-        # ----- TABS NO PAINEL CENTRAL -----
+        # ===================== Painel CENTRAL (as abas) =====================
         self.tabs = QTabWidget()
 
         # --- Aba Em Aberto ---
@@ -389,12 +383,17 @@ class ComprasUI(QWidget):
         self.tabs.addTab(self.tab_app, "App (0)")
         self.tabs.addTab(self.tab_concluidas, "Concluídas")
 
-        # ----- SPLITTER PRINCIPAL -----
+        self.tab_em_aberto.setLayout(layout_aberto)
+        self.tab_app.setLayout(layout_app)
+        self.tab_concluidas.setLayout(layout_concluidas)
+
+        # ============== Splitter principal: esquerda, central (abas), direita ==============
         splitter = QSplitter(Qt.Horizontal)
         splitter.addWidget(widget_esquerda)
         splitter.addWidget(self.tabs)
         splitter.addWidget(widget_direita)
         splitter.setSizes([320, 800, 320])
+
         layout_principal.addWidget(splitter)
         self.setLayout(layout_principal)
 
