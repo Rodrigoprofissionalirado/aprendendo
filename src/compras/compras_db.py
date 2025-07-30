@@ -99,8 +99,8 @@ def adicionar_compra(
         # --- Usando executemany para inserir todos os itens de uma vez ---
         if itens_compra:
             cursor.executemany(
-                "INSERT INTO itens_compra (compra_id, produto_id, quantidade, preco_unitario) VALUES (%s, %s, %s, %s)",
-                [(compra_id, item['produto_id'], item['quantidade'], item['preco']) for item in itens_compra]
+                "INSERT INTO itens_compra (compra_id, produto_id, quantidade, preco_unitario, numero_fardos) VALUES (%s, %s, %s, %s, %s)",
+                [(compra_id, item['produto_id'], item['quantidade'], item['preco'], item.get('numero_fardos')) for item in itens_compra]
             )
 
         cursor.execute("""
@@ -142,8 +142,8 @@ def atualizar_compra(
         # ---- Atualização em lote ----
         if itens_compra:
             cursor.executemany(
-                "INSERT INTO itens_compra (compra_id, produto_id, quantidade, preco_unitario) VALUES (%s, %s, %s, %s)",
-                [(compra_id, item['produto_id'], item['quantidade'], item['preco']) for item in itens_compra]
+                "INSERT INTO itens_compra (compra_id, produto_id, quantidade, preco_unitario, numero_fardos) VALUES (%s, %s, %s, %s, %s)",
+                [(compra_id, item['produto_id'], item['quantidade'], item['preco'], item.get('numero_fardos')) for item in itens_compra]
             )
         cursor.execute("""
             UPDATE compras
@@ -183,6 +183,7 @@ def obter_detalhes_compra(compra_id):
                    i.produto_id,
                    i.quantidade,
                    i.preco_unitario,
+                   i.numero_fardos,
                    (i.quantidade * i.preco_unitario) AS total
             FROM itens_compra i
                  JOIN produtos p ON i.produto_id = p.id
@@ -315,7 +316,7 @@ def obter_dados_para_editar_compra(compra_id):
         compra = cursor.fetchone()
 
         cursor.execute("""
-            SELECT p.nome AS produto_nome, i.produto_id, i.quantidade, i.preco_unitario, (i.quantidade * i.preco_unitario) AS total
+            SELECT p.nome AS produto_nome, i.produto_id, i.quantidade, i.preco_unitario, i.numero_fardos, (i.quantidade * i.preco_unitario) AS total
             FROM itens_compra i
             JOIN produtos p ON i.produto_id = p.id
             WHERE i.compra_id = %s
@@ -339,6 +340,7 @@ def obter_itens_e_lancamentos_da_compra(compra_id):
                    i.produto_id,
                    i.quantidade,
                    i.preco_unitario,
+                   i.numero_fardos,
                    (i.quantidade * i.preco_unitario) AS total
             FROM itens_compra i
             JOIN produtos p ON i.produto_id = p.id
@@ -476,7 +478,7 @@ def listar_itens_compra(compra_ids):
     with get_cursor() as cursor:
         format_ids = ','.join(['%s'] * len(compra_ids))
         cursor.execute(f"""
-            SELECT i.compra_id, p.nome AS produto_nome, i.produto_id, i.quantidade, i.preco_unitario, 
+            SELECT i.compra_id, p.nome AS produto_nome, i.produto_id, i.quantidade, i.preco_unitario, i.numero_fardos,
                    (i.quantidade * i.preco_unitario) AS total
             FROM itens_compra i
             JOIN produtos p ON i.produto_id = p.id
