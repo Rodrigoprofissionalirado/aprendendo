@@ -274,11 +274,6 @@ class ComprasUI(QWidget):
         self.btn_cancelar.clicked.connect(self.acao_cancelar)
         layout_entrada.addWidget(self.btn_cancelar)
 
-        # Botão para alterar status
-        self.btn_alterar_status = QPushButton("Alterar Status da Compra Selecionada")
-        self.btn_alterar_status.clicked.connect(self.alterar_status_compra)
-        layout_entrada.addWidget(self.btn_alterar_status)
-
         # ===================== Área direita =====================
         widget_direita = QWidget()
         layout_direita = QVBoxLayout(widget_direita)
