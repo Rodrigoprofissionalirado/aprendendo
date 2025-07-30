@@ -37,15 +37,25 @@ def exportar_compra_pdf(compra, itens, saldo, filename, marca_dagua_texto=""):
     c.setFont(fonte_padrao + "-Bold", 12)
     c.drawString(20 * mm, y, "Produtos")
     y -= 6 * mm
+
+    # Determinar se deve mostrar coluna "Nº Fardos"
+    mostrar_coluna_fardos = any(
+        item.get("numero_fardos") not in (None, "", 0) for item in itens
+    )
+
+    # CABEÇALHO
     c.setFont(fonte_padrao + "-Bold", 11)
-    c.drawString(20 * mm, y, "Produto")
-    c.drawString(90 * mm, y, "Qtd")
-    c.drawString(110 * mm, y, "Unitário")
-    c.drawString(140 * mm, y, "Total")
+    x_col = [20 * mm, 90 * mm, 110 * mm, 140 * mm]
+    col_labels = ["Produto", "Qtd", "Unitário", "Total"]
+    if mostrar_coluna_fardos:
+        x_col.append(170 * mm)
+        col_labels.append("Nº Fardos")
+    for idx, label in enumerate(col_labels):
+        c.drawString(x_col[idx], y, label)
 
     altura_cabecalho = 6 * mm
     y_linha_cabecalho = y - 2 * mm
-    c.line(20 * mm, y_linha_cabecalho, 190 * mm, y_linha_cabecalho)
+    c.line(20 * mm, y_linha_cabecalho, (190 if not mostrar_coluna_fardos else 190) * mm, y_linha_cabecalho)
 
     y -= 8 * mm
     altura_linha = 6 * mm
@@ -73,21 +83,26 @@ def exportar_compra_pdf(compra, itens, saldo, filename, marca_dagua_texto=""):
             c.showPage()
             y = height - 30 * mm
         c.setFont(fonte_padrao, 11)
-        c.drawString(20 * mm, y, limpar_numero_nome_produto(item['produto_nome']))
-        c.drawString(90 * mm, y, str(item['quantidade']))
-        c.drawString(110 * mm, y, f"R$ {item['preco_unitario']:.2f}")
-        c.drawString(140 * mm, y, f"R$ {item['total']:.2f}")
+        c.drawString(x_col[0], y, limpar_numero_nome_produto(item['produto_nome']))
+        c.drawString(x_col[1], y, str(item['quantidade']))
+        c.drawString(x_col[2], y, f"R$ {item['preco_unitario']:.2f}")
+        c.drawString(x_col[3], y, f"R$ {item['total']:.2f}")
+        if mostrar_coluna_fardos:
+            nfardos = item.get("numero_fardos")
+            c.drawString(x_col[4], y, str(nfardos) if nfardos not in (None, "", 0) else "")
         total += float(item['total'])
         y -= altura_linha
 
     if float(compra['valor_abatimento']) != 0:
         c.setFont(fonte_padrao + "-Oblique", 11)
-        c.drawString(20 * mm, y, "Abatimento/Adiantamento")
-        c.drawString(140 * mm, y, f"- R$ {compra['valor_abatimento']:.2f}")
+        c.drawString(x_col[0], y, "Abatimento/Adiantamento")
+        c.drawString(x_col[3], y, f"- R$ {compra['valor_abatimento']:.2f}")
+        if mostrar_coluna_fardos:
+            c.drawString(x_col[4], y, "")
         y -= altura_linha
 
     y_linha_final = y + altura_linha / 2
-    c.line(20 * mm, y_linha_final, 190 * mm, y_linha_final)
+    c.line(20 * mm, y_linha_final, (190 if not mostrar_coluna_fardos else 190) * mm, y_linha_final)
 
     y -= 10 * mm
     c.setFont(fonte_padrao + "-Bold", 12)
@@ -137,7 +152,15 @@ def adicionar_marca_dagua_pdf_area(c, texto, x_inicio, x_fim, y_topo, altura, ta
     c.restoreState()
 
 def exportar_compra_jpg(compra, itens, saldo, filename, marca_dagua_texto=""):
-    largura, altura = 800, 600 + (len(itens) + 1) * 25
+    # Determinar se deve mostrar coluna "Nº Fardos"
+    mostrar_coluna_fardos = any(
+        item.get("numero_fardos") not in (None, "", 0) for item in itens
+    )
+
+    base_largura = 800
+    largura_extra = 100 if mostrar_coluna_fardos else 0
+    largura = base_largura + largura_extra
+    altura = 600 + (len(itens) + 1) * 25
     imagem = Image.new("RGB", (largura, altura), "white")
     draw = ImageDraw.Draw(imagem)
 
@@ -158,36 +181,45 @@ def exportar_compra_jpg(compra, itens, saldo, filename, marca_dagua_texto=""):
     y += 40
 
     y_cabecalho = y
-    draw.text((30, y_cabecalho), "Produto", fill="black", font=fonte_bold)
-    draw.text((400, y_cabecalho), "Qtd", fill="black", font=fonte_bold)
-    draw.text((470, y_cabecalho), "Unit.", fill="black", font=fonte_bold)
-    draw.text((570, y_cabecalho), "Total", fill="black", font=fonte_bold)
+    x_col = [30, 400, 470, 570]
+    col_labels = ["Produto", "Qtd", "Unit.", "Total"]
+    if mostrar_coluna_fardos:
+        x_col.append(670)
+        col_labels.append("Nº Fardos")
+    for idx, label in enumerate(col_labels):
+        draw.text((x_col[idx], y_cabecalho), label, fill="black", font=fonte_bold)
 
     altura_cabecalho = 20
     y_linha_cabecalho = y_cabecalho + altura_cabecalho
-    draw.line((30, y_linha_cabecalho, 750, y_linha_cabecalho), fill="black", width=1)
+    draw.line((30, y_linha_cabecalho, (750 if not mostrar_coluna_fardos else 850), y_linha_cabecalho), fill="black", width=1)
 
     y = y_linha_cabecalho + 10
     altura_linha = 25
-    colunas_x = [30, 400, 470, 570, 750]
-
     total = 0
     for item in itens:
-        draw.text((30, y), limpar_numero_nome_produto(item['produto_nome']), fill="black", font=fonte_mono)
-        draw.text((400, y), str(item['quantidade']), fill="black", font=fonte_mono)
-        draw.text((470, y), f"{item['preco_unitario']:.2f}", fill="black", font=fonte_mono)
-        draw.text((570, y), f"{item['total']:.2f}", fill="black", font=fonte_mono)
+        draw.text((x_col[0], y), limpar_numero_nome_produto(item['produto_nome']), fill="black", font=fonte_mono)
+        draw.text((x_col[1], y), str(item['quantidade']), fill="black", font=fonte_mono)
+        draw.text((x_col[2], y), f"{item['preco_unitario']:.2f}", fill="black", font=fonte_mono)
+        draw.text((x_col[3], y), f"{item['total']:.2f}", fill="black", font=fonte_mono)
+        if mostrar_coluna_fardos:
+            nfardos = item.get("numero_fardos")
+            draw.text((x_col[4], y), str(nfardos) if nfardos not in (None, "", 0) else "", fill="black", font=fonte_mono)
         total += float(item['total'])
         y += altura_linha
 
     if float(compra['valor_abatimento']) != 0:
-        draw.text((30, y), "Abatimento/Adiantamento", fill="black", font=fonte_mono)
-        draw.text((570, y), f"-{float(compra['valor_abatimento']):.2f}", fill="black", font=fonte_mono)
+        draw.text((x_col[0], y), "Abatimento/Adiantamento", fill="black", font=fonte_mono)
+        draw.text((x_col[3], y), f"-{float(compra['valor_abatimento']):.2f}", fill="black", font=fonte_mono)
+        if mostrar_coluna_fardos:
+            draw.text((x_col[4], y), "", fill="black", font=fonte_mono)
         y += altura_linha
 
     y_tabela_fim = y + 30
+
+    # Linhas e colunas da tabela
     linhas_y = [y_linha_cabecalho]
     linhas_y += [y_linha_cabecalho + 25 + i * altura_linha for i in range(len(itens) + (1 if float(compra['valor_abatimento']) != 0 else 0) + 1)]
+    colunas_x = x_col + [x_col[-1] + 100]  # fecha a tabela
 
     for linha_y in linhas_y:
         draw.line((colunas_x[0], linha_y, colunas_x[-1], linha_y), fill="black", width=1)
@@ -214,7 +246,7 @@ def exportar_compra_jpg(compra, itens, saldo, filename, marca_dagua_texto=""):
             imagem,
             texto=marca_dagua_texto,
             x_inicio=30,
-            x_fim=750,
+            x_fim=colunas_x[-1],
             y_inicio=y_linha_cabecalho,
             altura=altura_linha * (len(itens) + (1 if float(compra['valor_abatimento']) != 0 else 0)),
             fonte_path="arial.ttf",

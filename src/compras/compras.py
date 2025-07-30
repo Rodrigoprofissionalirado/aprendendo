@@ -1286,9 +1286,17 @@ class ComprasUI(QWidget):
         _, valor_abatimento, valor_adiantamento = obter_itens_e_lancamentos_da_compra(compra_id)
 
         subtotal = float(sum(item["total"] for item in itens))
-        # Ajuste para exibir número de fardos na tabela (exemplo: adicionar coluna se desejar)
-        self.tabela_itens_compra.setColumnCount(5)
-        self.tabela_itens_compra.setHorizontalHeaderLabels(["Produto", "Qtd", "Preço Unit.", "Total", "Nº Fardos"])
+
+        # PATCH: Só mostra "Nº Fardos" se algum item tiver valor não nulo e sempre na última coluna
+        mostrar_coluna_fardos = any(
+            item.get("numero_fardos") not in (None, "", 0) for item in itens
+        )
+        colunas = ["Produto", "Qtd", "Preço Unit.", "Total"]
+        if mostrar_coluna_fardos:
+            colunas.append("Nº Fardos")
+        self.tabela_itens_compra.setColumnCount(len(colunas))
+        self.tabela_itens_compra.setHorizontalHeaderLabels(colunas)
+
         linhas_extra = 1
         self.tabela_itens_compra.setRowCount(len(itens) + linhas_extra)
         for i, item in enumerate(itens):
@@ -1298,26 +1306,33 @@ class ComprasUI(QWidget):
             total_formatado = self.locale.toString(float(item['total']), 'f', 2)
             self.tabela_itens_compra.setItem(i, 2, QTableWidgetItem(preco_formatado))
             self.tabela_itens_compra.setItem(i, 3, QTableWidgetItem(total_formatado))
-            nfardos = item.get("numero_fardos")
-            self.tabela_itens_compra.setItem(i, 4, QTableWidgetItem(str(nfardos) if nfardos is not None else ""))
+            if mostrar_coluna_fardos:
+                nfardos = item.get("numero_fardos")
+                self.tabela_itens_compra.setItem(i, 4,
+                                                 QTableWidgetItem(str(nfardos) if nfardos not in (None, "", 0) else ""))
 
         # Linha para abatimento ou adiantamento
+        idx_extra = len(itens)
         if valor_adiantamento > 0:
-            self.tabela_itens_compra.setItem(len(itens), 0, QTableWidgetItem("Adiantamento"))
-            self.tabela_itens_compra.setItem(len(itens), 1, QTableWidgetItem(""))
-            self.tabela_itens_compra.setItem(len(itens), 2, QTableWidgetItem(""))
-            self.tabela_itens_compra.setItem(len(itens), 3,
+            self.tabela_itens_compra.setItem(idx_extra, 0, QTableWidgetItem("Adiantamento"))
+            self.tabela_itens_compra.setItem(idx_extra, 1, QTableWidgetItem(""))
+            self.tabela_itens_compra.setItem(idx_extra, 2, QTableWidgetItem(""))
+            self.tabela_itens_compra.setItem(idx_extra, 3,
                                              QTableWidgetItem(f"+{self.locale.toString(valor_adiantamento, 'f', 2)}"))
+            if mostrar_coluna_fardos:
+                self.tabela_itens_compra.setItem(idx_extra, 4, QTableWidgetItem(""))
             total_final = subtotal + valor_adiantamento
             self.label_total_com_abatimento.setText(
                 f"Total com Adiantamento: R$ {self.locale.toString(total_final, 'f', 2)}"
             )
         else:
-            self.tabela_itens_compra.setItem(len(itens), 0, QTableWidgetItem("Abatimento"))
-            self.tabela_itens_compra.setItem(len(itens), 1, QTableWidgetItem(""))
-            self.tabela_itens_compra.setItem(len(itens), 2, QTableWidgetItem(""))
-            self.tabela_itens_compra.setItem(len(itens), 3,
+            self.tabela_itens_compra.setItem(idx_extra, 0, QTableWidgetItem("Abatimento"))
+            self.tabela_itens_compra.setItem(idx_extra, 1, QTableWidgetItem(""))
+            self.tabela_itens_compra.setItem(idx_extra, 2, QTableWidgetItem(""))
+            self.tabela_itens_compra.setItem(idx_extra, 3,
                                              QTableWidgetItem(f"-{self.locale.toString(valor_abatimento, 'f', 2)}"))
+            if mostrar_coluna_fardos:
+                self.tabela_itens_compra.setItem(idx_extra, 4, QTableWidgetItem(""))
             total_final = subtotal - valor_abatimento
             self.label_total_com_abatimento.setText(
                 f"Total com Abatimento: R$ {self.locale.toString(total_final, 'f', 2)}"

@@ -569,6 +569,10 @@ class MovimentacaoTabUI(QWidget):
                     y -= 18
 
                 if itens:
+                    # --- PATCH: Detecta se algum item tem número de fardos ---
+                    mostrar_coluna_fardos = any(
+                        item.get("numero_fardos") not in (None, "", 0) for item in itens
+                    )
                     y -= 5
                     c.setFont("Helvetica-Bold", 11)
                     c.drawString(margem, y, "Produtos")
@@ -578,6 +582,8 @@ class MovimentacaoTabUI(QWidget):
                     c.drawString(margem + 180, y, "Qtd")
                     c.drawString(margem + 240, y, "Unitário")
                     c.drawString(margem + 330, y, "Total")
+                    if mostrar_coluna_fardos:
+                        c.drawString(margem + 420, y, "Nº Fardos")
                     y -= 8
                     c.line(margem, y, largura - margem, y)
                     y -= 8
@@ -588,6 +594,9 @@ class MovimentacaoTabUI(QWidget):
                         c.drawString(margem + 180, y, str(item['quantidade']))
                         c.drawString(margem + 240, y, f"R$ {item['preco_unitario']:.2f}")
                         c.drawString(margem + 330, y, f"R$ {item['total']:.2f}")
+                        if mostrar_coluna_fardos:
+                            nfardos = item.get("numero_fardos")
+                            c.drawString(margem + 420, y, str(nfardos) if nfardos not in (None, "", 0) else "")
                         total += float(item['total'])
                         y -= 13
                     y -= 8
@@ -694,7 +703,6 @@ class MovimentacaoTabUI(QWidget):
             if not compras:
                 return None
 
-            # Inverter ordem das movimentações (da mais velha para a mais nova)
             compras = compras[::-1]
 
             saldo_por_id = obter_saldos_acumulados(fornecedor_id, data_de, data_ate, remove_acento)
@@ -704,8 +712,8 @@ class MovimentacaoTabUI(QWidget):
 
             largura_img = 1200
             margem = 20 * mm
-            espacamento_compra = 10  # Espaço padrão após compra/venda
-            espacamento_transacao = 10  # Espaço menor após transação
+            espacamento_compra = 10
+            espacamento_transacao = 10
 
             altura_total = margem + 40
             blocos = []
@@ -714,16 +722,14 @@ class MovimentacaoTabUI(QWidget):
                 bloco['mov'] = mov
                 bloco['itens'] = itens_por_mov.get(mov['id'], []) if mov['tipo'].lower() in ("compra", "venda") else []
                 if remove_acento(mov['tipo']) == "transacao":
-                    # Calcula altura menor para transação
-                    bloco['altura'] = 210  # ou 120, ajuste conforme visual
+                    bloco['altura'] = 210
                 else:
-                    # Mantém a lógica atual para compra/venda
                     bloco['altura'] = 250 + 28 * (len(bloco['itens']) if bloco['itens'] else 1)
                 altura_total += bloco['altura'] + (
                     espacamento_transacao if remove_acento(mov['tipo']) == "transacao" else espacamento_compra)
                 blocos.append(bloco)
 
-            altura_total += 40  # Adiciona borda inferior extra
+            altura_total += 40
 
             try:
                 fonte = ImageFont.truetype("arial.ttf", 18)
@@ -798,6 +804,10 @@ class MovimentacaoTabUI(QWidget):
                     y += 24
 
                 if itens:
+                    # PATCH: Detecta se algum item tem número de fardos
+                    mostrar_coluna_fardos = any(
+                        item.get("numero_fardos") not in (None, "", 0) for item in itens
+                    )
                     y += 6
                     draw.text((margem, y), "Produtos", fill="black", font=fonte_bold)
                     y += 26
@@ -805,6 +815,8 @@ class MovimentacaoTabUI(QWidget):
                     draw.text((margem + 500, y), "Qtd", fill="black", font=fonte_menor)
                     draw.text((margem + 650, y), "Unitário", fill="black", font=fonte_menor)
                     draw.text((margem + 800, y), "Total", fill="black", font=fonte_menor)
+                    if mostrar_coluna_fardos:
+                        draw.text((margem + 950, y), "Nº Fardos", fill="black", font=fonte_menor)
                     y += 5
                     draw.line((margem, y + 20, largura_img - margem, y + 20), fill="black", width=1)
                     y += 22
@@ -816,6 +828,10 @@ class MovimentacaoTabUI(QWidget):
                         draw.text((margem + 500, y), str(item['quantidade']), fill="black", font=fonte_mono)
                         draw.text((margem + 650, y), f"R$ {item['preco_unitario']:.2f}", fill="black", font=fonte_mono)
                         draw.text((margem + 800, y), f"R$ {item['total']:.2f}", fill="black", font=fonte_mono)
+                        if mostrar_coluna_fardos:
+                            nfardos = item.get("numero_fardos")
+                            draw.text((margem + 950, y), str(nfardos) if nfardos not in (None, "", 0) else "",
+                                      fill="black", font=fonte_mono)
                         total += float(item['total'])
                         y += 28
                     y += 5
@@ -866,7 +882,7 @@ class MovimentacaoTabUI(QWidget):
                     angulo=25
                 )
 
-            nome_arquivo = f"movimentacoes_{data_de.strftime('%Y%m%d')}_{data_ate.strftime('%Y%m%d')}_extrato.jpg"
+            nome_arquivo = f"movimentacoes_{data_de.strftime('%Y%m%d')}_{data_ate.strftime('%d%m%Y')}_extrato.jpg"
             imagem.save(nome_arquivo)
             return nome_arquivo
 
@@ -1610,13 +1626,18 @@ class MovimentacaoTabUI(QWidget):
             self.campo_texto_copiavel.setVisible(False)
             self.btn_trocar_conta_fornecedor.setVisible(False)
 
-        # PATCH: usar obter_itens_e_lancamentos_da_compra para mostrar produtos + abatimento + adiantamento
+        # --- PATCH: Só mostra "Nº Fardos" se algum item tiver valor não nulo e sempre na última coluna
         itens, valor_abatimento, valor_adiantamento = obter_itens_e_lancamentos_da_compra(compra_id)
         linha_extra = int(valor_adiantamento > 0) + int(valor_abatimento > 0)
 
-        # Atualize aqui: 5 colunas e cabeçalho com "Nº Fardos"
-        self.tabela_itens.setColumnCount(5)
-        self.tabela_itens.setHorizontalHeaderLabels(["Produto", "Qtd", "Preço", "Total", "Nº Fardos"])
+        mostrar_coluna_fardos = any(
+            item.get("numero_fardos") not in (None, "", 0) for item in itens
+        )
+        colunas = ["Produto", "Qtd", "Preço", "Total"]
+        if mostrar_coluna_fardos:
+            colunas.append("Nº Fardos")
+        self.tabela_itens.setColumnCount(len(colunas))
+        self.tabela_itens.setHorizontalHeaderLabels(colunas)
         self.tabela_itens.setRowCount(len(itens) + linha_extra)
 
         for i, item in enumerate(itens):
@@ -1627,9 +1648,9 @@ class MovimentacaoTabUI(QWidget):
             self.tabela_itens.setItem(i, 2, QTableWidgetItem(preco_formatado))
             total_formatado = self.locale.toString(preco_unitario * float(item['quantidade']), 'f', 2)
             self.tabela_itens.setItem(i, 3, QTableWidgetItem(total_formatado))
-            # NOVO: número de fardos
-            nfardos = item.get("numero_fardos")
-            self.tabela_itens.setItem(i, 4, QTableWidgetItem(str(nfardos) if nfardos is not None else ""))
+            if mostrar_coluna_fardos:
+                nfardos = item.get("numero_fardos")
+                self.tabela_itens.setItem(i, 4, QTableWidgetItem(str(nfardos) if nfardos not in (None, "", 0) else ""))
 
         row = len(itens)
         # Adiantamento
@@ -1638,7 +1659,8 @@ class MovimentacaoTabUI(QWidget):
             self.tabela_itens.setItem(row, 1, QTableWidgetItem(""))
             self.tabela_itens.setItem(row, 2, QTableWidgetItem(""))
             self.tabela_itens.setItem(row, 3, QTableWidgetItem(f"+{self.locale.toString(valor_adiantamento, 'f', 2)}"))
-            self.tabela_itens.setItem(row, 4, QTableWidgetItem(""))
+            if mostrar_coluna_fardos:
+                self.tabela_itens.setItem(row, 4, QTableWidgetItem(""))
             row += 1
         # Abatimento
         if valor_abatimento > 0:
@@ -1646,7 +1668,8 @@ class MovimentacaoTabUI(QWidget):
             self.tabela_itens.setItem(row, 1, QTableWidgetItem(""))
             self.tabela_itens.setItem(row, 2, QTableWidgetItem(""))
             self.tabela_itens.setItem(row, 3, QTableWidgetItem(f"-{self.locale.toString(valor_abatimento, 'f', 2)}"))
-            self.tabela_itens.setItem(row, 4, QTableWidgetItem(""))
+            if mostrar_coluna_fardos:
+                self.tabela_itens.setItem(row, 4, QTableWidgetItem(""))
 
 class MovimentacoesUI(QWidget):
     def __init__(self):
