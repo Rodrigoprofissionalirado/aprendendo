@@ -307,8 +307,10 @@ def remover_lancamentos_antigos(compra_id):
 def obter_dados_para_editar_compra(compra_id):
     with get_cursor() as cursor:
         cursor.execute("""
-            SELECT fornecedor_id, data_compra, valor_abatimento, status
-            FROM compras WHERE id = %s
+            SELECT c.fornecedor_id, c.data_compra, c.valor_abatimento, c.status, c.descricao, f.nome as fornecedor
+            FROM compras c
+            JOIN fornecedores f ON c.fornecedor_id = f.id
+            WHERE c.id = %s
         """, (compra_id,))
         compra = cursor.fetchone()
 
@@ -648,6 +650,16 @@ def obter_saldo_antes_compra(fornecedor_id, compra_id, remove_acento):
                 elif direcao == "saida":
                     saldo -= valor_real
     return saldo
+
+def atualizar_origem_compra(compra_id, nova_origem, origem_esperada=None):
+    with get_cursor(commit=True) as cursor:
+        if origem_esperada is not None:
+            cursor.execute("SELECT origem FROM compras WHERE id = %s", (compra_id,))
+            row = cursor.fetchone()
+            if not row or row.get("origem") != origem_esperada:
+                return False
+        cursor.execute("UPDATE compras SET origem = %s WHERE id = %s", (nova_origem, compra_id))
+    return True
 
 
 # Após qualquer alteração/inclusão/exclusão:

@@ -1377,9 +1377,9 @@ class MovimentacaoTabUI(QWidget):
                     cursor.execute("DELETE FROM debitos_fornecedores WHERE compra_id = %s", (compra_id,))
                     if valor_adiantamento > 0:
                         cursor.execute("""
-                            INSERT INTO debitos_fornecedores (fornecedor_id, compra_id, valor, tipo)
-                            VALUES (%s, %s, %s, 'inclusao')
-                        """, (self.fornecedor['id'], compra_id, valor_adiantamento))
+                                    INSERT INTO debitos_fornecedores (fornecedor_id, compra_id, valor, tipo)
+                                    VALUES (%s, %s, %s, 'inclusao')
+                                """, (self.fornecedor['id'], compra_id, valor_adiantamento))
                 QMessageBox.information(self, "Sucesso", "Movimentação editada com sucesso.")
 
                 if existe_transacao_saida_para_compra(compra_id):
@@ -1388,9 +1388,9 @@ class MovimentacaoTabUI(QWidget):
                     valor_antigo_trans = transacao['total'] if transacao else 0.0
                     valor_novo_mov = obter_valor_com_abatimento_adiantamento(compra_id)
                     valor_novo_trans = obter_valor_com_abatimento_adiantamento(compra_id)
-                    saldo_anterior = obter_saldo_anterior(self.fornecedor['id'], data, remove_acento)
+                    saldo_atual = float(obter_saldo_total(self.fornecedor['id'], remove_acento))
                     dialog = AtualizarTransacaoDialog(
-                        valor_antigo_mov, valor_novo_mov, valor_antigo_trans, valor_novo_trans, saldo_anterior, self
+                        valor_antigo_mov, valor_novo_mov, valor_antigo_trans, valor_novo_trans, saldo_atual, self
                     )
                     if dialog.exec() == QDialog.Accepted and dialog.resultado == "sim":
                         novo_valor = getattr(dialog, 'valor_novo_transacao_final', valor_novo_trans)
@@ -1408,8 +1408,8 @@ class MovimentacaoTabUI(QWidget):
 
                 # PATCH: só mostra dialog de pagamento se NÃO for transação
                 if tipo_normalizado in ("compra", "venda") and not existe_transacao_saida_para_compra(compra_id):
-                    saldo_anterior = obter_saldo_antes_compra(self.fornecedor['id'], compra_id, remove_acento)
-                    dialog = PagamentoMovimentacaoDialog(float(valor_operacao), float(saldo_anterior), self)
+                    saldo_atual = float(obter_saldo_total(self.fornecedor['id'], remove_acento))
+                    dialog = PagamentoMovimentacaoDialog(float(valor_operacao), saldo_atual, self)
                     if dialog.exec() == QDialog.Accepted and dialog.resultado == "sim":
                         valor_pagamento = dialog.valor_lancamento
                         direcao_pagamento = "Saída" if tipo_normalizado == "compra" else "Entrada"
@@ -1453,8 +1453,8 @@ class MovimentacaoTabUI(QWidget):
                 QMessageBox.information(self, "Sucesso", "Movimentação cadastrada com sucesso.")
 
                 if tipo_normalizado in ("compra", "venda"):
-                    saldo_anterior = obter_saldo_antes_compra(self.fornecedor['id'], compra_id, remove_acento)
-                    dialog = PagamentoMovimentacaoDialog(float(valor_operacao), float(saldo_anterior), self)
+                    saldo_atual = float(obter_saldo_total(self.fornecedor['id'], remove_acento))
+                    dialog = PagamentoMovimentacaoDialog(float(valor_operacao), saldo_atual, self)
                     if dialog.exec() == QDialog.Accepted and dialog.resultado == "sim":
                         valor_pagamento = dialog.valor_lancamento
                         direcao_pagamento = "Saída" if tipo_normalizado == "compra" else "Entrada"
@@ -1473,7 +1473,6 @@ class MovimentacaoTabUI(QWidget):
                         )
                         QMessageBox.information(self, "Pagamento cadastrado",
                                                 "Pagamento referente à movimentação foi cadastrado com sucesso!")
-
             except Exception as e:
                 QMessageBox.critical(self, "Erro", f"Erro ao cadastrar movimentação: {e}")
         self.limpar_itens()

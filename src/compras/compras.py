@@ -26,7 +26,7 @@ from .compras_db import (
     obter_dados_bancarios_para_campo_copiavel, atualizar_conta_bancaria_da_compra,
     atualizar_status_compra as atualizar_status_compra_db, obter_totais_produtos_compras,
     obter_valores_finais_compras, contar_compras, existe_transacao_saida_para_compra,
-    excluir_transacao_saida_para_compra, obter_saldo_antes_compra
+    excluir_transacao_saida_para_compra, obter_saldo_antes_compra, atualizar_origem_compra
 )
 from .compras_logic import (
     obter_total_produtos_lista, calcular_valor_com_abatimento_adiantamento, formatar_moeda
@@ -34,7 +34,7 @@ from .compras_logic import (
 from .compras_export import (
     exportar_compra_pdf, exportar_compra_jpg
 )
-from .compras_dialogs import DiferencaCompraDialog
+from .compras_dialogs import ImportarAppDialog
 
 STATUS_LIST = [
     "Criada", "Emitindo nota", "Efetuando pagamento", "Finalizada", "Concluída"
@@ -57,9 +57,11 @@ class ComprasUI(QWidget):
 
         # Paginação
         self.pagina_atual_aberto = 1
+        self.pagina_atual_app = 1
         self.pagina_atual_concluida = 1
         self.qtd_por_pagina = 50
         self.total_paginas_aberto = 1
+        self.total_paginas_app = 1
         self.total_paginas_concluida = 1
 
         self.init_ui()
@@ -128,57 +130,11 @@ class ComprasUI(QWidget):
         )
 
         layout_principal.addLayout(layout_filtros)
-        #layout_principal.addStretch()  # espaço flexível
 
-        # ---------------------- Fim dos filtros -----------------
-
-        self.tabs = QTabWidget()
-        layout_principal.addWidget(self.tabs)
-
-        # ===================== TAB EM ABERTO =====================
-        self.tab_em_aberto = QWidget()
-        self.tab_concluidas = QWidget()
-        self.tabs.addTab(self.tab_em_aberto, "Em aberto")
-        self.tabs.addTab(self.tab_concluidas, "Concluídas")
-
-        # Layout Em Aberto com QSplitter
-        splitter = QSplitter(Qt.Horizontal)
-        self.tab_em_aberto.setLayout(QVBoxLayout())
-        self.tab_em_aberto.layout().addWidget(splitter)
-
-        # ===================== TAB CONCLUÍDAS =====================
-        layout_concluidas = QVBoxLayout()
-        self.tab_concluidas.setLayout(layout_concluidas)
-        self.tabela_compras_concluidas = QTableWidget()
-        self.tabela_compras_concluidas.setColumnCount(6)
-        self.tabela_compras_concluidas.setHorizontalHeaderLabels([
-            "ID", "Fornecedor", "Data", "Total dos produtos (R$)", "Valor com abatimento/adiantamento", "Status"
-        ])
-        self.tabela_compras_concluidas.setEditTriggers(QTableWidget.DoubleClicked)
-        self.tabela_compras_concluidas.cellClicked.connect(
-            lambda row, col: self.mostrar_itens_da_compra(row, col, tabela=self.tabela_compras_concluidas)
-        )
-        # Responsividade: tabelas expansivas e colunas flexíveis
-        self.tabela_compras_concluidas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        self.tabela_compras_concluidas.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        layout_concluidas.addWidget(self.tabela_compras_concluidas)
-
-        # Botões de paginação abaixo da tabela de compras concluídas
-        paginacao_concluida_layout = QHBoxLayout()
-        self.btn_pagina_anterior_concluida = QPushButton("Página anterior")
-        self.btn_pagina_proxima_concluida = QPushButton("Próxima página")
-        self.label_paginacao_concluida = QLabel()
-        paginacao_concluida_layout.addWidget(self.btn_pagina_anterior_concluida)
-        paginacao_concluida_layout.addWidget(self.label_paginacao_concluida)
-        paginacao_concluida_layout.addWidget(self.btn_pagina_proxima_concluida)
-        layout_concluidas.addLayout(paginacao_concluida_layout)
-
-        # ===================== ENTRADA DE DADOS - ESQUERDA =====================
+        # ===================== Painel ESQUERDA =====================
         widget_esquerda = QWidget()
         layout_entrada = QVBoxLayout(widget_esquerda)
         layout_dados = QGridLayout()
-
-        # ... [o restante dos widgets de entrada permanece igual] ...
 
         # Número da balança
         self.combo_fornecedor = QComboBox()
@@ -312,33 +268,6 @@ class ComprasUI(QWidget):
         self.btn_alterar_status.clicked.connect(self.alterar_status_compra)
         layout_entrada.addWidget(self.btn_alterar_status)
 
-        # ===================== Filtros e tabela - meio =====================
-        widget_central = QWidget()
-        layout_compras_com_filtros = QVBoxLayout(widget_central)
-
-        self.tabela_compras_aberto = QTableWidget()
-        self.tabela_compras_aberto.setColumnCount(6)
-        self.tabela_compras_aberto.setHorizontalHeaderLabels([
-            "ID", "Fornecedor", "Data", "Total dos produtos (R$)", "Valor com abatimento/adiantamento", "Status"
-        ])
-        self.tabela_compras_aberto.setEditTriggers(QTableWidget.DoubleClicked)
-        self.tabela_compras_aberto.cellClicked.connect(
-            lambda row, col: self.mostrar_itens_da_compra(row, col, tabela=self.tabela_compras_aberto))
-        self.tabela_compras_aberto.itemSelectionChanged.connect(self.atualizar_campo_texto_copiavel)
-        self.tabela_compras_aberto.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        self.tabela_compras_aberto.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        layout_compras_com_filtros.addWidget(self.tabela_compras_aberto)
-
-        # Botões de paginação abaixo da tabela de compras em aberto
-        paginacao_aberto_layout = QHBoxLayout()
-        self.btn_pagina_anterior_aberto = QPushButton("Página anterior")
-        self.btn_pagina_proxima_aberto = QPushButton("Próxima página")
-        self.label_paginacao_aberto = QLabel()
-        paginacao_aberto_layout.addWidget(self.btn_pagina_anterior_aberto)
-        paginacao_aberto_layout.addWidget(self.label_paginacao_aberto)
-        paginacao_aberto_layout.addWidget(self.btn_pagina_proxima_aberto)
-        layout_compras_com_filtros.addLayout(paginacao_aberto_layout)
-
         # ===================== Área direita =====================
         widget_direita = QWidget()
         layout_direita = QVBoxLayout(widget_direita)
@@ -374,11 +303,99 @@ class ComprasUI(QWidget):
         self.btn_exportar_jpg.clicked.connect(self.exportar_compra_jpg)
         layout_direita.addWidget(self.btn_exportar_jpg)
 
-        # Adiciona widgets ao splitter para layout flexível
+        # ===================== Painel CENTRAL (as abas) =====================
+        self.tabs = QTabWidget()
+
+        # --- Aba Em Aberto ---
+        self.tab_em_aberto = QWidget()
+        layout_aberto = QVBoxLayout(self.tab_em_aberto)
+        self.tabela_compras_aberto = QTableWidget()
+        self.tabela_compras_aberto.setColumnCount(6)
+        self.tabela_compras_aberto.setHorizontalHeaderLabels([
+            "ID", "Fornecedor", "Data", "Total dos produtos (R$)", "Valor com abatimento/adiantamento", "Status"
+        ])
+        self.tabela_compras_aberto.setEditTriggers(QTableWidget.DoubleClicked)
+        self.tabela_compras_aberto.cellClicked.connect(
+            lambda row, col: self.mostrar_itens_da_compra(row, col, tabela=self.tabela_compras_aberto))
+        self.tabela_compras_aberto.setSelectionBehavior(QTableWidget.SelectRows)
+        self.tabela_compras_aberto.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.tabela_compras_aberto.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        layout_aberto.addWidget(self.tabela_compras_aberto)
+        paginacao_aberto_layout = QHBoxLayout()
+        self.btn_pagina_anterior_aberto = QPushButton("Página anterior")
+        self.btn_pagina_proxima_aberto = QPushButton("Próxima página")
+        self.label_paginacao_aberto = QLabel()
+        paginacao_aberto_layout.addWidget(self.btn_pagina_anterior_aberto)
+        paginacao_aberto_layout.addWidget(self.label_paginacao_aberto)
+        paginacao_aberto_layout.addWidget(self.btn_pagina_proxima_aberto)
+        layout_aberto.addLayout(paginacao_aberto_layout)
+
+        # --- Aba App (N) ---
+        self.tab_app = QWidget()
+        layout_app = QVBoxLayout(self.tab_app)
+        self.tabela_compras_app = QTableWidget()
+        self.tabela_compras_app.setColumnCount(6)
+        self.tabela_compras_app.setHorizontalHeaderLabels([
+            "ID", "Fornecedor", "Data", "Total dos produtos (R$)", "Valor com abatimento/adiantamento", "Status"
+        ])
+        self.tabela_compras_app.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.tabela_compras_app.cellClicked.connect(
+            lambda row, col: self.mostrar_itens_da_compra(row, col, tabela=self.tabela_compras_app))
+        self.tabela_compras_app.setSelectionBehavior(QTableWidget.SelectRows)
+        self.tabela_compras_app.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.tabela_compras_app.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        layout_app.addWidget(self.tabela_compras_app)
+        paginacao_app_layout = QHBoxLayout()
+        self.btn_pagina_anterior_app = QPushButton("Página anterior")
+        self.btn_pagina_proxima_app = QPushButton("Próxima página")
+        self.label_paginacao_app = QLabel()
+        paginacao_app_layout.addWidget(self.btn_pagina_anterior_app)
+        paginacao_app_layout.addWidget(self.label_paginacao_app)
+        paginacao_app_layout.addWidget(self.btn_pagina_proxima_app)
+        layout_app.addLayout(paginacao_app_layout)
+
+        # --- Aba Concluídas ---
+        self.tab_concluidas = QWidget()
+        layout_concluidas = QVBoxLayout(self.tab_concluidas)
+        self.tabela_compras_concluidas = QTableWidget()
+        self.tabela_compras_concluidas.setColumnCount(6)
+        self.tabela_compras_concluidas.setHorizontalHeaderLabels([
+            "ID", "Fornecedor", "Data", "Total dos produtos (R$)", "Valor com abatimento/adiantamento", "Status"
+        ])
+        self.tabela_compras_concluidas.setEditTriggers(QTableWidget.DoubleClicked)
+        self.tabela_compras_concluidas.cellClicked.connect(
+            lambda row, col: self.mostrar_itens_da_compra(row, col, tabela=self.tabela_compras_concluidas))
+        self.tabela_compras_concluidas.setSelectionBehavior(QTableWidget.SelectRows)
+        self.tabela_compras_concluidas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.tabela_compras_concluidas.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        layout_concluidas.addWidget(self.tabela_compras_concluidas)
+        paginacao_concluida_layout = QHBoxLayout()
+        self.btn_pagina_anterior_concluida = QPushButton("Página anterior")
+        self.btn_pagina_proxima_concluida = QPushButton("Próxima página")
+        self.label_paginacao_concluida = QLabel()
+        paginacao_concluida_layout.addWidget(self.btn_pagina_anterior_concluida)
+        paginacao_concluida_layout.addWidget(self.label_paginacao_concluida)
+        paginacao_concluida_layout.addWidget(self.btn_pagina_proxima_concluida)
+        layout_concluidas.addLayout(paginacao_concluida_layout)
+
+        # Adiciona abas ao QTabWidget
+        self.tabs.addTab(self.tab_em_aberto, "Em aberto")
+        self.tabs.addTab(self.tab_app, "App (0)")
+        self.tabs.addTab(self.tab_concluidas, "Concluídas")
+
+        self.tab_em_aberto.setLayout(layout_aberto)
+        self.tab_app.setLayout(layout_app)
+        self.tab_concluidas.setLayout(layout_concluidas)
+
+        # ============== Splitter principal: esquerda, central (abas), direita ==============
+        splitter = QSplitter(Qt.Horizontal)
         splitter.addWidget(widget_esquerda)
-        splitter.addWidget(widget_central)
+        splitter.addWidget(self.tabs)
         splitter.addWidget(widget_direita)
-        splitter.setSizes([300, 600, 300])  # proporção inicial das áreas
+        splitter.setSizes([320, 800, 320])
+
+        layout_principal.addWidget(splitter)
+        self.setLayout(layout_principal)
 
         self.setLayout(layout_principal)
         self.itens_compra = []
@@ -390,11 +407,16 @@ class ComprasUI(QWidget):
         self.tabela_compras_aberto.itemChanged.connect(self.on_status_item_changed)
         self.tabela_compras_concluidas.itemChanged.connect(self.on_status_item_changed)
 
-        # Conexão dos botões com handlers
+        # Conexões dos botões de paginação
         self.btn_pagina_anterior_aberto.clicked.connect(self.ir_para_pagina_anterior_aberto)
         self.btn_pagina_proxima_aberto.clicked.connect(self.ir_para_pagina_proxima_aberto)
+        self.btn_pagina_anterior_app.clicked.connect(self.ir_para_pagina_anterior_app)
+        self.btn_pagina_proxima_app.clicked.connect(self.ir_para_pagina_proxima_app)
         self.btn_pagina_anterior_concluida.clicked.connect(self.ir_para_pagina_anterior_concluida)
         self.btn_pagina_proxima_concluida.clicked.connect(self.ir_para_pagina_proxima_concluida)
+
+        # Troca de aba recarrega dados
+        self.tabs.currentChanged.connect(self.atualizar_tabelas)
 
     def carregar_dados(self):
         self.atualizar_tabelas()
@@ -405,12 +427,6 @@ class ComprasUI(QWidget):
         self.combo_produto.setCurrentIndex(-1)
         self.combo_produto.blockSignals(False)
         self.atualizar_tabelas()
-
-    def mostrar_dialog_diferenca(self, diferenca):
-        dialog = DiferencaCompraDialog(diferenca, self)
-        if dialog.exec() == QDialog.Accepted:
-            return dialog.resultado
-        return None
 
     def selecionar_categoria_do_fornecedor(self, fornecedor_id):
         categoria_id = obter_primeira_categoria_do_fornecedor(fornecedor_id)
@@ -454,7 +470,7 @@ class ComprasUI(QWidget):
 
     def obter_compra_id_selecionado(self, tabela=None):
         if tabela is None:
-            tabela = self.tabela_compras_aberto
+            tabela = self.tabela_ativa()
         row = tabela.currentRow()
         if row < 0:
             return None
@@ -537,10 +553,13 @@ class ComprasUI(QWidget):
         data_de = self.filtro_data_de.date().toPython()
         data_ate = self.filtro_data_ate.date().toPython()
         qtd_por_pagina = self.qtd_por_pagina
-        pagina_atual_aberto = self.pagina_atual_aberto
-        pagina_atual_concluida = self.pagina_atual_concluida
+
+        pagina_atual_aberto = getattr(self, "pagina_atual_aberto", 1)
+        pagina_atual_app = getattr(self, "pagina_atual_app", 1)
+        pagina_atual_concluida = getattr(self, "pagina_atual_concluida", 1)
 
         def tarefa_db():
+            # Em aberto
             offset_aberto = (pagina_atual_aberto - 1) * qtd_por_pagina
             compras_aberto = listar_compras(
                 status=None if status_filtro == "Concluída" else status_filtro,
@@ -560,6 +579,27 @@ class ComprasUI(QWidget):
                 fornecedor_id=fornecedor_id,
                 origem='compras'
             )
+            # App
+            offset_app = (pagina_atual_app - 1) * qtd_por_pagina
+            compras_app = listar_compras(
+                status=None,
+                status_not=None,
+                data_de=data_de,
+                data_ate=data_ate,
+                fornecedor_id=fornecedor_id,
+                origem='app',
+                limit=qtd_por_pagina,
+                offset=offset_app
+            )
+            total_app = contar_compras(
+                status=None,
+                status_not=None,
+                data_de=data_de,
+                data_ate=data_ate,
+                fornecedor_id=fornecedor_id,
+                origem='app'
+            )
+            # Concluídas
             offset_concluida = (pagina_atual_concluida - 1) * qtd_por_pagina
             compras_concluidas = listar_compras(
                 status="Concluída",
@@ -577,9 +617,11 @@ class ComprasUI(QWidget):
                 fornecedor_id=fornecedor_id,
                 origem='compras'
             )
-            todos_ids = [c['id'] for c in compras_aberto] + [c['id'] for c in compras_concluidas]
+            todos_ids = [c['id'] for c in compras_aberto] + [c['id'] for c in compras_app] + [c['id'] for c in
+                                                                                              compras_concluidas]
             itens_por_compra = listar_itens_compra(todos_ids)
-            return (compras_aberto, total_aberto, compras_concluidas, total_concluida, itens_por_compra)
+            return (compras_aberto, total_aberto, compras_app, total_app, compras_concluidas, total_concluida,
+                    itens_por_compra)
 
         self.worker = WorkerThread(tarefa_db)
         self.worker.finished.connect(self._atualizar_tabelas_ui)
@@ -587,20 +629,30 @@ class ComprasUI(QWidget):
         self.worker.start()
 
     def _atualizar_tabelas_ui(self, resultado):
-        compras_aberto, total_aberto, compras_concluidas, total_concluida, itens_por_compra = resultado
+        compras_aberto, total_aberto, compras_app, total_app, compras_concluidas, total_concluida, itens_por_compra = resultado
         self.itens_por_compra = itens_por_compra
-        self.preencher_tabela_compras(self.tabela_compras_aberto, compras_aberto)
-        self.preencher_tabela_compras(self.tabela_compras_concluidas, compras_concluidas)
+        self.total_paginas_aberto = max(1, (total_aberto + self.qtd_por_pagina - 1) // self.qtd_por_pagina)
+        self.total_paginas_app = max(1, (total_app + self.qtd_por_pagina - 1) // self.qtd_por_pagina)
+        self.total_paginas_concluida = max(1, (total_concluida + self.qtd_por_pagina - 1) // self.qtd_por_pagina)
 
+        self.preencher_tabela_compras(self.tabela_compras_aberto, compras_aberto)
         self.label_paginacao_aberto.setText(f"Página {self.pagina_atual_aberto} de {self.total_paginas_aberto}")
+
+        self.preencher_tabela_compras(self.tabela_compras_app, compras_app)
+        self.label_paginacao_app.setText(f"Página {self.pagina_atual_app} de {self.total_paginas_app}")
+
+        self.preencher_tabela_compras(self.tabela_compras_concluidas, compras_concluidas)
         self.label_paginacao_concluida.setText(
             f"Página {self.pagina_atual_concluida} de {self.total_paginas_concluida}")
-        # Atualize as tabelas da UI normalmente a partir dos dados recebidos
+
+        # Atualiza o contador da aba App
+        self.tabs.setTabText(1, f"App ({total_app})")
 
     def _mostrar_erro_thread(self, mensagem):
         from PySide6.QtWidgets import QMessageBox
         QMessageBox.critical(self, "Erro", mensagem)
 
+    # Métodos de paginação para cada aba:
     def ir_para_pagina_anterior_aberto(self):
         if self.pagina_atual_aberto > 1:
             self.pagina_atual_aberto -= 1
@@ -609,6 +661,16 @@ class ComprasUI(QWidget):
     def ir_para_pagina_proxima_aberto(self):
         if self.pagina_atual_aberto < self.total_paginas_aberto:
             self.pagina_atual_aberto += 1
+            self.atualizar_tabelas()
+
+    def ir_para_pagina_anterior_app(self):
+        if self.pagina_atual_app > 1:
+            self.pagina_atual_app -= 1
+            self.atualizar_tabelas()
+
+    def ir_para_pagina_proxima_app(self):
+        if self.pagina_atual_app < self.total_paginas_app:
+            self.pagina_atual_app += 1
             self.atualizar_tabelas()
 
     def ir_para_pagina_anterior_concluida(self):
@@ -650,7 +712,6 @@ class ComprasUI(QWidget):
             ConfirmarExclusaoPagamentoDialog,
             PagamentoMovimentacaoDialog,
         )
-        from movimentacoes_db import obter_saldo_anterior
         if item.column() == 5:
             row = item.row()
             tabela = item.tableWidget()
@@ -669,21 +730,18 @@ class ComprasUI(QWidget):
                 if novo_status == "Concluída" and status_anterior != "Concluída":
                     # Pergunta sobre lançar pagamento (usando PagamentoMovimentacaoDialog)
                     if not existe_transacao_saida_para_compra(compra_id):
-                        # Captura saldo anterior para exibir na dialog
-                        saldo_anterior = 0.0
                         try:
                             fornecedor_id = compra['fornecedor_id']
-                            data_compra = compra['data_compra']
-                            saldo_anterior = obter_saldo_antes_compra(fornecedor_id, compra_id, lambda x: x.lower())
+                            valor_movimentacao = float(obter_valor_com_abatimento_adiantamento(compra_id))
+                            saldo_atual = float(obter_saldo_total(fornecedor_id, lambda x: x.lower()))
                         except Exception:
-                            pass
-                        valor_movimentacao = float(obter_valor_com_abatimento_adiantamento(compra_id))
-                        dialog = PagamentoMovimentacaoDialog(valor_movimentacao, float(saldo_anterior), self)
+                            saldo_atual = 0.0
+                            valor_movimentacao = 0.0
+                        from .compras_dialogs import PagamentoMovimentacaoDialog
+                        dialog = PagamentoMovimentacaoDialog(valor_movimentacao, saldo_atual, self)
                         if dialog.exec() and getattr(dialog, "resultado", None) == "sim":
                             valor_pagamento = getattr(dialog, "valor_lancamento", valor_movimentacao)
                             self.lancar_transacao_saida_para_compra(compra_id, valor_pagamento)
-                        else:
-                            pass
                     else:
                         QMessageBox.information(self, "Atenção",
                                                 "Já existe uma transação de pagamento para esta compra!")
@@ -911,54 +969,6 @@ class ComprasUI(QWidget):
         valor_inclusao = valor_lancamento if tipo_lancamento == "adiantamento" else Decimal('0.00')
         considerar_no_saldo = self.checkbox_considerar_no_saldo.isChecked()
 
-        # PATCH INICIO: Verifica diferença de produtos antes de salvar edição
-        if self.compra_edit_id is not None:
-            compra_antiga, itens_antigos, _ = obter_dados_para_editar_compra(self.compra_edit_id)
-            total_antigo = sum(float(item['total']) for item in itens_antigos)
-            total_novo = float(obter_total_produtos_lista(self.itens_compra))
-
-            diferenca = total_novo - total_antigo
-            # Só mostra o popup se mudou o total dos produtos (não apenas abate/adiantamento)
-            if abs(diferenca) > 0.01:
-                resultado = self.mostrar_dialog_diferenca(diferenca)
-                if resultado == "converter_abate":
-                    valor_atual = Decimal(self.input_valor_lancamento.text().replace(',',
-                                                                                     '.')) if self.input_valor_lancamento.text() else Decimal(
-                        '0.00')
-                    tipo_atual = self.combo_tipo_lancamento.currentData()
-                    tipo_diferenca = "adiantamento" if diferenca < 0 else "abatimento"
-                    valor_diferenca = Decimal(abs(diferenca))
-
-                    if tipo_atual == tipo_diferenca:
-                        # Mesmos tipos: soma
-                        novo_valor = valor_atual + valor_diferenca
-                        idx_tipo = 1 if tipo_diferenca == "adiantamento" else 0
-                        self.combo_tipo_lancamento.setCurrentIndex(idx_tipo)
-                        self.input_valor_lancamento.setText(str(novo_valor))
-                    else:
-                        saldo = valor_atual - valor_diferenca
-                        if saldo > 0:
-                            # Sinal positivo: abatimento
-                            self.input_valor_lancamento.setText(str(abs(saldo)))
-                            self.combo_tipo_lancamento.setCurrentIndex(0)  # 0 = abatimento
-                        elif saldo < 0:
-                            # Sinal negativo: adiantamento
-                            self.input_valor_lancamento.setText(str(abs(saldo)))
-                            self.combo_tipo_lancamento.setCurrentIndex(1)  # 1 = adiantamento
-                        else:
-                            self.input_valor_lancamento.setText("0.00")
-                            # Você pode manter o tipo anterior ou escolher um padrão aqui
-
-                    # Recalcula as variáveis para salvar corretamente
-                    valor_lancamento = Decimal(self.input_valor_lancamento.text().replace(',',
-                                                                                          '.')) if self.input_valor_lancamento.text() else Decimal(
-                        '0.00')
-                    tipo_lancamento = self.combo_tipo_lancamento.currentData()
-                    valor_abatimento = valor_lancamento if tipo_lancamento == "abatimento" else Decimal('0.00')
-                    valor_inclusao = valor_lancamento if tipo_lancamento == "adiantamento" else Decimal('0.00')
-                # Se resultado for "somente_alterar", segue normalmente
-        # PATCH FIM
-
         if self.compra_edit_id is None:
             compra_id = adicionar_compra(
                 fornecedor_id, data_compra, valor_abatimento, self.itens_compra, status,
@@ -983,6 +993,8 @@ class ComprasUI(QWidget):
                 status,
                 considerar_no_saldo_movimentacao=considerar_no_saldo
             )
+            # PATCH: se veio da importação do app, troca origem para "compras"
+            atualizar_origem_compra(self.compra_edit_id, "compras", origem_esperada="app")
             QMessageBox.information(self, "Sucesso", "Compra editada com sucesso.")
 
         # Limpa e atualiza UI
@@ -997,11 +1009,78 @@ class ComprasUI(QWidget):
 
     @requer_permissao(['admin', 'gerente', 'operador'])
     def editar_compra_finalizada(self):
-        linha = self.tabela_compras_aberto.currentRow()
+        aba_idx = self.tabs.currentIndex()
+        if aba_idx == 1:  # App
+            row = self.tabela_compras_app.currentRow()
+            if row < 0:
+                QMessageBox.warning(self, "Importar", "Selecione uma compra do App para importar.")
+                return
+            compra_id = int(self.tabela_compras_app.item(row, 0).text())
+            compra, itens, _ = obter_dados_para_editar_compra(compra_id)
+            cliente = compra.get('fornecedor')  # ou campo correto
+            descricao = compra.get('descricao', '')
+
+            categorias = obter_categorias_do_fornecedor(compra['fornecedor_id'])
+
+            def get_precos_func(cat_id):
+                # Busca preços ajustados para cada produto nesta categoria
+                precos = {}
+                for item in itens:
+                    ajuste = obter_ajuste_fixo(item['produto_id'], cat_id)
+                    produto = obter_produto(item['produto_id'])
+                    precos[item['produto_id']] = float(produto['preco_base']) + float(ajuste)
+                return precos
+
+            dialog = ImportarAppDialog(cliente, descricao, itens, categorias, get_precos_func, self)
+            if dialog.exec() and dialog.resultado:
+                # Prosseguir: abrir edição normal, preenchendo campos com dialog.novos_itens e categoria
+                self.itens_compra = dialog.novos_itens
+                # Setar categoria temporária, fornecedor, etc, conforme necessário
+                # Seta self.compra_edit_id = compra_id
+                # Troca origem para "compras" ao finalizar
+                self.compra_edit_id = compra_id
+                idx_cat = self.combo_categoria_temporaria.findData(dialog.categoria_id)
+                if idx_cat != -1:
+                    self.combo_categoria_temporaria.setCurrentIndex(idx_cat)
+                # Preenche fornecedor
+                idx_forn = self.combo_fornecedor.findData(compra['fornecedor_id'])
+                if idx_forn != -1:
+                    self.combo_fornecedor.setCurrentIndex(idx_forn)
+                # Preenche data
+                if 'data_compra' in compra:
+                    try:
+                        from PySide6.QtCore import QDate
+                        if isinstance(compra['data_compra'], QDate):
+                            self.input_data.setDate(compra['data_compra'])
+                        else:
+                            self.input_data.setDate(QDate.fromString(str(compra['data_compra']), "yyyy-MM-dd"))
+                    except Exception:
+                        self.input_data.setDate(QDate.currentDate())
+                # Preenche valor de lançamento
+                valor_adiantamento = 0
+                if hasattr(dialog, "categoria_id"):
+                    # Se já buscou adiantamento, use
+                    valor_adiantamento = dialog.novos_itens[0].get('adiantamento', 0) if dialog.novos_itens else 0
+                if valor_adiantamento > 0:
+                    self.combo_tipo_lancamento.setCurrentIndex(1)
+                    self.input_valor_lancamento.setText(str(valor_adiantamento))
+                else:
+                    self.combo_tipo_lancamento.setCurrentIndex(0)
+                    self.input_valor_lancamento.setText(str(compra.get('valor_abatimento', 0)))
+                # Preenche status
+                idx_status = self.combo_status.findText(compra['status'])
+                self.combo_status.setCurrentIndex(idx_status if idx_status >= 0 else 0)
+                # Considerar no saldo
+                self.checkbox_considerar_no_saldo.setChecked(compra.get('considerar_no_saldo_movimentacao', True))
+                # Atualiza tabela de itens
+                self.atualizar_tabela_itens_adicionados()
+                # Ao salvar, chame função que atualiza origem para "compras"
+            return  # Interrompe o fluxo normal aqui
+        linha = self.tabela_ativa().currentRow()
         if linha < 0:
             QMessageBox.information(self, "Editar Compra", "Selecione uma compra para editar.")
             return
-        compra_id_item = self.tabela_compras_aberto.item(linha, 0)
+        compra_id_item = self.tabela_ativa().item(linha, 0)
         if compra_id_item is None:
             return
         compra_id = int(compra_id_item.text())
@@ -1059,9 +1138,25 @@ class ComprasUI(QWidget):
         self.compra_edit_id = compra_id
         self.atualizar_tabela_itens_adicionados()
 
+    def tabela_ativa(self):
+        aba_idx = self.tabs.currentIndex()
+        if aba_idx == 0:
+            return self.tabela_compras_aberto
+        elif aba_idx == 1:
+            return self.tabela_compras_app
+        else:
+            return self.tabela_compras_concluidas
+
     @requer_permissao(['admin', 'gerente', 'operador'])
     def alterar_status_compra(self):
-        tabela = self.tabela_compras_aberto if self.tabs.currentIndex() == 0 else self.tabela_compras_concluidas
+        aba_idx = self.tabs.currentIndex()
+        if aba_idx == 0:
+            tabela = self.tabela_compras_aberto
+        elif aba_idx == 1:
+            tabela = self.tabela_compras_app
+        else:
+            tabela = self.tabela_compras_concluidas
+
         compra_id = self.obter_compra_id_selecionado(tabela=tabela)
         if compra_id is None:
             QMessageBox.warning(self, "Alterar Status", "Selecione uma compra para alterar o status.")
@@ -1076,12 +1171,20 @@ class ComprasUI(QWidget):
 
     @requer_permissao(['admin', 'gerente'])
     def excluir_compra_finalizada(self):
-        linha = self.tabela_compras_aberto.currentRow()
+        aba_idx = self.tabs.currentIndex()
+        if aba_idx == 0:
+            tabela = self.tabela_compras_aberto
+        elif aba_idx == 1:
+            tabela = self.tabela_compras_app
+        else:
+            tabela = self.tabela_compras_concluidas
+
+        linha = tabela.currentRow()
         if linha < 0:
             QMessageBox.information(self, "Excluir Compra", "Selecione uma compra para excluir.")
             return
 
-        compra_id_item = self.tabela_compras_aberto.item(linha, 0)
+        compra_id_item = tabela.item(linha, 0)
         if compra_id_item is None:
             return
 
@@ -1155,7 +1258,7 @@ class ComprasUI(QWidget):
 
     def mostrar_itens_da_compra(self, row, column, tabela=None):
         if tabela is None:
-            tabela = self.tabela_compras_aberto
+            tabela = self.tabela_ativa()
         compra_id_item = tabela.item(row, 0)
         if compra_id_item is None:
             return

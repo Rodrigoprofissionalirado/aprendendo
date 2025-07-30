@@ -1,4 +1,5 @@
-from PySide6.QtWidgets import QDialog, QVBoxLayout, QLabel, QLineEdit, QHBoxLayout, QPushButton, QDialogButtonBox, QWidget
+from PySide6.QtWidgets import (QDialog, QVBoxLayout, QLabel, QLineEdit, QHBoxLayout, QPushButton, QDialogButtonBox, QWidget,
+    QTableWidget, QTableWidgetItem, QComboBox)
 from PySide6.QtCore import Qt
 from decimal import Decimal, InvalidOperation
 
@@ -62,11 +63,11 @@ class ConfirmTransacaoDialog(QDialog):
 
 
 class PagamentoMovimentacaoDialog(QDialog):
-    def __init__(self, valor_movimentacao, saldo_anterior, parent=None):
+    def __init__(self, valor_movimentacao, saldo_atual, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Pagamento referente à movimentação")
         self.valor_movimentacao = valor_movimentacao
-        self.saldo_anterior = saldo_anterior
+        self.saldo_atual = saldo_atual
         layout = QVBoxLayout(self)
         self.resultado = None
 
@@ -86,7 +87,7 @@ class PagamentoMovimentacaoDialog(QDialog):
         campos_layout = QVBoxLayout(self.campos_widget)
         self.campos_widget.setVisible(False)
         campos_layout.addWidget(QLabel(f"Valor da movimentação: R$ {valor_movimentacao:.2f}"))
-        campos_layout.addWidget(QLabel(f"Saldo anterior: R$ {saldo_anterior:.2f}"))
+        campos_layout.addWidget(QLabel(f"Saldo atual: R$ {saldo_atual:.2f}"))
         desconto_layout = QHBoxLayout()
         desconto_layout.addWidget(QLabel("Desconto: R$"))
         self.input_desconto = QLineEdit("")
@@ -94,6 +95,9 @@ class PagamentoMovimentacaoDialog(QDialog):
         campos_layout.addLayout(desconto_layout)
         self.label_valor_final = QLabel(f"Valor da transação: R$ {valor_movimentacao:.2f}")
         campos_layout.addWidget(self.label_valor_final)
+        # NOVO: saldo projetado após transação
+        self.label_saldo_projetado = QLabel(self._saldo_projetado_text(valor_movimentacao))
+        campos_layout.addWidget(self.label_saldo_projetado)
         self.btn_confirmar = QPushButton("Lançar pagamento")
         self.btn_confirmar.clicked.connect(self.confirmar)
         campos_layout.addWidget(self.btn_confirmar)
@@ -110,6 +114,10 @@ class PagamentoMovimentacaoDialog(QDialog):
         self.resultado = "nao"
         self.reject()
 
+    def _saldo_projetado_text(self, valor_final):
+        saldo_proj = self.saldo_atual - valor_final
+        return f"Saldo após pagamento: R$ {saldo_proj:.2f}"
+
     def atualizar_valor_final(self):
         try:
             desconto = float(self.input_desconto.text().replace(",", "."))
@@ -118,6 +126,8 @@ class PagamentoMovimentacaoDialog(QDialog):
         valor_final = max(0.0, self.valor_movimentacao - desconto)
         self.label_valor_final.setText(f"Valor da transação: R$ {valor_final:.2f}")
         self.valor_lancamento = valor_final
+        # Atualiza saldo projetado
+        self.label_saldo_projetado.setText(self._saldo_projetado_text(valor_final))
 
     def confirmar(self):
         self.resultado = "sim"
@@ -216,4 +226,70 @@ class ConfirmarExclusaoPagamentoDialog(QDialog):
 
     def on_nao(self):
         self.resultado = False
+        self.accept()
+
+class ImportarAppDialog(QDialog):
+    def __init__(self, cliente, descricao, itens, categorias, get_precos_func, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Importar compra do App")
+        self.resultado = False
+        self.categoria_id = None
+        self.novos_itens = []
+
+        layout = QVBoxLayout(self)
+
+        layout.addWidget(QLabel(f"Cliente: {cliente}"))
+        layout.addWidget(QLabel(f"Descrição: {descricao}"))
+
+        # Combo de categoria
+        layout.addWidget(QLabel("Escolha a categoria para esta compra:"))
+        self.combo_categoria = QComboBox()
+        for c in categorias:
+            self.combo_categoria.addItem(c['nome'], c['id'])
+        layout.addWidget(self.combo_categoria)
+
+        # Tabela de itens
+        self.table = QTableWidget()
+        self.table.setColumnCount(3)
+        self.table.setHorizontalHeaderLabels(["Produto", "Quantidade", "Preço (ajustado)"])
+        layout.addWidget(self.table)
+        self.itens = itens
+        self.get_precos_func = get_precos_func
+
+        self.combo_categoria.currentIndexChanged.connect(self.atualizar_precos)
+        self.atualizar_precos()
+
+        # Botões
+        btns = QHBoxLayout()
+        btn_prosseguir = QPushButton("Prosseguir")
+        btn_cancelar = QPushButton("Cancelar")
+        btn_prosseguir.clicked.connect(self.prosseguir)
+        btn_cancelar.clicked.connect(self.reject)
+        btns.addWidget(btn_prosseguir)
+        btns.addWidget(btn_cancelar)
+        layout.addLayout(btns)
+
+    def atualizar_precos(self):
+        cat_id = self.combo_categoria.currentData()
+        precos = self.get_precos_func(cat_id)
+        self.table.setRowCount(len(self.itens))
+        self.novos_itens = []
+        for i, item in enumerate(self.itens):
+            nome = item["produto_nome"]
+            qtd = item["quantidade"]
+            preco = precos.get(item["produto_id"], 0)
+            self.table.setItem(i, 0, QTableWidgetItem(nome))
+            self.table.setItem(i, 1, QTableWidgetItem(str(qtd)))
+            self.table.setItem(i, 2, QTableWidgetItem(f"{preco:.2f}"))
+            self.novos_itens.append({
+                "produto_id": item["produto_id"],
+                "nome": nome,
+                "quantidade": qtd,
+                "preco": preco,
+                "total": preco * qtd
+            })
+
+    def prosseguir(self):
+        self.resultado = True
+        self.categoria_id = self.combo_categoria.currentData()
         self.accept()
