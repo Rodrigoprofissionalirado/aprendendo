@@ -218,6 +218,7 @@ class ComprasUI(QWidget):
         self.input_numero_fardos = QLineEdit()
         self.input_numero_fardos.setPlaceholderText("Nº de fardos")
         self.input_numero_fardos.setValidator(QIntValidator(0, 9999))
+        self.input_numero_fardos.installEventFilter(self)
 
         layout_produto.addWidget(QLabel("Produto"), 0, 0)
         layout_produto.addWidget(self.combo_produto, 0, 1)
@@ -474,7 +475,7 @@ class ComprasUI(QWidget):
         self.input_quantidade.setFocus()
 
     def atalho_enter_quantidade(self):
-        self.btn_adicionar_item.click()
+        self.adicionar_item()
         self.combo_produto.setFocus()
         self.combo_produto.lineEdit().selectAll()
 
@@ -488,8 +489,12 @@ class ComprasUI(QWidget):
         return int(item.text()) if item else None
 
     def eventFilter(self, obj, event):
-        if obj is self.input_quantidade and event.type() == QEvent.KeyPress:
-            if event.key() in (Qt.Key_Return, Qt.Key_Enter):
+        if event.type() == QEvent.KeyPress:
+            if obj is self.input_quantidade and event.key() in (Qt.Key_Return, Qt.Key_Enter):
+                self.input_numero_fardos.setFocus()
+                self.input_numero_fardos.selectAll()
+                return True
+            elif obj is self.input_numero_fardos and event.key() in (Qt.Key_Return, Qt.Key_Enter):
                 self.atalho_enter_quantidade()
                 return True
         return super().eventFilter(obj, event)

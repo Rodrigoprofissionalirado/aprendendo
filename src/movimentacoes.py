@@ -1006,6 +1006,7 @@ class MovimentacaoTabUI(QWidget):
         self.input_numero_fardos = QLineEdit()
         self.input_numero_fardos.setPlaceholderText("Nº de fardos")
         self.input_numero_fardos.setValidator(QIntValidator(0, 99999))
+        self.input_numero_fardos.installEventFilter(self)
 
         self.layout_produto.addWidget(QLabel("Produto"), 0, 0)
         self.layout_produto.addWidget(self.combo_produto, 0, 1)
@@ -1200,8 +1201,12 @@ class MovimentacaoTabUI(QWidget):
         self.input_quantidade.setFocus()
 
     def eventFilter(self, obj, event):
-        if obj is self.input_quantidade and event.type() == QEvent.KeyPress:
-            if event.key() in (Qt.Key_Return, Qt.Key_Enter):
+        if event.type() == QEvent.KeyPress:
+            if obj is self.input_quantidade and event.key() in (Qt.Key_Return, Qt.Key_Enter):
+                self.input_numero_fardos.setFocus()
+                self.input_numero_fardos.selectAll()
+                return True
+            elif obj is self.input_numero_fardos and event.key() in (Qt.Key_Return, Qt.Key_Enter):
                 self.atalho_enter_quantidade()
                 return True
         return super().eventFilter(obj, event)
@@ -1608,6 +1613,10 @@ class MovimentacaoTabUI(QWidget):
         # PATCH: usar obter_itens_e_lancamentos_da_compra para mostrar produtos + abatimento + adiantamento
         itens, valor_abatimento, valor_adiantamento = obter_itens_e_lancamentos_da_compra(compra_id)
         linha_extra = int(valor_adiantamento > 0) + int(valor_abatimento > 0)
+
+        # Atualize aqui: 5 colunas e cabeçalho com "Nº Fardos"
+        self.tabela_itens.setColumnCount(5)
+        self.tabela_itens.setHorizontalHeaderLabels(["Produto", "Qtd", "Preço", "Total", "Nº Fardos"])
         self.tabela_itens.setRowCount(len(itens) + linha_extra)
 
         for i, item in enumerate(itens):
@@ -1618,6 +1627,9 @@ class MovimentacaoTabUI(QWidget):
             self.tabela_itens.setItem(i, 2, QTableWidgetItem(preco_formatado))
             total_formatado = self.locale.toString(preco_unitario * float(item['quantidade']), 'f', 2)
             self.tabela_itens.setItem(i, 3, QTableWidgetItem(total_formatado))
+            # NOVO: número de fardos
+            nfardos = item.get("numero_fardos")
+            self.tabela_itens.setItem(i, 4, QTableWidgetItem(str(nfardos) if nfardos is not None else ""))
 
         row = len(itens)
         # Adiantamento
@@ -1626,6 +1638,7 @@ class MovimentacaoTabUI(QWidget):
             self.tabela_itens.setItem(row, 1, QTableWidgetItem(""))
             self.tabela_itens.setItem(row, 2, QTableWidgetItem(""))
             self.tabela_itens.setItem(row, 3, QTableWidgetItem(f"+{self.locale.toString(valor_adiantamento, 'f', 2)}"))
+            self.tabela_itens.setItem(row, 4, QTableWidgetItem(""))
             row += 1
         # Abatimento
         if valor_abatimento > 0:
@@ -1633,7 +1646,7 @@ class MovimentacaoTabUI(QWidget):
             self.tabela_itens.setItem(row, 1, QTableWidgetItem(""))
             self.tabela_itens.setItem(row, 2, QTableWidgetItem(""))
             self.tabela_itens.setItem(row, 3, QTableWidgetItem(f"-{self.locale.toString(valor_abatimento, 'f', 2)}"))
-
+            self.tabela_itens.setItem(row, 4, QTableWidgetItem(""))
 
 class MovimentacoesUI(QWidget):
     def __init__(self):
