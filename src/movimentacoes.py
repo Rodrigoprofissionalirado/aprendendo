@@ -407,7 +407,6 @@ class MovimentacaoTabUI(QWidget):
     def atualizar_item_editado(self, row, column):
         if row < 0 or row >= len(self.itens_movimentacao):
             return
-
         try:
             if column == 1:  # Quantidade
                 nova_qtd = int(self.tabela_itens_adicionados.item(row, 1).text())
@@ -420,9 +419,11 @@ class MovimentacaoTabUI(QWidget):
                 if novo_preco < 0:
                     raise ValueError("Preço não pode ser negativo.")
                 self.itens_movimentacao[row]['preco'] = novo_preco
+            elif column == 4:  # Número de fardos
+                novo_nfardos_str = self.tabela_itens_adicionados.item(row, 4).text()
+                self.itens_movimentacao[row]['numero_fardos'] = int(novo_nfardos_str) if novo_nfardos_str else None
             else:
-                return  # Não faz nada para outras colunas
-
+                return
             qtd = self.itens_movimentacao[row]['quantidade']
             preco = self.itens_movimentacao[row]['preco']
             self.itens_movimentacao[row]['total'] = Decimal(str(qtd)) * preco
@@ -438,10 +439,11 @@ class MovimentacaoTabUI(QWidget):
             QMessageBox.warning(self, "Erro", f"Valor inválido: {e}")
             # Restaurar valor anterior
             self.tabela_itens_adicionados.blockSignals(True)
-            self.tabela_itens_adicionados.setItem(row, 1,
-                                                  QTableWidgetItem(str(self.itens_movimentacao[row]['quantidade'])))
+            self.tabela_itens_adicionados.setItem(row, 1, QTableWidgetItem(str(self.itens_movimentacao[row]['quantidade'])))
             preco_formatado = decimal_para_str_brasil(self.itens_movimentacao[row]['preco'], self.locale)
             self.tabela_itens_adicionados.setItem(row, 2, QTableWidgetItem(preco_formatado))
+            nfardos = self.itens_movimentacao[row].get("numero_fardos")
+            self.tabela_itens_adicionados.setItem(row, 4, QTableWidgetItem(str(nfardos) if nfardos is not None else ""))
             self.tabela_itens_adicionados.blockSignals(False)
 
     def exportar_movimentacoes_pdf(self):
@@ -989,28 +991,39 @@ class MovimentacaoTabUI(QWidget):
         self.input_valor_operacao.setVisible(False)
         self.label_valor_operacao.setVisible(False)
 
+        # Campos de produtos
         self.layout_produto = QGridLayout()
         self.combo_produto = QComboBox()
-        self.combo_produto.setEditable(True)  # Permitir escrever o nome
+        self.combo_produto.setEditable(True)
         self.combo_produto.lineEdit().setPlaceholderText("Selecione um produto")
         self.combo_produto.lineEdit().returnPressed.connect(self.focus_quantidade)
         self.input_quantidade = QLineEdit()
         self.input_quantidade.setPlaceholderText("Quantidade")
         self.input_quantidade.setValidator(QIntValidator(1, 99999))
         self.input_quantidade.installEventFilter(self)
+
+        # NOVO campo: Número de Fardos
+        self.input_numero_fardos = QLineEdit()
+        self.input_numero_fardos.setPlaceholderText("Nº de fardos")
+        self.input_numero_fardos.setValidator(QIntValidator(0, 99999))
+
         self.layout_produto.addWidget(QLabel("Produto"), 0, 0)
         self.layout_produto.addWidget(self.combo_produto, 0, 1)
         self.layout_produto.addWidget(QLabel("Quantidade"), 1, 0)
         self.layout_produto.addWidget(self.input_quantidade, 1, 1)
+        self.layout_produto.addWidget(QLabel("Nº de fardos"), 2, 0)
+        self.layout_produto.addWidget(self.input_numero_fardos, 2, 1)
+
         btn_add_item = QPushButton("Adicionar Produto")
         btn_add_item.clicked.connect(self.adicionar_item)
-        self.layout_produto.addWidget(btn_add_item, 2, 0, 1, 2)
+        self.layout_produto.addWidget(btn_add_item, 3, 0, 1, 2)
         form_grid.addLayout(self.layout_produto, 8, 0, 1, 2)
 
-        # Tabela de itens adicionados (apenas visualização do preço e total)
+        # Tabela de itens adicionados
         self.tabela_itens_adicionados = QTableWidget()
-        self.tabela_itens_adicionados.setColumnCount(4)
-        self.tabela_itens_adicionados.setHorizontalHeaderLabels(["Produto", "Qtd", "Valor unitário", "Total"])
+        self.tabela_itens_adicionados.setColumnCount(5)
+        self.tabela_itens_adicionados.setHorizontalHeaderLabels(
+            ["Produto", "Qtd", "Valor unitário", "Total", "Nº Fardos"])
         self.tabela_itens_adicionados.setEditTriggers(QTableWidget.DoubleClicked | QTableWidget.SelectedClicked)
         self.tabela_itens_adicionados.cellChanged.connect(self.atualizar_item_editado)
         form_grid.addWidget(QLabel("Itens (antes de salvar):"), 9, 0, 1, 2)
@@ -1234,16 +1247,23 @@ class MovimentacaoTabUI(QWidget):
         preco_base = produto["preco_base"]
         preco_unitario = Decimal(str(preco_base)) + ajuste_fixo
         total = quantidade * preco_unitario
+
+        # NOVO: número de fardos
+        numero_fardos = self.input_numero_fardos.text()
+        numero_fardos = int(numero_fardos) if numero_fardos else None
+
         self.itens_movimentacao.append({
             "produto_id": produto_id,
             "nome": produto["nome"],
             "quantidade": quantidade,
             "preco": preco_unitario,
-            "total": total
+            "total": total,
+            "numero_fardos": numero_fardos
         })
         self.atualizar_tabela_itens_adicionados()
         self.combo_produto.setCurrentIndex(-1)
         self.input_quantidade.setText("")
+        self.input_numero_fardos.setText("")
 
     def atualizar_tabela_itens_adicionados(self):
         self.tabela_itens_adicionados.blockSignals(True)
@@ -1269,6 +1289,11 @@ class MovimentacaoTabUI(QWidget):
                 total_item = QTableWidgetItem(decimal_para_str_brasil(item['total'], self.locale))
                 total_item.setFlags(total_item.flags() & ~Qt.ItemIsEditable)
                 self.tabela_itens_adicionados.setItem(i, 3, total_item)
+                # NOVO: número de fardos
+                nfardos = item.get("numero_fardos")
+                nf_item = QTableWidgetItem(str(nfardos) if nfardos is not None else "")
+                nf_item.setFlags(nf_item.flags() | Qt.ItemIsEditable)
+                self.tabela_itens_adicionados.setItem(i, 4, nf_item)
         finally:
             self.tabela_itens_adicionados.blockSignals(False)
             self.atualizar_total_movimentacao()

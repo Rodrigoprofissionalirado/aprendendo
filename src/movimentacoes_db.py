@@ -131,19 +131,6 @@ def obter_saldos_acumulados(fornecedor_id, data_de, data_ate, remove_acento):
         exportadas = [row['id'] for row in cursor.fetchall()]
     return {mid: saldo_por_id[mid] for mid in exportadas}
 
-    # Filtra apenas ids dentro do intervalo exportado
-    with get_cursor() as cursor:
-        cursor.execute("""
-                       SELECT c.id
-                       FROM compras c
-                       WHERE c.fornecedor_id = %s
-                         AND c.data_compra >= %s
-                         AND c.data_compra <= %s
-                       ORDER BY c.data_compra, c.id
-                       """, (fornecedor_id, data_de, data_ate))
-        exportadas = [row['id'] for row in cursor.fetchall()]
-    return {mid: saldo_por_id[mid] for mid in exportadas}
-
 def listar_itens_movimentacao(compra_id):
     from compras.compras_db import listar_itens_compra
     if not compra_id:
@@ -173,9 +160,8 @@ def buscar_fornecedor_id_por_numero_balanca(numero_balanca):
         cursor.execute("SELECT id FROM fornecedores WHERE fornecedores_numerobalanca = %s", (numero_balanca,))
         return cursor.fetchone()
 
-
 def atualizar_movimentacao(compra_id, data, tipo, direcao, descricao, valor_abatimento,
-    valor_operacao, tipo_lancamento,# "abatimento" ou "adiantamento"
+    valor_operacao, tipo_lancamento, # "abatimento" ou "adiantamento"
     valor_lancamento,  # valor do campo input (decimal, sempre positivo)
     origem='movimentacao', considerar_no_saldo=True, fornecedor_id=None,
     dados_bancarios_id=None
@@ -263,12 +249,20 @@ def inserir_item_compra(compra_id, itens):
     """
         Insere vários itens de compra de uma só vez usando executemany.
         :param compra_id: id da compra
-        :param itens: lista de dicionários ou tuplas (produto_id, quantidade, preco_unitario)
+        :param itens: lista de dicionários ou tuplas (produto_id, quantidade, preco_unitario, numero_fardos)
         """
     with get_cursor(commit=True) as cursor:
         cursor.executemany(
-            "INSERT INTO itens_compra (compra_id, produto_id, quantidade, preco_unitario) VALUES (%s, %s, %s, %s)",
-            [(compra_id, item['produto_id'], item['quantidade'], item['preco_unitario']) for item in itens]
+            "INSERT INTO itens_compra (compra_id, produto_id, quantidade, preco_unitario, numero_fardos) VALUES (%s, %s, %s, %s, %s)",
+            [
+                (
+                    compra_id,
+                    item['produto_id'],
+                    item['quantidade'],
+                    item['preco_unitario'],
+                    item.get('numero_fardos')
+                ) for item in itens
+            ]
         )
     # PATCH: Atualiza o campo total após inserir itens
     with get_cursor(commit=True) as cursor:

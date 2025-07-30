@@ -80,7 +80,6 @@ def obter_produto(produto_id):
         cursor.execute("SELECT id, nome, preco_base FROM produtos WHERE id = %s", (produto_id,))
         return cursor.fetchone()
 
-
 def adicionar_compra(
     fornecedor_id, data_compra, valor_abatimento, itens_compra, status,
     origem='compras', considerar_no_saldo_movimentacao=True
@@ -99,8 +98,16 @@ def adicionar_compra(
         # --- Usando executemany para inserir todos os itens de uma vez ---
         if itens_compra:
             cursor.executemany(
-                "INSERT INTO itens_compra (compra_id, produto_id, quantidade, preco_unitario) VALUES (%s, %s, %s, %s)",
-                [(compra_id, item['produto_id'], item['quantidade'], item['preco']) for item in itens_compra]
+                "INSERT INTO itens_compra (compra_id, produto_id, quantidade, preco_unitario, numero_fardos) VALUES (%s, %s, %s, %s, %s)",
+                [
+                    (
+                        compra_id,
+                        item['produto_id'],
+                        item['quantidade'],
+                        item['preco'],
+                        item.get('numero_fardos')
+                    ) for item in itens_compra
+                ]
             )
 
         cursor.execute("""
@@ -142,8 +149,16 @@ def atualizar_compra(
         # ---- Atualização em lote ----
         if itens_compra:
             cursor.executemany(
-                "INSERT INTO itens_compra (compra_id, produto_id, quantidade, preco_unitario) VALUES (%s, %s, %s, %s)",
-                [(compra_id, item['produto_id'], item['quantidade'], item['preco']) for item in itens_compra]
+                "INSERT INTO itens_compra (compra_id, produto_id, quantidade, preco_unitario, numero_fardos) VALUES (%s, %s, %s, %s, %s)",
+                [
+                    (
+                        compra_id,
+                        item['produto_id'],
+                        item['quantidade'],
+                        item['preco'],
+                        item.get('numero_fardos')
+                    ) for item in itens_compra
+                ]
             )
         cursor.execute("""
             UPDATE compras
@@ -183,7 +198,8 @@ def obter_detalhes_compra(compra_id):
                    i.produto_id,
                    i.quantidade,
                    i.preco_unitario,
-                   (i.quantidade * i.preco_unitario) AS total
+                   (i.quantidade * i.preco_unitario) AS total,
+                   i.numero_fardos
             FROM itens_compra i
                  JOIN produtos p ON i.produto_id = p.id
             WHERE i.compra_id = %s
@@ -250,7 +266,7 @@ def buscar_nome_conta_padrao(fornecedor_id):
                             """, (fornecedor_id,))
             row = cursor.fetchone()
             return row["nome_conta"] if row else "Conta não cadastrada"
-    except mysql.connector.Error as e:
+    except Exception as e:
         print(f"Erro ao buscar conta padrão: {e}")
         return "Erro ao buscar conta"
 
@@ -315,7 +331,7 @@ def obter_dados_para_editar_compra(compra_id):
         compra = cursor.fetchone()
 
         cursor.execute("""
-            SELECT p.nome AS produto_nome, i.produto_id, i.quantidade, i.preco_unitario, (i.quantidade * i.preco_unitario) AS total
+            SELECT p.nome AS produto_nome, i.produto_id, i.quantidade, i.preco_unitario, (i.quantidade * i.preco_unitario) AS total, i.numero_fardos
             FROM itens_compra i
             JOIN produtos p ON i.produto_id = p.id
             WHERE i.compra_id = %s
@@ -339,7 +355,8 @@ def obter_itens_e_lancamentos_da_compra(compra_id):
                    i.produto_id,
                    i.quantidade,
                    i.preco_unitario,
-                   (i.quantidade * i.preco_unitario) AS total
+                   (i.quantidade * i.preco_unitario) AS total,
+                   i.numero_fardos
             FROM itens_compra i
             JOIN produtos p ON i.produto_id = p.id
             WHERE i.compra_id = %s
@@ -477,7 +494,8 @@ def listar_itens_compra(compra_ids):
         format_ids = ','.join(['%s'] * len(compra_ids))
         cursor.execute(f"""
             SELECT i.compra_id, p.nome AS produto_nome, i.produto_id, i.quantidade, i.preco_unitario, 
-                   (i.quantidade * i.preco_unitario) AS total
+                   (i.quantidade * i.preco_unitario) AS total,
+                   i.numero_fardos
             FROM itens_compra i
             JOIN produtos p ON i.produto_id = p.id
             WHERE i.compra_id IN ({format_ids})
