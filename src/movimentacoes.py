@@ -810,9 +810,10 @@ class MovimentacaoTabUI(QWidget):
                     draw.text((margem, y), "Produtos", fill="black", font=fonte_bold)
                     y += 26
                     draw.text((margem, y), "Produto", fill="black", font=fonte_menor)
-                    draw.text((margem + 500, y), "Qtd", fill="black", font=fonte_menor)
-                    draw.text((margem + 650, y), "Unitário", fill="black", font=fonte_menor)
-                    draw.text((margem + 800, y), "Total", fill="black", font=fonte_menor)
+                    draw.text((margem + 400, y), "Qtd", fill="black", font=fonte_menor)
+                    draw.text((margem + 480, y), "Fardos", fill="black", font=fonte_menor)
+                    draw.text((margem + 560, y), "Unitário", fill="black", font=fonte_menor)
+                    draw.text((margem + 720, y), "Total", fill="black", font=fonte_menor)
                     y += 5
                     draw.line((margem, y + 20, largura_img - margem, y + 20), fill="black", width=1)
                     y += 22
@@ -821,9 +822,13 @@ class MovimentacaoTabUI(QWidget):
                     for item in itens:
                         draw.text((margem, y), limpar_numero_nome_produto(item['produto_nome']), fill="black",
                                   font=fonte_mono)
-                        draw.text((margem + 500, y), str(item['quantidade']), fill="black", font=fonte_mono)
-                        draw.text((margem + 650, y), f"R$ {item['preco_unitario']:.2f}", fill="black", font=fonte_mono)
-                        draw.text((margem + 800, y), f"R$ {item['total']:.2f}", fill="black", font=fonte_mono)
+                        draw.text((margem + 400, y), str(item['quantidade']), fill="black", font=fonte_mono)
+                        # Adicionar número de fardos
+                        numero_fardos = item.get('numero_fardos')
+                        fardos_texto = str(numero_fardos) if numero_fardos else "-"
+                        draw.text((margem + 480, y), fardos_texto, fill="black", font=fonte_mono)
+                        draw.text((margem + 560, y), f"R$ {item['preco_unitario']:.2f}", fill="black", font=fonte_mono)
+                        draw.text((margem + 720, y), f"R$ {item['total']:.2f}", fill="black", font=fonte_mono)
                         total += float(item['total'])
                         y += 28
                     y += 5
