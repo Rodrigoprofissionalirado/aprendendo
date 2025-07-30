@@ -40,8 +40,9 @@ def exportar_compra_pdf(compra, itens, saldo, filename, marca_dagua_texto=""):
     c.setFont(fonte_padrao + "-Bold", 11)
     c.drawString(20 * mm, y, "Produto")
     c.drawString(90 * mm, y, "Qtd")
-    c.drawString(110 * mm, y, "Unitário")
-    c.drawString(140 * mm, y, "Total")
+    c.drawString(105 * mm, y, "Fardos")
+    c.drawString(125 * mm, y, "Unitário")
+    c.drawString(155 * mm, y, "Total")
 
     altura_cabecalho = 6 * mm
     y_linha_cabecalho = y - 2 * mm
@@ -75,15 +76,19 @@ def exportar_compra_pdf(compra, itens, saldo, filename, marca_dagua_texto=""):
         c.setFont(fonte_padrao, 11)
         c.drawString(20 * mm, y, limpar_numero_nome_produto(item['produto_nome']))
         c.drawString(90 * mm, y, str(item['quantidade']))
-        c.drawString(110 * mm, y, f"R$ {item['preco_unitario']:.2f}")
-        c.drawString(140 * mm, y, f"R$ {item['total']:.2f}")
+        # Número de fardos
+        numero_fardos = item.get('numero_fardos')
+        fardos_texto = str(numero_fardos) if numero_fardos else "-"
+        c.drawString(105 * mm, y, fardos_texto)
+        c.drawString(125 * mm, y, f"R$ {item['preco_unitario']:.2f}")
+        c.drawString(155 * mm, y, f"R$ {item['total']:.2f}")
         total += float(item['total'])
         y -= altura_linha
 
     if float(compra['valor_abatimento']) != 0:
         c.setFont(fonte_padrao + "-Oblique", 11)
         c.drawString(20 * mm, y, "Abatimento/Adiantamento")
-        c.drawString(140 * mm, y, f"- R$ {compra['valor_abatimento']:.2f}")
+        c.drawString(155 * mm, y, f"- R$ {compra['valor_abatimento']:.2f}")
         y -= altura_linha
 
     y_linha_final = y + altura_linha / 2

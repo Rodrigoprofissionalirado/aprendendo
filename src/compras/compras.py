@@ -217,16 +217,23 @@ class ComprasUI(QWidget):
         layout_produto.addWidget(self.combo_produto, 0, 1)
         layout_produto.addWidget(QLabel("Quantidade"), 1, 0)
         layout_produto.addWidget(self.input_quantidade, 1, 1)
+        
+        # Campo para número de fardos
+        self.input_numero_fardos = QLineEdit()
+        self.input_numero_fardos.setPlaceholderText("Número de fardos (opcional)")
+        self.input_numero_fardos.setValidator(QIntValidator(0, 9999))  # Aceita inteiros de 0 a 9999
+        layout_produto.addWidget(QLabel("Nº Fardos"), 2, 0)
+        layout_produto.addWidget(self.input_numero_fardos, 2, 1)
 
         self.btn_adicionar_item = QPushButton("Adicionar Produto")
         self.btn_adicionar_item.clicked.connect(self.adicionar_item)
-        layout_produto.addWidget(self.btn_adicionar_item, 2, 0, 1, 2)
+        layout_produto.addWidget(self.btn_adicionar_item, 3, 0, 1, 2)
 
         layout_entrada.addLayout(layout_produto)
 
         self.tabela_itens_adicionados = QTableWidget()
-        self.tabela_itens_adicionados.setColumnCount(4)
-        self.tabela_itens_adicionados.setHorizontalHeaderLabels(["Produto", "Qtd", "Preço Unit.", "Total"])
+        self.tabela_itens_adicionados.setColumnCount(5)
+        self.tabela_itens_adicionados.setHorizontalHeaderLabels(["Produto", "Qtd", "Nº Fardos", "Preço Unit.", "Total"])
         self.tabela_itens_adicionados.setEditTriggers(QTableWidget.DoubleClicked | QTableWidget.SelectedClicked)
         self.tabela_itens_adicionados.cellChanged.connect(self.atualizar_item_editado)
         self.tabela_itens_adicionados.setSelectionBehavior(QTableWidget.SelectRows)
@@ -272,8 +279,8 @@ class ComprasUI(QWidget):
         widget_direita = QWidget()
         layout_direita = QVBoxLayout(widget_direita)
         self.tabela_itens_compra = QTableWidget()
-        self.tabela_itens_compra.setColumnCount(4)
-        self.tabela_itens_compra.setHorizontalHeaderLabels(["Produto", "Qtd", "Preço Unit.", "Total"])
+        self.tabela_itens_compra.setColumnCount(5)
+        self.tabela_itens_compra.setHorizontalHeaderLabels(["Produto", "Qtd", "Nº Fardos", "Preço Unit.", "Total"])
         self.tabela_itens_compra.setEditTriggers(QTableWidget.NoEditTriggers)
         self.tabela_itens_compra.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.tabela_itens_compra.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
@@ -896,10 +903,15 @@ class ComprasUI(QWidget):
         preco = Decimal(str(produto["preco_base"])) + ajuste_fixo
         total = Decimal(str(quantidade)) * preco
 
+        # Obter número de fardos (opcional)
+        numero_fardos_texto = self.input_numero_fardos.text().strip()
+        numero_fardos = int(numero_fardos_texto) if numero_fardos_texto else None
+
         self.itens_compra.append({
             "produto_id": produto_id,
             "nome": produto["nome"],
             "quantidade": quantidade,
+            "numero_fardos": numero_fardos,
             "preco": preco,
             "total": total
         })
@@ -907,6 +919,7 @@ class ComprasUI(QWidget):
         self.atualizar_tabela_itens_adicionados()
         self.combo_produto.setCurrentIndex(-1)
         self.input_quantidade.clear()
+        self.input_numero_fardos.clear()
 
     def atualizar_tabela_itens_adicionados(self):
         self.tabela_itens_adicionados.blockSignals(True)
@@ -914,12 +927,16 @@ class ComprasUI(QWidget):
         for i, item in enumerate(self.itens_compra):
             self.tabela_itens_adicionados.setItem(i, 0, QTableWidgetItem(item["nome"]))
             self.tabela_itens_adicionados.setItem(i, 1, QTableWidgetItem(str(item["quantidade"])))
+            # Coluna número de fardos
+            numero_fardos = item.get("numero_fardos")
+            numero_fardos_texto = str(numero_fardos) if numero_fardos else "-"
+            self.tabela_itens_adicionados.setItem(i, 2, QTableWidgetItem(numero_fardos_texto))
             preco = Decimal(item['preco'])
             total = Decimal(item['total'])
             preco_formatado = formatar_moeda(preco, self.locale)
             total_formatado = formatar_moeda(total, self.locale)
-            self.tabela_itens_adicionados.setItem(i, 2, QTableWidgetItem(preco_formatado))
-            self.tabela_itens_adicionados.setItem(i, 3, QTableWidgetItem(total_formatado))
+            self.tabela_itens_adicionados.setItem(i, 3, QTableWidgetItem(preco_formatado))
+            self.tabela_itens_adicionados.setItem(i, 4, QTableWidgetItem(total_formatado))
         self.tabela_itens_adicionados.blockSignals(False)
         total = obter_total_produtos_lista(self.itens_compra)
         total_formatado = formatar_moeda(total, self.locale)
@@ -1246,6 +1263,7 @@ class ComprasUI(QWidget):
         self.combo_tipo_lancamento.setCurrentIndex(0)
         self.combo_produto.setCurrentIndex(-1)
         self.input_quantidade.clear()
+        self.input_numero_fardos.clear()
         self.item_edit_index = None
         self.compra_edit_id = None
         self.combo_status.setCurrentIndex(0)
@@ -1278,17 +1296,22 @@ class ComprasUI(QWidget):
         for i, item in enumerate(itens):
             self.tabela_itens_compra.setItem(i, 0, QTableWidgetItem(item['produto_nome']))
             self.tabela_itens_compra.setItem(i, 1, QTableWidgetItem(str(item['quantidade'])))
+            # Coluna número de fardos
+            numero_fardos = item.get('numero_fardos')
+            numero_fardos_texto = str(numero_fardos) if numero_fardos else "-"
+            self.tabela_itens_compra.setItem(i, 2, QTableWidgetItem(numero_fardos_texto))
             preco_formatado = self.locale.toString(float(item['preco_unitario']), 'f', 2)
             total_formatado = self.locale.toString(float(item['total']), 'f', 2)
-            self.tabela_itens_compra.setItem(i, 2, QTableWidgetItem(preco_formatado))
-            self.tabela_itens_compra.setItem(i, 3, QTableWidgetItem(total_formatado))
+            self.tabela_itens_compra.setItem(i, 3, QTableWidgetItem(preco_formatado))
+            self.tabela_itens_compra.setItem(i, 4, QTableWidgetItem(total_formatado))
 
         # Linha para abatimento ou adiantamento
         if valor_adiantamento > 0:
             self.tabela_itens_compra.setItem(len(itens), 0, QTableWidgetItem("Adiantamento"))
             self.tabela_itens_compra.setItem(len(itens), 1, QTableWidgetItem(""))
             self.tabela_itens_compra.setItem(len(itens), 2, QTableWidgetItem(""))
-            self.tabela_itens_compra.setItem(len(itens), 3,
+            self.tabela_itens_compra.setItem(len(itens), 3, QTableWidgetItem(""))
+            self.tabela_itens_compra.setItem(len(itens), 4,
                                              QTableWidgetItem(f"+{self.locale.toString(valor_adiantamento, 'f', 2)}"))
             total_final = subtotal + valor_adiantamento
             self.label_total_com_abatimento.setText(
@@ -1298,7 +1321,8 @@ class ComprasUI(QWidget):
             self.tabela_itens_compra.setItem(len(itens), 0, QTableWidgetItem("Abatimento"))
             self.tabela_itens_compra.setItem(len(itens), 1, QTableWidgetItem(""))
             self.tabela_itens_compra.setItem(len(itens), 2, QTableWidgetItem(""))
-            self.tabela_itens_compra.setItem(len(itens), 3,
+            self.tabela_itens_compra.setItem(len(itens), 3, QTableWidgetItem(""))
+            self.tabela_itens_compra.setItem(len(itens), 4,
                                              QTableWidgetItem(f"-{self.locale.toString(valor_abatimento, 'f', 2)}"))
             total_final = subtotal - valor_abatimento
             self.label_total_com_abatimento.setText(
