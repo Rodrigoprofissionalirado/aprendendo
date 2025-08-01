@@ -667,17 +667,30 @@ class FornecedoresUI(QWidget):
         endereco = self.input_endereco.text().strip()
         numero_balanca = self.input_numero_balanca.text().strip()
 
-        if nome and numero_balanca:
-            try:
-                self.db.adicionar_fornecedor(nome, endereco, numero_balanca)
-                self.cancelar_edicao()
-                self.atualizar_tabela()
-                self.carregar_combo_fornecedores()
-                self.aplicar_filtro()
-            except Exception as e:
-                QMessageBox.critical(self, 'Erro', str(e))
-        else:
+        if not (nome and numero_balanca):
             QMessageBox.warning(self, 'Campos obrigatórios', 'Preencha o nome e o número da balança.')
+            return
+
+        # Verifica se já existe fornecedor com o mesmo número na balança
+        with get_cursor() as cursor:
+            cursor.execute(
+                "SELECT id FROM fornecedores WHERE fornecedores_numerobalanca = %s", (numero_balanca,))
+            existente = cursor.fetchone()
+            if existente:
+                QMessageBox.warning(
+                    self, 'Duplicidade',
+                    f'Já existe um fornecedor cadastrado com o número de balança {numero_balanca}.'
+                )
+                return
+
+        try:
+            self.db.adicionar_fornecedor(nome, endereco, numero_balanca)
+            self.cancelar_edicao()
+            self.atualizar_tabela()
+            self.carregar_combo_fornecedores()
+            self.aplicar_filtro()
+        except Exception as e:
+            QMessageBox.critical(self, 'Erro', str(e))
 
     def atualizar_fornecedor_combo(self):
         index = self.combo_fornecedores.currentIndex()
