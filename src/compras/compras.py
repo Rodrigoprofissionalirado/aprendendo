@@ -751,7 +751,12 @@ class ComprasUI(QWidget):
                         dialog = PagamentoMovimentacaoDialog(valor_movimentacao, saldo_atual, self)
                         if dialog.exec() and getattr(dialog, "resultado", None) == "sim":
                             valor_pagamento = getattr(dialog, "valor_lancamento", valor_movimentacao)
-                            self.lancar_transacao_saida_para_compra(compra_id, valor_pagamento)
+                            valor_desconto = getattr(dialog, "valor_desconto", 0.0)
+                            descricao = ""
+                            if valor_desconto > 0:
+                                descricao += f"Desconto: R$ {valor_desconto:.2f} - "
+                            descricao += f"Pagamento referente à CompraID:{compra_id}"
+                            self.lancar_transacao_saida_para_compra(compra_id, valor_pagamento, descricao)
                     else:
                         QMessageBox.information(self, "Atenção",
                                                 "Já existe uma transação de pagamento para esta compra!")
@@ -764,14 +769,16 @@ class ComprasUI(QWidget):
 
             self.atualizar_tabelas()
 
-    def lancar_transacao_saida_para_compra(self, compra_id, valor_pagamento=None):
+    def lancar_transacao_saida_para_compra(self, compra_id, valor_pagamento=None, descricao_custom=None):
         from movimentacoes_db import inserir_movimentacao, inserir_item_compra, get_conta_padrao_id
         compra, itens = obter_detalhes_compra(compra_id)
         fornecedor_id = compra['fornecedor_id']
         data_compra = compra['data_compra']
-        descricao = obter_dados_bancarios_para_campo_copiavel(compra_id) + f" - CompraID:{compra_id}"
+        if descricao_custom is not None:
+            descricao = descricao_custom
+        else:
+            descricao = f"Pagamento referente à CompraID:{compra_id}"
 
-        # PATCH: Usa função que considera adiantamento e abatimento corretamente!
         valor_final = float(obter_valor_com_abatimento_adiantamento(compra_id))
         valor_para_lancar = valor_pagamento if valor_pagamento is not None else valor_final
 
@@ -789,7 +796,6 @@ class ComprasUI(QWidget):
             considerar_no_saldo=True,
             dados_bancarios_id=conta_padrao_id
         )
-
         return mov_id
 
     def atualizar_status_compra(self, compra_id, novo_status):

@@ -1458,13 +1458,18 @@ class MovimentacaoTabUI(QWidget):
                     dialog = PagamentoMovimentacaoDialog(float(valor_operacao), saldo_atual, self)
                     if dialog.exec() == QDialog.Accepted and dialog.resultado == "sim":
                         valor_pagamento = dialog.valor_lancamento
+                        valor_desconto = getattr(dialog, "valor_desconto", 0.0)
                         direcao_pagamento = "Saída" if tipo_normalizado == "compra" else "Entrada"
+                        descricao_pagamento = ""
+                        if valor_desconto > 0:
+                            descricao_pagamento += f"Desconto: R$ {valor_desconto:.2f} - "
+                        descricao_pagamento += f"Pagamento referente à CompraID:{compra_id}"
                         inserir_movimentacao(
                             fornecedor_id=self.fornecedor['id'],
                             data=datetime.now(),
                             tipo="Transação",
                             direcao=direcao_pagamento,
-                            descricao=f"Pagamento referente à CompraID:{compra_id}",
+                            descricao=descricao_pagamento,
                             valor_abatimento=Decimal('0.00'),
                             valor_operacao=Decimal(str(valor_pagamento)),
                             status="Concluída",
@@ -1503,13 +1508,23 @@ class MovimentacaoTabUI(QWidget):
                     dialog = PagamentoMovimentacaoDialog(float(valor_operacao), saldo_atual, self)
                     if dialog.exec() == QDialog.Accepted and dialog.resultado == "sim":
                         valor_pagamento = dialog.valor_lancamento
+                        # CAPTURA O DESCONTO INFORMADO
+                        try:
+                            valor_desconto = float(dialog.input_desconto.text().replace(",", ".") or "0")
+                        except Exception:
+                            valor_desconto = 0.0
                         direcao_pagamento = "Saída" if tipo_normalizado == "compra" else "Entrada"
+                        descricao_pagamento = ""
+                        if valor_desconto > 0:
+                            descricao_pagamento += f"Desconto: R$ {valor_desconto:.2f} - "
+                        descricao_pagamento += f"Pagamento referente à CompraID:{compra_id}"
+
                         inserir_movimentacao(
                             fornecedor_id=self.fornecedor['id'],
                             data=datetime.now(),
                             tipo="Transação",
                             direcao=direcao_pagamento,
-                            descricao=f"Pagamento referente à CompraID:{compra_id}",
+                            descricao=descricao_pagamento,
                             valor_abatimento=Decimal('0.00'),
                             valor_operacao=Decimal(str(valor_pagamento)),
                             status="Concluída",

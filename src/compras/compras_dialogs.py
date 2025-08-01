@@ -70,6 +70,7 @@ class PagamentoMovimentacaoDialog(QDialog):
         self.saldo_atual = saldo_atual
         layout = QVBoxLayout(self)
         self.resultado = None
+        self.valor_desconto = 0.0
 
         label = QLabel("Gostaria de cadastrar um pagamento referente a essa movimentação?")
         layout.addWidget(label)
@@ -130,6 +131,10 @@ class PagamentoMovimentacaoDialog(QDialog):
         self.label_saldo_projetado.setText(self._saldo_projetado_text(valor_final))
 
     def confirmar(self):
+        try:
+            self.valor_desconto = float(self.input_desconto.text().replace(",", ".") or "0")
+        except Exception:
+            self.valor_desconto = 0.0
         self.resultado = "sim"
         self.accept()
 
