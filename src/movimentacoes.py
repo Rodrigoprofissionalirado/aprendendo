@@ -606,7 +606,7 @@ class MovimentacaoTabUI(QWidget):
                     c.setFillColorRGB(0, 0, 0)
                     c.drawString(margem, y, f"Subtotal: R$ {total:.2f}")
                     y -= 12
-                    c.drawString(margem, y, f"Total Final (com abatimento): R$ {valor_operacao:.2f}")
+                    c.drawString(margem, y, f"Total Final: R$ {valor_operacao:.2f}")
                     y -= 13
                 else:
                     y -= 8
@@ -839,7 +839,7 @@ class MovimentacaoTabUI(QWidget):
                     y += 7
                     draw.text((margem, y), f"Subtotal: R$ {total:.2f}", fill="black", font=fonte_menor)
                     y += 19
-                    draw.text((margem, y), f"Total Final (com abatimento): R$ {valor_operacao:.2f}", fill="black",
+                    draw.text((margem, y), f"Total Final: R$ {valor_operacao:.2f}", fill="black",
                               font=fonte_menor)
                     y += 19
                 else:
