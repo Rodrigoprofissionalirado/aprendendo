@@ -32,7 +32,7 @@ from .compras_logic import (
     obter_total_produtos_lista, calcular_valor_com_abatimento_adiantamento, formatar_moeda
 )
 from .compras_export import (
-    exportar_compra_pdf, exportar_compra_jpg
+    exportar_compra_pdf, exportar_compra_jpg, limpar_numero_nome_produto
 )
 from .compras_dialogs import ImportarAppDialog
 
@@ -1359,9 +1359,10 @@ class ComprasUI(QWidget):
         self.combo_produto.clear()
         self.combo_produto.setEditable(True)
         produtos = listar_produtos()
-        produtos.sort(key=lambda p: p["nome"])
+        produtos.sort(key=lambda p: p["nome"])  # mantém a ordem usando o nome original (com número)
         for p in produtos:
-            self.combo_produto.addItem(p['nome'], p['id'])
+            nome_sem_numero = limpar_numero_nome_produto(p['nome'])
+            self.combo_produto.addItem(nome_sem_numero, p['id'])  # exibe sem número, mantém ordem original
         self.combo_produto.setCurrentIndex(-1)
         self.combo_produto.blockSignals(False)
 

@@ -1233,11 +1233,15 @@ class MovimentacaoTabUI(QWidget):
         self.combo_produto.lineEdit().selectAll()
 
     def carregar_produtos(self):
+        from compras.compras_export import limpar_numero_nome_produto  # se não importar já antes
         self.combo_produto.clear()
         self.combo_produto.setEditable(True)
         self.combo_produto.addItem("", None)
-        for p in listar_produtos():
-            self.combo_produto.addItem(p["nome"], p["id"])
+        produtos = listar_produtos()
+        produtos.sort(key=lambda p: p["nome"])  # mantém a ordem original (com número)
+        for p in produtos:
+            nome_sem_numero = limpar_numero_nome_produto(p["nome"])
+            self.combo_produto.addItem(nome_sem_numero, p["id"])
 
     def adicionar_item(self):
         produto_id = self.combo_produto.currentData()
