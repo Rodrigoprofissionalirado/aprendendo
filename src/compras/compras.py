@@ -284,6 +284,10 @@ class ComprasUI(QWidget):
         self.tabela_itens_compra.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.tabela_itens_compra.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         layout_direita.addWidget(self.tabela_itens_compra)
+        # Adicione um botão na interface, por exemplo após a tabela_itens_compra:
+        self.btn_copiar_excel = QPushButton("Copiar itens para Excel")
+        self.btn_copiar_excel.clicked.connect(self.copiar_tabela_itens_compra_para_excel)
+        layout_direita.addWidget(self.btn_copiar_excel)
 
         self.label_total_com_abatimento = QLabel("Total com Abatimento: R$ 0,00")
         self.label_total_com_abatimento.setStyleSheet("font-weight: bold; font-size: 14px; margin-top: 5px;")
@@ -423,6 +427,28 @@ class ComprasUI(QWidget):
 
         # Troca de aba recarrega dados
         self.tabs.currentChanged.connect(self.atualizar_tabelas)
+
+    def copiar_tabela_itens_compra_para_excel(self):
+        row_count = self.tabela_itens_compra.rowCount()
+        col_count = self.tabela_itens_compra.columnCount()
+        # Cabeçalho
+        headers = []
+        for col in range(col_count):
+            headers.append(self.tabela_itens_compra.horizontalHeaderItem(col).text())
+        linhas = ['\t'.join(headers)]
+        # Conteúdo
+        for row in range(row_count):
+            linha = []
+            for col in range(col_count):
+                item = self.tabela_itens_compra.item(row, col)
+                linha.append(item.text() if item else '')
+            linhas.append('\t'.join(linha))
+        texto = '\n'.join(linhas)
+        # Copia para a área de transferência
+        QApplication.clipboard().setText(texto)
+        from PySide6.QtWidgets import QMessageBox
+        QMessageBox.information(self, "Copiar para Excel",
+                                "Itens copiados para área de transferência!\nCole no Excel com Ctrl+V.")
 
     def carregar_dados(self):
         self.atualizar_tabelas()
@@ -1008,6 +1034,12 @@ class ComprasUI(QWidget):
                 inserir_adiantamento(fornecedor_id, self.compra_edit_id, data_compra, valor_inclusao)
             elif tipo_lancamento == "abatimento" and valor_abatimento > 0:
                 inserir_abatimento(fornecedor_id, self.compra_edit_id, data_compra, valor_abatimento)
+
+            # PATCH: se veio da importação do app, troca origem para "compras"
+            origem_foi_trocada = atualizar_origem_compra(self.compra_edit_id, "compras", origem_esperada="app")
+            if origem_foi_trocada:
+                status = "Finalizada"
+
             atualizar_compra(
                 self.compra_edit_id,
                 fornecedor_id,
@@ -1017,8 +1049,6 @@ class ComprasUI(QWidget):
                 status,
                 considerar_no_saldo_movimentacao=considerar_no_saldo
             )
-            # PATCH: se veio da importação do app, troca origem para "compras"
-            atualizar_origem_compra(self.compra_edit_id, "compras", origem_esperada="app")
             QMessageBox.information(self, "Sucesso", "Compra editada com sucesso.")
 
         # Limpa e atualiza UI
