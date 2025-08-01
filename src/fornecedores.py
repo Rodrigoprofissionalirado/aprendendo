@@ -5,7 +5,7 @@ from PySide6.QtWidgets import (
     QApplication, QWidget, QLabel, QPushButton, QVBoxLayout,
     QLineEdit, QMessageBox, QTableWidget, QTableWidgetItem, QHBoxLayout,
     QComboBox, QGridLayout, QInputDialog, QDialog, QDialogButtonBox, QFormLayout,
-    QDoubleSpinBox, QSizePolicy, QHeaderView, QSplitter
+    QDoubleSpinBox, QSizePolicy, QHeaderView, QSplitter, QScrollArea
 )
 from PySide6.QtCore import Qt, QLocale, QTimer
 from PySide6.QtGui import QIntValidator
@@ -123,10 +123,16 @@ class DialogNovaCategoria(QDialog):
 
         self.layout = QVBoxLayout(self)
 
+        # Scroll Area
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_widget = QWidget()
+        scroll_vlayout = QVBoxLayout(scroll_widget)
+
         # Campo nome categoria
         self.input_nome = QLineEdit()
-        self.layout.addWidget(QLabel("Nome da nova categoria:"))
-        self.layout.addWidget(self.input_nome)
+        scroll_vlayout.addWidget(QLabel("Nome da nova categoria:"))
+        scroll_vlayout.addWidget(self.input_nome)
 
         # Lista de produtos e campos de ajuste
         self.form_produtos = QFormLayout()
@@ -140,13 +146,20 @@ class DialogNovaCategoria(QDialog):
             spin.setSingleStep(0.05)  # <-- Esta linha faz o passo ser de 0,05
             self.inputs_ajustes[prod['id']] = spin
             self.form_produtos.addRow(prod['nome'], spin)
-        self.layout.addLayout(self.form_produtos)
+        scroll_vlayout.addLayout(self.form_produtos)
+
+        scroll_area.setWidget(scroll_widget)
+        self.layout.addWidget(scroll_area)
 
         # Botões
         self.button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         self.button_box.accepted.connect(self.accept)
         self.button_box.rejected.connect(self.reject)
         self.layout.addWidget(self.button_box)
+
+        # Define tamanho máximo
+        self.setMinimumWidth(400)
+        self.setMaximumHeight(500)
 
     def get_dados(self):
         self.nome_categoria = self.input_nome.text().strip()
