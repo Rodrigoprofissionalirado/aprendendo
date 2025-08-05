@@ -908,8 +908,6 @@ class FornecedoresUI(QWidget):
             except Exception as e:
                 QMessageBox.critical(self, "Erro", str(e))
 
-    # ... [Os métodos exportar_pdf e exportar_jpg permanecem inalterados] ...
-
     def exportar_pdf(self):
         if hasattr(self, "worker_tabela") and self.worker_tabela.isRunning():
             self.worker_tabela.quit()
@@ -932,6 +930,7 @@ class FornecedoresUI(QWidget):
             if not precos_filtrados:
                 return None  # Sinaliza para não abrir PDF
 
+            import tempfile
             arquivo_pdf = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf").name
             c = canvas.Canvas(arquivo_pdf, pagesize=A4)
             largura, altura = A4
@@ -999,6 +998,8 @@ class FornecedoresUI(QWidget):
                 return
             QMessageBox.information(self, "Exportar PDF", f"Arquivo PDF gerado:\n{path}")
             abrir_arquivo(path)
+            # Excluir após 5 minutos (300000 ms)
+            QTimer.singleShot(300000, lambda: os.path.exists(path) and os.remove(path))
 
         self.worker_exportar_pdf = WorkerThread(tarefa_pdf)
         self.worker_exportar_pdf.finished.connect(on_pdf_ready)
@@ -1134,6 +1135,8 @@ class FornecedoresUI(QWidget):
                 return
             QMessageBox.information(self, "Exportar JPG", f"Arquivo JPG gerado:\n{path}")
             abrir_arquivo(path)
+            # Excluir após 5 minutos (300000 ms)
+            QTimer.singleShot(300000, lambda: os.path.exists(path) and os.remove(path))
 
         self.worker_exportar_jpg = WorkerThread(tarefa_jpg)
         self.worker_exportar_jpg.finished.connect(on_jpg_ready)

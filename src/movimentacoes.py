@@ -645,12 +645,14 @@ class MovimentacaoTabUI(QWidget):
                 QMessageBox.warning(self, "Exportar PDF", "Nenhuma movimentação encontrada no período selecionado.")
                 return
             QMessageBox.information(self, "Exportar PDF", f"PDF gerado com sucesso:\n{filename}")
-            if platform.system() == "Windows":
-                os.startfile(filename)
-            elif platform.system() == "Darwin":
-                os.system(f"open '{filename}'")
-            else:
-                os.system(f"xdg-open '{filename}'")
+            if os.path.exists(filename):
+                if platform.system() == "Windows":
+                    os.startfile(filename)
+                elif platform.system() == "Darwin":
+                    os.system(f"open '{filename}'")
+                else:
+                    os.system(f"xdg-open '{filename}'")
+                QTimer.singleShot(300000, lambda: os.path.exists(filename) and os.remove(filename))
 
         self.worker_export_pdf = WorkerThread(tarefa_pdf)
         self.worker_export_pdf.finished.connect(on_pdf_ready)
@@ -891,12 +893,14 @@ class MovimentacaoTabUI(QWidget):
                 QMessageBox.warning(self, "Exportar JPG", "Nenhuma movimentação encontrada no período selecionado.")
                 return
             QMessageBox.information(self, "Exportar JPG", f"Arquivo gerado com sucesso: {nome_arquivo}")
-            if platform.system() == "Windows":
-                os.startfile(nome_arquivo)
-            elif platform.system() == "Darwin":
-                os.system(f"open '{nome_arquivo}'")
-            else:
-                os.system(f"xdg-open '{nome_arquivo}'")
+            if os.path.exists(nome_arquivo):
+                if platform.system() == "Windows":
+                    os.startfile(nome_arquivo)
+                elif platform.system() == "Darwin":
+                    os.system(f"open '{nome_arquivo}'")
+                else:
+                    os.system(f"xdg-open '{nome_arquivo}'")
+                QTimer.singleShot(300000, lambda: os.path.exists(nome_arquivo) and os.remove(nome_arquivo))
 
         self.worker_export_jpg = WorkerThread(tarefa_jpg)
         self.worker_export_jpg.finished.connect(on_jpg_ready)
