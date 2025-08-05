@@ -1,4 +1,5 @@
 import sys
+import os
 from PySide6.QtWidgets import (
     QApplication, QWidget, QLabel, QPushButton, QVBoxLayout,
     QHBoxLayout, QGridLayout, QComboBox, QDateEdit, QLineEdit,
@@ -1447,7 +1448,17 @@ class ComprasUI(QWidget):
 
         self.worker_pdf = WorkerThread(tarefa_pdf)
         self.worker_pdf.finished.connect(
-            lambda filename: QMessageBox.information(self, "PDF gerado", f"Arquivo: {filename}"))
+            lambda filename: (
+                QMessageBox.information(self, "PDF gerado", f"Arquivo: {filename}"),
+                os.startfile(filename) if sys.platform.startswith("win") else (
+                    os.system(f"open '{filename}'") if sys.platform == "darwin"
+                    else os.system(f"xdg-open '{filename}'")
+                ),
+                QTimer.singleShot(300000, lambda: os.path.exists(filename) and os.remove(filename))
+            ) if filename and os.path.exists(filename) else (
+                QMessageBox.warning(self, "Exportar PDF", "Falha ao gerar PDF.")
+            )
+        )
         self.worker_pdf.erro.connect(self._mostrar_erro_thread)
         self.worker_pdf.start()
 
@@ -1473,7 +1484,17 @@ class ComprasUI(QWidget):
 
         self.worker_jpg = WorkerThread(tarefa_jpg)
         self.worker_jpg.finished.connect(
-            lambda filename: QMessageBox.information(self, "JPG gerado", f"Arquivo: {filename}"))
+            lambda filename: (
+                QMessageBox.information(self, "JPG gerado", f"Arquivo: {filename}"),
+                os.startfile(filename) if sys.platform.startswith("win") else (
+                    os.system(f"open '{filename}'") if sys.platform == "darwin"
+                    else os.system(f"xdg-open '{filename}'")
+                ),
+                QTimer.singleShot(300000, lambda: os.path.exists(filename) and os.remove(filename))
+            ) if filename and os.path.exists(filename) else (
+                QMessageBox.warning(self, "Exportar JPG", "Falha ao gerar JPG.")
+            )
+        )
         self.worker_jpg.erro.connect(self._mostrar_erro_thread)
         self.worker_jpg.start()
 
