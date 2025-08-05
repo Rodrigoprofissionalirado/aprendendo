@@ -414,26 +414,42 @@ class FornecedoresUI(QWidget):
         self.worker_tabela.start()
 
     def _atualizar_tabela_ui(self, dados):
-        self.fornecedores = list(dados)
-        self.fornecedores_exibidos = list(dados)
-        self.tabela.setRowCount(len(dados))
-        for i, row in enumerate(dados):
-            self.tabela.setItem(i, 0, QTableWidgetItem(
-                str(row.get('fornecedores_numerobalanca', '') or row.get('numerobalanca', ''))))
-            self.tabela.setItem(i, 1, QTableWidgetItem(row['nome']))
-        self.aplicar_filtro()
+        try:
+            self.fornecedores = list(dados)
+            self.fornecedores_exibidos = list(dados)
+            self.tabela.setRowCount(len(dados))
+            for i, row in enumerate(dados):
+                self.tabela.setItem(i, 0, QTableWidgetItem(
+                    str(row.get('fornecedores_numerobalanca', '') or row.get('numerobalanca', ''))))
+                self.tabela.setItem(i, 1, QTableWidgetItem(row['nome']))
+            self.aplicar_filtro()
+        except Exception as e:
+            import traceback
+            print("Erro ao atualizar tabela de fornecedores:", e)
+            print(traceback.format_exc())
+            QMessageBox.critical(self, "Erro", str(e))
 
     def _mostrar_erro_thread(self, mensagem):
         from PySide6.QtWidgets import QMessageBox
         QMessageBox.critical(self, "Erro", mensagem)
 
     def carregar_combo_fornecedores(self, lista=None):
-        self.combo_fornecedores.clear()
-        fornecedores = lista if lista is not None else self.fornecedores
-        for f in fornecedores:
-            self.combo_fornecedores.addItem(f['nome'], f['id'])
-        if self.combo_fornecedores.count() > 0:
-            self.combo_fornecedores.setCurrentIndex(0)
+        try:
+            self.combo_fornecedores.blockSignals(True)
+            self.combo_fornecedores.clear()
+            fornecedores = lista if lista is not None else self.fornecedores
+            for f in fornecedores:
+                self.combo_fornecedores.addItem(f['nome'], f['id'])
+            if self.combo_fornecedores.count() > 0:
+                self.combo_fornecedores.setCurrentIndex(0)
+        except Exception as e:
+            import traceback
+            print("Erro em carregar_combo_fornecedores:", e)
+            traceback.print_exc()
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.critical(self, "Erro", f"Erro ao preencher combo de fornecedores:\n{str(e)}")
+        finally:
+            self.combo_fornecedores.blockSignals(False)
 
     def fornecedor_selecionado(self, index):
         try:
