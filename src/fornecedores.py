@@ -91,7 +91,7 @@ class DB:
 
     def listar_produtos(self):
         with get_cursor() as cursor:
-            cursor.execute("SELECT id, nome FROM produtos ORDER BY nome")
+            cursor.execute("SELECT id, nome, preco_base FROM produtos ORDER BY nome")
             return cursor.fetchall()
 
     def inserir_ajustes_categoria(self, categoria_id, ajustes: dict):
@@ -134,20 +134,37 @@ class DialogNovaCategoria(QDialog):
         scroll_vlayout.addWidget(QLabel("Nome da nova categoria:"))
         scroll_vlayout.addWidget(self.input_nome)
 
-        # Lista de produtos e campos de ajuste
+        # Lista de produtos e campos de ajuste e preço final
         self.form_produtos = QFormLayout()
         self.inputs_ajustes = {}
+        self.labels_preco_final = {}
         for prod in produtos:
+            hbox = QHBoxLayout()
             spin = QDoubleSpinBox()
             spin.setDecimals(2)
             spin.setMinimum(-9999.99)
             spin.setMaximum(99999.99)
             spin.setValue(0.00)
-            spin.setSingleStep(0.05)  # <-- Esta linha faz o passo ser de 0,05
-            self.inputs_ajustes[prod['id']] = spin
-            self.form_produtos.addRow(prod['nome'], spin)
-        scroll_vlayout.addLayout(self.form_produtos)
+            spin.setSingleStep(0.05)
 
+            preco_base = float(prod.get("preco_base", 0))
+            label_preco_final = QLabel(f"{preco_base:.2f}")
+            label_preco_final.setFixedWidth(70)
+            label_preco_final.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+
+            def make_update_func(spin, label, preco_base):
+                return lambda: label.setText(f"{preco_base + spin.value():.2f}")
+
+            spin.valueChanged.connect(make_update_func(spin, label_preco_final, preco_base))
+
+            hbox.addWidget(spin)
+            hbox.addWidget(label_preco_final)
+            self.inputs_ajustes[prod['id']] = spin
+            self.labels_preco_final[prod['id']] = label_preco_final
+            nome_label = f"{prod['nome']}"
+            self.form_produtos.addRow(nome_label, hbox)
+
+        scroll_vlayout.addLayout(self.form_produtos)
         scroll_area.setWidget(scroll_widget)
         self.layout.addWidget(scroll_area)
 
@@ -158,7 +175,7 @@ class DialogNovaCategoria(QDialog):
         self.layout.addWidget(self.button_box)
 
         # Define tamanho máximo
-        self.setMinimumWidth(400)
+        self.setMinimumWidth(500)
         self.setMaximumHeight(500)
 
     def get_dados(self):
@@ -169,7 +186,6 @@ class DialogNovaCategoria(QDialog):
             if spin.value() != 0.00
         }
         return self.nome_categoria, self.ajustes
-
 class FornecedoresUI(QWidget):
     def __init__(self):
         super().__init__()
