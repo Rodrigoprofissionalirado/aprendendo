@@ -35,7 +35,8 @@ from compras.compras_db import (
     listar_contas_do_fornecedor,
     atualizar_conta_bancaria_da_compra,
     obter_fornecedor_id_da_compra,
-    obter_saldo_antes_compra
+    obter_saldo_antes_compra,
+    obter_categorias_do_fornecedor
 )
 from compras.compras_dialogs import (
     PagamentoMovimentacaoDialog,
@@ -955,10 +956,11 @@ class MovimentacaoTabUI(QWidget):
 
         # Categoria
         self.combo_categoria = QComboBox()
-        self.combo_categoria.addItem("Categoria principal", 0)
-        categoria_principal = obter_categoria_principal(self.fornecedor['id'])
-        if categoria_principal:
-            self.combo_categoria.addItem(categoria_principal['nome'], categoria_principal['id'])
+        categorias = obter_categorias_do_fornecedor(self.fornecedor['id'])
+        self.combo_categoria.addItem("Selecione uma categoria", 0)
+        for c in categorias:
+            self.combo_categoria.addItem(c['nome'], c['id'])
+        if self.combo_categoria.count() > 1:
             self.combo_categoria.setCurrentIndex(1)
         form_grid.addWidget(QLabel("Categoria"), 2, 0)
         form_grid.addWidget(self.combo_categoria, 2, 1)
@@ -1376,19 +1378,24 @@ class MovimentacaoTabUI(QWidget):
         valor_adiantamento = valor_lancamento if tipo_lancamento == "adiantamento" else Decimal('0.00')
 
         if tipo_normalizado == "transacao":
+            valor_operacao_texto = self.input_valor_operacao.text().replace(",", ".").strip()
             try:
-                valor_operacao = Decimal(self.input_valor_operacao.text().replace(",", "."))
-                conta_padrao_id = get_conta_padrao_id(self.fornecedor['id'])
-                compra_id = inserir_movimentacao(
-                    self.fornecedor['id'], data, tipo, direcao, descricao,
-                    valor_abatimento, valor_operacao,
-                    tipo_lancamento=None, valor_lancamento=None,
-                    status='Criada', origem='movimentacao', considerar_no_saldo=True,
-                    dados_bancarios_id=conta_padrao_id
-                )
-                QMessageBox.information(self, "Sucesso", "Transação cadastrada com sucesso.")
-            except Exception as e:
-                QMessageBox.critical(self, "Erro", f"Erro ao cadastrar transação: {e}")
+                if not valor_operacao_texto:
+                    raise ValueError("Digite um valor para a operação.")
+                valor_operacao = Decimal(valor_operacao_texto)
+            except (ValueError, InvalidOperation):
+                QMessageBox.warning(self, "Valor inválido", "Digite um valor numérico válido para a operação.")
+                self.input_valor_operacao.setFocus()
+                return
+            conta_padrao_id = get_conta_padrao_id(self.fornecedor['id'])
+            compra_id = inserir_movimentacao(
+                self.fornecedor['id'], data, tipo, direcao, descricao,
+                valor_abatimento, valor_operacao,
+                tipo_lancamento=None, valor_lancamento=None,
+                status='Criada', origem='movimentacao', considerar_no_saldo=True,
+                dados_bancarios_id=conta_padrao_id
+            )
+            QMessageBox.information(self, "Sucesso", "Transação cadastrada com sucesso.")
             self.limpar_itens()
             self.limpar_campos()
             self.atualizar_tabela()
